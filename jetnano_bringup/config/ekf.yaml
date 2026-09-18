@@ -1,0 +1,52 @@
+# robot_localization: fuses visual odometry with the IMU and publishes the one
+# transform the old URDF wrongly hard-coded:  odom -> base_link
+#
+# Nothing else may publish that transform. rtabmap's odometry node is launched
+# with publish_tf:=false for exactly this reason - it supplies a measurement,
+# the EKF owns the transform.
+#
+# map -> odom is still not ours. That comes from slam_toolbox or AMCL.
+ekf_filter_node:
+  ros__parameters:
+    frequency: 30.0
+    sensor_timeout: 0.2
+    two_d_mode: true              # ground vehicle: pin z, roll and pitch
+    publish_tf: true
+    publish_acceleration: false
+
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_footprint   # NOT base_link: the URDF roots at base_footprint,
+                                      # so base_link already has a parent. Publishing
+                                      # odom -> base_link would give it two, and a TF
+                                      # tree with two parents silently stops resolving.
+    world_frame: odom             # this EKF produces odom -> base_footprint only
+
+    # Visual odometry from the RealSense D435, via rtabmap_odom.
+    # Order: x y z, roll pitch yaw, vx vy vz, vroll vpitch vyaw, ax ay az
+    odom0: vo
+    odom0_config: [true,  true,  false,
+                   false, false, true,
+                   true,  true,  false,
+                   false, false, true,
+                   false, false, false]
+    odom0_differential: false
+    odom0_relative: false
+    odom0_queue_size: 10
+
+    # BNO055. Yaw and yaw rate are what matter in 2D; forward acceleration
+    # helps ride out short visual-odometry dropouts (blank walls, motion blur).
+    imu0: imu/data
+    imu0_config: [false, false, false,
+                  false, false, true,
+                  false, false, false,
+                  false, false, true,
+                  true,  false, false]
+    imu0_differential: false
+    imu0_relative: false
+    imu0_queue_size: 10
+    imu0_remove_gravitational_acceleration: true
+
+    # process_noise_covariance is a full 15x15 matrix (225 values). The
+    # robot_localization defaults are sane; tune it only with real data, and
+    # if you do, write out all 225 numbers - a short list is rejected.

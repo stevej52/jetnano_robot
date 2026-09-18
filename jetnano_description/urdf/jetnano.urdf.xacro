@@ -1,0 +1,217 @@
+<?xml version="1.0"?>
+<!--
+  jetnano - DANCHEE RidgeRock 1/10 4WD rock crawler with four-wheel steering.
+
+  WHAT THIS FILE DOES AND DELIBERATELY DOES NOT DO
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  A URDF describes the robot's OWN rigid body: the links that are bolted
+  together and the joints between them. It must NOT contain map, odom or
+  world.
+
+  The old jetnano.urdf welded them in as fixed joints:
+
+      <joint name="map_to_odom=" type="fixed"> map -> odom
+      <joint name="odom_to_base_link=" type="fixed"> odom -> base_link
+
+  That is why nothing ever worked properly. Those two transforms are the
+  ones that have to MOVE:
+
+      map  -> odom         published by slam_toolbox or AMCL (drift correction)
+      odom -> base_footprint  published by the odometry source / robot_localization
+
+  Welding them bolts the robot to the map origin forever, so it can never
+  appear to move, and Nav2, SLAM and RViz all misbehave in confusing ways.
+  This file therefore starts at base_footprint and goes DOWN into the robot,
+  never up into the world.
+
+  MEASURE ME
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  Every dimension below is an estimate for a 1/10 scale crawler, because the
+  robot was in storage when this was written. Correcting them later means
+  editing the properties block and nothing else.
+-->
+<robot name="jetnano" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- ============================================================
+       MEASURE ME - chassis geometry (metres, radians)
+       ============================================================ -->
+  <xacro:property name="wheelbase"        value="0.313"/>  <!-- front axle to rear axle -->
+  <xacro:property name="track_width"      value="0.220"/>  <!-- left wheel to right wheel -->
+  <xacro:property name="wheel_radius"     value="0.060"/>  <!-- tyre radius, loaded -->
+  <xacro:property name="wheel_width"      value="0.045"/>
+  <xacro:property name="chassis_length"   value="0.400"/>
+  <xacro:property name="chassis_width"    value="0.180"/>
+  <xacro:property name="chassis_height"   value="0.100"/>
+  <xacro:property name="chassis_z_offset" value="0.010"/>  <!-- chassis centre above axle line -->
+  <xacro:property name="steer_limit"      value="0.5236"/> <!-- 30 degrees -->
+
+  <!-- MEASURE ME - where the sensors are bolted, relative to base_link -->
+  <xacro:property name="lidar_xyz"  value="0.0 0.0 0.145"/>
+  <xacro:property name="lidar_rpy"  value="0 0 0"/>
+  <xacro:property name="camera_xyz" value="0.150 0.0 0.095"/>
+  <xacro:property name="camera_rpy" value="0 0 0"/>
+  <xacro:property name="imu_xyz"    value="0.0 0.0 0.060"/>
+  <xacro:property name="imu_rpy"    value="0 0 0"/>
+
+  <!-- Rough masses. Good enough for TF and RViz; revisit only if you ever
+       simulate the robot dynamically. -->
+  <xacro:property name="chassis_mass" value="2.500"/>
+  <xacro:property name="wheel_mass"   value="0.250"/>
+  <xacro:property name="steer_mass"   value="0.050"/>
+
+  <material name="chassis_grey"><color rgba="0.25 0.25 0.28 1.0"/></material>
+  <material name="tyre_black">  <color rgba="0.08 0.08 0.08 1.0"/></material>
+  <material name="sensor_blue"> <color rgba="0.10 0.35 0.75 1.0"/></material>
+  <material name="hub_red">     <color rgba="0.65 0.15 0.15 1.0"/></material>
+
+  <!-- Inertia helpers. A solid box and a cylinder rotated to spin about Y. -->
+  <xacro:macro name="box_inertia" params="m x y z">
+    <inertial>
+      <mass value="${m}"/>
+      <inertia ixx="${m*(y*y+z*z)/12.0}" iyy="${m*(x*x+z*z)/12.0}" izz="${m*(x*x+y*y)/12.0}"
+               ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </xacro:macro>
+
+  <xacro:macro name="wheel_inertia" params="m r w">
+    <inertial>
+      <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+      <mass value="${m}"/>
+      <inertia ixx="${m*(3*r*r+w*w)/12.0}" iyy="${m*(3*r*r+w*w)/12.0}" izz="${m*r*r/2.0}"
+               ixy="0" ixz="0" iyz="0"/>
+    </inertial>
+  </xacro:macro>
+
+  <!-- ============================================================
+       base_footprint -> base_link
+       base_footprint sits on the ground directly under base_link. Nav2 and
+       the costmaps use it as the robot's ground contact point.
+       base_link sits on the axle line, which is wheel_radius above ground.
+       ============================================================ -->
+  <link name="base_footprint"/>
+
+  <joint name="base_footprint_to_base_link" type="fixed">
+    <parent link="base_footprint"/>
+    <child  link="base_link"/>
+    <origin xyz="0 0 ${wheel_radius}" rpy="0 0 0"/>
+  </joint>
+
+  <link name="base_link">
+    <visual>
+      <origin xyz="0 0 ${chassis_z_offset}" rpy="0 0 0"/>
+      <geometry><box size="${chassis_length} ${chassis_width} ${chassis_height}"/></geometry>
+      <material name="chassis_grey"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 ${chassis_z_offset}" rpy="0 0 0"/>
+      <geometry><box size="${chassis_length} ${chassis_width} ${chassis_height}"/></geometry>
+    </collision>
+    <xacro:box_inertia m="${chassis_mass}" x="${chassis_length}" y="${chassis_width}" z="${chassis_height}"/>
+  </link>
+
+  <!-- ============================================================
+       One corner of the robot: a steering knuckle that rotates about Z,
+       carrying a wheel that rolls about Y.
+
+       All four corners steer, because this chassis is four-wheel steering.
+       The rear pair is commanded with the opposite sign of the front pair,
+       which is what config/rc_car.yaml in ros2_pca9685 already does
+       (steering angular_z * -18.33, rear_steering angular_z * +18.33).
+       ============================================================ -->
+  <xacro:macro name="corner" params="name x y">
+
+    <link name="${name}_steer_link">
+      <visual>
+        <geometry><cylinder radius="0.018" length="0.040"/></geometry>
+        <material name="hub_red"/>
+      </visual>
+      <xacro:box_inertia m="${steer_mass}" x="0.036" y="0.036" z="0.040"/>
+    </link>
+
+    <joint name="${name}_steer_joint" type="revolute">
+      <parent link="base_link"/>
+      <child  link="${name}_steer_link"/>
+      <origin xyz="${x} ${y} 0" rpy="0 0 0"/>
+      <axis xyz="0 0 1"/>
+      <limit lower="${-steer_limit}" upper="${steer_limit}" effort="8.0" velocity="4.0"/>
+    </joint>
+
+    <link name="${name}_wheel_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+        <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
+        <material name="tyre_black"/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+        <geometry><cylinder radius="${wheel_radius}" length="${wheel_width}"/></geometry>
+      </collision>
+      <xacro:wheel_inertia m="${wheel_mass}" r="${wheel_radius}" w="${wheel_width}"/>
+    </link>
+
+    <joint name="${name}_wheel_joint" type="continuous">
+      <parent link="${name}_steer_link"/>
+      <child  link="${name}_wheel_link"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+    </joint>
+
+  </xacro:macro>
+
+  <xacro:corner name="front_left"  x="${ wheelbase/2}" y="${ track_width/2}"/>
+  <xacro:corner name="front_right" x="${ wheelbase/2}" y="${-track_width/2}"/>
+  <xacro:corner name="rear_left"   x="${-wheelbase/2}" y="${ track_width/2}"/>
+  <xacro:corner name="rear_right"  x="${-wheelbase/2}" y="${-track_width/2}"/>
+
+  <!-- ============================================================
+       Sensors.
+
+       Only the MOUNT transform belongs here (base_link -> sensor frame).
+       The drivers publish their own internal frames:
+         - realsense2_camera publishes camera_link -> *_optical_frame itself
+         - rplidar_ros publishes its scan in the frame named by its frame_id
+           parameter, which must match "lidar_link" below
+         - bno055 publishes into the frame named by its frame_id parameter,
+           which must match "imu_link" below
+       ============================================================ -->
+
+  <link name="lidar_link">
+    <visual>
+      <geometry><cylinder radius="0.038" length="0.040"/></geometry>
+      <material name="sensor_blue"/>
+    </visual>
+    <xacro:box_inertia m="0.170" x="0.076" y="0.076" z="0.040"/>
+  </link>
+  <joint name="lidar_joint" type="fixed">
+    <parent link="base_link"/>
+    <child  link="lidar_link"/>
+    <origin xyz="${lidar_xyz}" rpy="${lidar_rpy}"/>
+  </joint>
+
+  <link name="camera_link">
+    <visual>
+      <geometry><box size="0.025 0.090 0.025"/></geometry>
+      <material name="sensor_blue"/>
+    </visual>
+    <xacro:box_inertia m="0.072" x="0.025" y="0.090" z="0.025"/>
+  </link>
+  <joint name="camera_joint" type="fixed">
+    <parent link="base_link"/>
+    <child  link="camera_link"/>
+    <origin xyz="${camera_xyz}" rpy="${camera_rpy}"/>
+  </joint>
+
+  <link name="imu_link">
+    <visual>
+      <geometry><box size="0.020 0.020 0.004"/></geometry>
+      <material name="sensor_blue"/>
+    </visual>
+    <xacro:box_inertia m="0.005" x="0.020" y="0.020" z="0.004"/>
+  </link>
+  <joint name="imu_joint" type="fixed">
+    <parent link="base_link"/>
+    <child  link="imu_link"/>
+    <origin xyz="${imu_xyz}" rpy="${imu_rpy}"/>
+  </joint>
+
+</robot>

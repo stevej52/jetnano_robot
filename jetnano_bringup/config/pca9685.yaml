@@ -1,0 +1,60 @@
+# Channel configuration for THIS robot. Started life as rc_car.yaml in
+# ros2_pca9685 and keeps its tuning, with one deliberate difference:
+#
+#   i2c_bus was 1, which is correct for a Jetson Nano.
+#   On the Orin Nano under JetPack 7, 40-pin header pins 3/5 are a different
+#   bus. Confirm with:   i2cdetect -l   and   i2cdetect -y -r 7
+#   looking for address 40. Set i2c_bus to whichever bus shows it.
+/**:
+  ros__parameters:
+    i2c_bus: 7                 # MEASURE ME - was 1 on the Jetson Nano
+    i2c_address: 64            # 0x40
+    pwm_frequency: 100.0
+    twist_topic: cmd_vel
+    channels: [throttle, steering, rear_steering]
+
+    # Publish servo positions as joint_states. Left off for now: the driver
+    # reports servo-horn degrees (85 deg = straight), which is not the same
+    # thing as wheel steer angle, so feeding it straight into the URDF would
+    # draw the wheels wrong. Turn on once the linkage is calibrated.
+    joint_state_publish_rate: 0.0
+
+    throttle:
+      channel: 0
+      type: continuous
+      min_pulse_us: 1000.0
+      neutral_pulse_us: 1500.0
+      max_pulse_us: 2000.0
+      min_limit: -0.42
+      max_limit: 0.58
+      home: 0.0
+      timeout: 0.5             # back to neutral if commands stop
+      twist:
+        linear_x: 1.0
+      esc:
+        arming:
+          values: [0.0]
+          durations: [2.0]
+        deadband: 0.02
+
+    steering:
+      channel: 1
+      home: 85.0
+      home_on_start: true
+      min_limit: 30.0
+      max_limit: 135.0
+      timeout: 0.5
+      joint: front_left_steer_joint
+      twist:
+        angular_z: -18.33
+
+    rear_steering:
+      channel: 2
+      home: 85.0
+      home_on_start: true
+      min_limit: 35.0
+      max_limit: 140.0
+      timeout: 0.5
+      joint: rear_left_steer_joint
+      twist:
+        angular_z: 18.33       # opposite sign: four-wheel steering

@@ -1,0 +1,37 @@
+# Who gets to drive, and who wins when two of them talk at once.
+#
+# Higher priority wins. Teleop outranks Nav2 deliberately: grabbing the sticks
+# during an autonomous run takes control immediately, without stopping Nav2.
+# If a source stops publishing for longer than its timeout it is ignored, so a
+# crashed node cannot hold the robot hostage.
+#
+# Output is remapped to /cmd_vel in the launch file, which is what
+# ros2_pca9685 subscribes to (twist_topic: cmd_vel, root namespace).
+twist_mux:
+  ros__parameters:
+    use_sim_time: false
+
+    # ros2_pca9685 subscribes to geometry_msgs/Twist, and twist_mux defaults
+    # to TwistStamped. Left at the default, nothing in this chain matches:
+    # teleop publishes Twist that twist_mux never sees, and twist_mux emits
+    # TwistStamped that the driver never sees. Both ends go quiet with no
+    # error at all, which is a miserable thing to debug.
+    use_stamped: false
+
+    topics:
+      teleop:
+        topic: cmd_vel_teleop
+        timeout: 0.5
+        priority: 100
+      navigation:
+        topic: cmd_vel_nav
+        timeout: 0.5
+        priority: 10
+
+    locks:
+      # While this is true, everything is blocked and the output is zero.
+      # jetnano_teleop raises it on e-stop and when the dead-man is released.
+      e_stop:
+        topic: e_stop
+        timeout: 0.0
+        priority: 255

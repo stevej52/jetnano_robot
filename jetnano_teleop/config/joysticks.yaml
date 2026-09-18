@@ -1,0 +1,95 @@
+# Joystick profiles for jetnano_teleop.
+#
+# One program, two very different controllers. The node looks at what is
+# actually plugged in and picks the first profile whose required devices are
+# all present, so you swap hardware and it just works - no flags, no editing.
+#
+# A profile may span SEVERAL physical devices. That is the whole point of the
+# Thrustmaster setup: the stick and the throttle are two separate USB units
+# that appear as two separate event devices.
+#
+# FINDING THE RIGHT NUMBERS
+#   ros2 run jetnano_teleop list_devices
+# prints every attached device, its exact name, and live axis/button numbers
+# as you move things. Fill in what you see below. The defaults are educated
+# guesses, not measured values.
+#
+# axis fields:
+#   index     position in the device's sorted capability list, exactly as
+#             list_devices prints it - NOT the raw evdev code
+#   scale     multiply after normalising to -1..+1; use -1.0 to invert
+#   deadzone  fraction around centre treated as zero (stiction, worn pots)
+#   expo      0.0 = linear. 0.3 or so softens the centre without losing the
+#             ends, which makes a twitchy stick much easier to drive slowly.
+#   mode      "centred" (default): rests in the middle, so pushing one way
+#             drives forward and the other way reverses. Both controllers
+#             here are centred. "unipolar" exists for a lever that rests at
+#             one end and only ever means "more" - not used by this robot.
+
+publish_rate: 50.0          # Hz, how often cmd_vel goes out
+timeout: 0.5                # s without any event: treat the device as gone
+
+# Scaling from the -1..+1 axis values to real robot units.
+max_linear: 1.0             # m/s at full throttle
+max_angular: 3.0            # rad/s at full steering lock
+
+profiles:
+
+  # ---------------------------------------------------------------- Thrustmaster
+  # A HOTAS set: flight stick in one hand, separate throttle unit in the other.
+  # BOTH devices must be present or this profile does not apply.
+  thrustmaster:
+    devices:
+
+      stick:
+        match: "T\\.?16000M|Thrustmaster.*(Stick|16000)"
+        required: true
+        axes:
+          steer:
+            index: 0        # ABS_X, twist or bank the stick left/right
+            scale: 1.0
+            deadzone: 0.06
+            expo: 0.35
+            mode: centred
+        buttons:
+          arm: 0            # trigger: dead-man, hold to drive
+          e_stop: 1         # thumb button
+          turbo: 2
+
+      throttle:
+        match: "TWCS|Thrustmaster.*Throttle"
+        required: true
+        axes:
+          throttle:
+            index: 2        # ABS_Z on most TWCS units
+            scale: 1.0
+            deadzone: 0.04
+            expo: 0.15
+            mode: centred   # lever CENTRES: forward drives, back reverses
+        buttons: {}
+
+  # ----------------------------------------------------------------------- Xbox
+  # One pad. Left stick: horizontal steers, vertical drives.
+  xbox:
+    devices:
+
+      pad:
+        match: "Xbox|X-Box|Microsoft.*Controller|Wireless Controller"
+        required: true
+        axes:
+          steer:
+            index: 0        # ABS_X, left stick horizontal
+            scale: 1.0
+            deadzone: 0.10  # thumbsticks are noisier than a flight stick
+            expo: 0.30
+            mode: centred
+          throttle:
+            index: 1        # ABS_Y, left stick vertical
+            scale: -1.0     # evdev Y is positive DOWN; forward must be positive
+            deadzone: 0.10
+            expo: 0.20
+            mode: centred
+        buttons:
+          arm: 4            # LB: dead-man, hold to drive
+          e_stop: 1         # B
+          turbo: 5          # RB
