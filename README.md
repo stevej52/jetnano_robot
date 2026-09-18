@@ -27,6 +27,70 @@ Setup for the machines themselves (Ubuntu 24.04 + ROS 2 Jazzy) lives in
 [robot-environment](https://github.com/stevej52/robot-environment). The
 PCA9685 driver is [ros2_pca9685](https://github.com/stevej52/ros2_pca9685).
 
+## Installing
+
+### 1. Ubuntu 24.04 with ROS 2 Jazzy
+
+Nothing here works on any other combination — Jazzy binaries only exist for
+24.04. Use [robot-environment](https://github.com/stevej52/robot-environment),
+which does the whole thing from apt:
+
+```bash
+sudo apt install -y git
+git clone https://github.com/stevej52/robot-environment.git ~/robot-environment
+~/robot-environment/scripts/install_ros2_jazzy.sh --domain-id 7 --workspace
+```
+
+Use the **same `--domain-id` on every machine** — it is what separates this
+robot from other ROS 2 traffic on the network.
+
+### 2. Clone this and the driver into the same workspace
+
+These packages do **not** contain the PCA9685 driver; they depend on it. Both
+have to be in the workspace or the build will not resolve:
+
+```bash
+cd ~/ros2_ws/src
+git clone https://github.com/stevej52/ros2_pca9685.git
+git clone https://github.com/stevej52/jetnano_robot.git
+```
+
+(`--workspace` in step 1 already cloned `ros2_pca9685`; skip it if it is
+there.)
+
+### 3. Let rosdep install the rest
+
+```bash
+cd ~/ros2_ws
+rosdep install --from-paths src --ignore-src -y
+```
+
+That pulls `twist_mux`, `robot_localization`, `slam_toolbox`, `navigation2`,
+`nav2_lifecycle_manager`, `rplidar_ros`, `realsense2_camera`, `bno055`,
+`rtabmap_odom`, `python3-evdev` and everything else — all from apt. **No
+source builds.**
+
+### 4. Build
+
+```bash
+colcon build --symlink-install
+source install/setup.bash
+```
+
+### 5. Permissions
+
+```bash
+sudo usermod -aG i2c,dialout,input $USER    # then log out and back in
+```
+
+| Group | Needed for |
+|---|---|
+| `i2c` | the PCA9685 and the BNO055 |
+| `dialout` | the RPLidar's USB serial port |
+| `input` | joysticks — `jetnano_teleop` reads `/dev/input/event*` directly |
+
+Logging out and back in is not optional; group membership is read at login.
+
 ## Running it
 
 On the robot:
