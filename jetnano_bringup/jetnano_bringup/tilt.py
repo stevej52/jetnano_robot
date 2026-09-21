@@ -50,6 +50,7 @@ class State(Enum):
     SAFE = 'safe'
     ARMED = 'armed'          # past the trigger, waiting out the debounce
     RECOVERING = 'recovering'
+    LOCKED_OUT = 'locked_out'  # gave up; will not retry until it reads level
 
 
 def roll_pitch_from_quaternion(x: float, y: float, z: float, w: float) -> tuple[float, float]:
@@ -169,8 +170,11 @@ class TiltGuard:
         elif self.state is State.RECOVERING:
             elapsed = 0.0 if self._recovery_at is None else now - self._recovery_at
             if elapsed >= self.limits.max_recovery_s:
-                # Reversing has not helped. Stop driving blind and hand back.
-                self.state = State.SAFE
+                # Reversing has not helped. Hand control back - and stay out of
+                # the way. Returning straight to SAFE would re-arm on the very
+                # next sample, because the robot is still tilted, and the guard
+                # would retry forever instead of letting the operator drive out.
+                self.state = State.LOCKED_OUT
                 self.gave_up = True
                 self._recovery_at = None
                 self._armed_at = None
@@ -179,6 +183,12 @@ class TiltGuard:
                 self.state = State.SAFE
                 self._recovery_at = None
                 self._armed_at = None
+
+        elif self.state is State.LOCKED_OUT:
+            # Only a genuinely level reading clears a lockout.
+            if not self._past_release(roll_deg, pitch_deg):
+                self.state = State.SAFE
+                self.gave_up = False
 
         return self.state
 

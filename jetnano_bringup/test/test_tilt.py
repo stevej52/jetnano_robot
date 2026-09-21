@@ -153,13 +153,40 @@ def test_hysteresis_keeps_recovering_between_release_and_trigger():
     assert guard.state is State.SAFE
 
 
-def test_gives_up_after_max_recovery():
-    """Reversing is not working. Stop driving blind and hand control back."""
+def test_gives_up_after_max_recovery_and_stays_out_of_the_way():
+    """
+    Reversing is not working, so hand control back - and do not immediately retry.
+
+    Returning straight to SAFE would re-arm on the next sample, because the
+    robot is still tilted, and the guard would fight the operator forever
+    instead of letting them drive out.
+    """
     guard = TiltGuard(TiltLimits(debounce_s=0.2, min_recovery_s=1.0, max_recovery_s=3.0))
     drive(guard, 40.0, LEVEL, start=0.0, duration=6.0)
-    assert guard.state is State.SAFE
+    assert guard.state is State.LOCKED_OUT
     assert guard.gave_up
     assert not guard.reversing()
+
+
+def test_lockout_clears_only_once_level_and_can_then_trigger_again():
+    limits = TiltLimits(debounce_s=0.2, min_recovery_s=1.0, max_recovery_s=3.0,
+                        roll_trigger_deg=25.0, roll_release_deg=15.0)
+    guard = TiltGuard(limits)
+    now = drive(guard, 40.0, LEVEL, start=0.0, duration=6.0)
+    assert guard.state is State.LOCKED_OUT
+
+    # Still tilted past release: stays locked out, publishes nothing.
+    now = drive(guard, 20.0, LEVEL, start=now, duration=2.0)
+    assert guard.state is State.LOCKED_OUT
+    assert not guard.reversing()
+
+    # Driven level by the operator: the guard rearms.
+    now = drive(guard, 5.0, LEVEL, start=now, duration=0.5)
+    assert guard.state is State.SAFE
+    assert not guard.gave_up
+
+    now = drive(guard, 30.0, LEVEL, start=now, duration=0.5)
+    assert guard.state is State.RECOVERING, 'guard did not rearm after a lockout'
 
 
 def test_negative_roll_triggers_the_same_as_positive():
