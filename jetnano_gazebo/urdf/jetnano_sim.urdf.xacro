@@ -24,8 +24,8 @@
       real robot:  jetnano_description/urdf/jetnano.urdf.xacro
       simulator:   this file, which includes that one
 
-  Layers 1 and 2: spawn, contact surfaces, ground truth, and the three
-  sensors. ros2_control and the four-wheel steering are layer 3.
+  Layers 1 to 3: spawn, contact surfaces, ground truth, the three sensors,
+  and ros2_control for the eight drive and steering joints.
 -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="jetnano">
 
@@ -34,6 +34,9 @@
 
   <!-- Layer 2: lidar, RGB-D camera and IMU, with realistic noise. -->
   <xacro:include filename="$(find jetnano_gazebo)/urdf/jetnano_sensors.gazebo.xacro"/>
+
+  <!-- Layer 3: ros2_control, eight joints, so the robot can be driven. -->
+  <xacro:include filename="$(find jetnano_gazebo)/urdf/jetnano_control.gazebo.xacro"/>
 
   <!--
     Wheel contact.

@@ -38,5 +38,9 @@ setup(
     description='Gazebo Harmonic simulation of the jetnano crawler',
     license='Apache-2.0',
     tests_require=['pytest'],
-    entry_points={'console_scripts': []},
+    entry_points={
+        'console_scripts': [
+            'sim_drive = jetnano_gazebo.drive_node:main',
+        ],
+    },
 )

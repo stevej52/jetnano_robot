@@ -1,0 +1,80 @@
+<?xml version="1.0"?>
+<!--
+  Copyright 2026 stevej52
+  Licensed under the Apache License, Version 2.0. See LICENSE.
+
+  Layer 3: ros2_control, so the simulated robot can be driven.
+
+  Eight joints. The four steering knuckles take POSITION commands, because a
+  servo is commanded to an angle; the four wheels take VELOCITY commands,
+  because an ESC is commanded to a speed. That mirrors the real machine, where
+  ros2_pca9685 drives three PWM channels: a throttle, a front steering servo
+  and a rear steering servo.
+
+  Deliberately NOT ackermann_steering_controller. That controller models two
+  steered wheels and two driven ones - a front-steering car. This chassis
+  steers all four, which it cannot express. Instead the joints are exposed
+  through plain forward-command controllers and the kinematics live in
+  steering.py, where they are unit-tested against closed-form geometry rather
+  than eyeballed in a simulator.
+
+  Plugin and controller class names were read out of the installed packages
+  before being written here, not recalled:
+    gz_ros2_control/GazeboSimSystem              gz_hardware_plugins.xml
+    position_controllers/JointGroupPositionController
+    velocity_controllers/JointGroupVelocityController
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:macro name="steer_joint_control" params="name">
+    <joint name="${name}_steer_joint">
+      <command_interface name="position">
+        <!-- Matches the URDF's own limit: 30 degrees of servo travel. -->
+        <param name="min">-0.5236</param>
+        <param name="max">0.5236</param>
+      </command_interface>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:macro name="wheel_joint_control" params="name">
+    <joint name="${name}_wheel_joint">
+      <command_interface name="velocity"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+  </xacro:macro>
+
+  <ros2_control name="GazeboSimSystem" type="system">
+    <hardware>
+      <plugin>gz_ros2_control/GazeboSimSystem</plugin>
+    </hardware>
+
+    <xacro:steer_joint_control name="front_left"/>
+    <xacro:steer_joint_control name="front_right"/>
+    <xacro:steer_joint_control name="rear_left"/>
+    <xacro:steer_joint_control name="rear_right"/>
+
+    <xacro:wheel_joint_control name="front_left"/>
+    <xacro:wheel_joint_control name="front_right"/>
+    <xacro:wheel_joint_control name="rear_left"/>
+    <xacro:wheel_joint_control name="rear_right"/>
+  </ros2_control>
+
+  <gazebo>
+    <plugin filename="gz_ros2_control-system"
+            name="gz_ros2_control::GazeboSimROS2ControlPlugin">
+      <parameters>$(find jetnano_gazebo)/config/controllers.yaml</parameters>
+      <!--
+        The controller_manager runs inside Gazebo and must use Gazebo's clock,
+        or every controller timestamps its commands from a different clock
+        than the physics they act on.
+      -->
+      <ros>
+        <namespace>/</namespace>
+      </ros>
+    </plugin>
+  </gazebo>
+
+</robot>

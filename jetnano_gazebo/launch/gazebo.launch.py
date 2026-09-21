@@ -13,16 +13,15 @@
 # limitations under the License.
 
 """
-Put the robot in Gazebo and nothing more.
+Put the robot in Gazebo, wire up its sensors, and let cmd_vel drive it.
 
     ros2 launch jetnano_gazebo gazebo.launch.py
     ros2 launch jetnano_gazebo gazebo.launch.py headless:=true
 
-Layers 1 and 2 of 4. This spawns the robot in the textured testbed, publishes
-its transforms, and bridges the lidar, RGB-D camera and IMU onto the topic
-names the real drivers use, so odometry.launch.py and slam.launch.py run
-against it unmodified. It does not drive the robot: ros2_control and the
-four-wheel steering are layer 3.
+Layers 1 to 3 of 4. Spawns the robot in the textured testbed, publishes its
+transforms, bridges the lidar, RGB-D camera and IMU onto the topic names the
+real drivers use, and brings up ros2_control so the robot can be driven from
+cmd_vel. Layer 4 is the full stack on top: Nav2, SLAM and the tilt guard.
 
 use_sim_time is true throughout. Everything downstream must agree, or the TF
 tree will be timestamped from two different clocks and nothing will line up.
@@ -37,7 +36,12 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument,
+    IncludeLaunchDescription,
+    RegisterEventHandler,
+)
+from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
@@ -61,6 +65,34 @@ def generate_launch_description():
         "'-r -s ' + '", world, "' if '", headless, "' == 'true' else '-r ' + '", world, "'"])
 
     robot_description = ParameterValue(Command(['xacro ', model]), value_type=str)
+
+    spawn = Node(
+        package='ros_gz_sim',
+        executable='create',
+        name='spawn_jetnano',
+        output='screen',
+        arguments=[
+            '-topic', 'robot_description',
+            '-name', 'jetnano',
+            '-x', '0.0', '-y', '0.0', '-z', '0.10',
+        ],
+        parameters=[{'use_sim_time': True}],
+    )
+
+    def spawner(controller):
+        """A controller_manager spawner for one controller."""
+        return Node(
+            package='controller_manager',
+            executable='spawner',
+            name=f'spawn_{controller}',
+            output='screen',
+            arguments=[controller, '--controller-manager', '/controller_manager'],
+            parameters=[{'use_sim_time': True}],
+        )
+
+    joint_state_broadcaster = spawner('joint_state_broadcaster')
+    steer_controller = spawner('steer_controller')
+    wheel_controller = spawner('wheel_controller')
 
     return LaunchDescription([
         DeclareLaunchArgument('world', default_value=default_world),
@@ -88,16 +120,23 @@ def generate_launch_description():
 
         # Spawns whatever robot_state_publisher is advertising, so the
         # simulator and the TF tree cannot describe different robots.
+        spawn,
+
+        # The controller_manager only exists once the robot is in the world,
+        # because it runs inside the Gazebo plugin attached to the model. A
+        # spawner started any earlier fails to find it and gives up.
+        RegisterEventHandler(OnProcessExit(
+            target_action=spawn,
+            on_exit=[joint_state_broadcaster, steer_controller, wheel_controller],
+        )),
+
+        # The simulator's counterpart to ros2_pca9685: cmd_vel in, eight joint
+        # commands out, using the same chassis geometry as the real robot.
         Node(
-            package='ros_gz_sim',
-            executable='create',
-            name='spawn_jetnano',
+            package='jetnano_gazebo',
+            executable='sim_drive',
+            name='sim_drive',
             output='screen',
-            arguments=[
-                '-topic', 'robot_description',
-                '-name', 'jetnano',
-                '-x', '0.0', '-y', '0.0', '-z', '0.10',
-            ],
             parameters=[{'use_sim_time': True}],
         ),
 
