@@ -1,0 +1,113 @@
+<?xml version="1.0"?>
+<!--
+  Copyright 2026 stevej52
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+
+  The robot, plus everything Gazebo needs and the real robot does not.
+
+  This WRAPS jetnano_description's URDF rather than editing it. The robot that
+  drives on the carpet and the robot that drives in the simulator are then the
+  same file plus a layer, and a mistake in here cannot stop the real one from
+  booting.
+
+      real robot:  jetnano_description/urdf/jetnano.urdf.xacro
+      simulator:   this file, which includes that one
+
+  Layer 1 of 4: enough to spawn and sit still without sinking, exploding or
+  sliding. Sensors are layer 2, ros2_control and the four-wheel steering are
+  layer 3. Kept deliberately small because Gazebo Harmonic's plugin syntax is
+  where the surprises live, and a small file makes a failure readable.
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="jetnano">
+
+  <!-- The real robot's description, unmodified. -->
+  <xacro:include filename="$(find jetnano_description)/urdf/jetnano.urdf.xacro"/>
+
+  <!--
+    Wheel contact.
+
+    mu/mu2 are the Coulomb friction coefficients along and across the contact.
+    Rubber tyres on an indoor floor sit near 1.0; a rock crawler's soft
+    compound is higher still, and being able to climb at all depends on it.
+    kp/kd are contact stiffness and damping: too stiff and the wheels chatter,
+    too soft and the robot sinks into the ground plane.
+
+    These are starting values. They are the first thing to change if the robot
+    will not climb, or if it jitters while standing still.
+  -->
+  <xacro:macro name="wheel_surface" params="name">
+    <gazebo reference="${name}_wheel_link">
+      <mu1>1.2</mu1>
+      <mu2>1.2</mu2>
+      <kp>1000000.0</kp>
+      <kd>100.0</kd>
+      <minDepth>0.001</minDepth>
+      <maxVel>0.1</maxVel>
+      <material>Gazebo/Black</material>
+    </gazebo>
+  </xacro:macro>
+
+  <xacro:wheel_surface name="front_left"/>
+  <xacro:wheel_surface name="front_right"/>
+  <xacro:wheel_surface name="rear_left"/>
+  <xacro:wheel_surface name="rear_right"/>
+
+  <!--
+    Chassis contact.
+
+    Low friction on purpose: if the belly grounds out on a rock, it should
+    slide rather than grip. A high-friction chassis turns every belly contact
+    into an anchor, which is not how the real machine behaves.
+  -->
+  <gazebo reference="base_link">
+    <mu1>0.2</mu1>
+    <mu2>0.2</mu2>
+    <material>Gazebo/Grey</material>
+  </gazebo>
+
+  <!-- The steering knuckles never touch anything; give them no contact cost. -->
+  <xacro:macro name="steer_surface" params="name">
+    <gazebo reference="${name}_steer_link">
+      <material>Gazebo/DarkGrey</material>
+    </gazebo>
+  </xacro:macro>
+
+  <xacro:steer_surface name="front_left"/>
+  <xacro:steer_surface name="front_right"/>
+  <xacro:steer_surface name="rear_left"/>
+  <xacro:steer_surface name="rear_right"/>
+
+  <!--
+    Ground truth.
+
+    The simulator knows exactly where the robot is, and the robot never will:
+    it has no wheel encoders and estimates its pose from a camera. Publishing
+    the true pose on its own topic, deliberately NOT into /tf, gives a
+    reference to measure visual-odometry drift against. That is the one thing
+    simulation offers here that no amount of hardware can.
+
+    odom_topic is separate from /odom so it can never be mistaken for the
+    robot's own estimate.
+  -->
+  <gazebo>
+    <plugin filename="gz-sim-odometry-publisher-system"
+            name="gz::sim::systems::OdometryPublisher">
+      <odom_frame>world</odom_frame>
+      <robot_base_frame>base_footprint</robot_base_frame>
+      <odom_publish_frequency>50</odom_publish_frequency>
+      <odom_topic>ground_truth/odom</odom_topic>
+    </plugin>
+  </gazebo>
+
+</robot>
