@@ -1,0 +1,56 @@
+# Copyright 2026 stevej52
+# Licensed under the Apache License, Version 2.0. See LICENSE.
+#
+# Map Gazebo's topics onto the names the REAL drivers publish, so that
+# odometry.launch.py, slam.launch.py and navigation.launch.py run against the
+# simulator without being told they are in one.
+#
+#   gazebo                      ->  real robot
+#   /scan                           /scan                     (rplidar_ros)
+#   /camera/image                   /camera/camera/color/image_raw
+#   /camera/camera_info             /camera/camera/color/camera_info
+#   /camera/depth_image             /camera/camera/aligned_depth_to_color/image_raw
+#   /imu/data                       /imu/data                 (bno055)
+#
+# ground_truth/odom has NO counterpart on the robot. It is the simulator's
+# exact pose, carried on its own name so it can never be mistaken for the
+# robot's own estimate, and it exists to measure visual-odometry drift
+# against. Nothing subscribes to it by default.
+
+- ros_topic_name: "/scan"
+  gz_topic_name: "/scan"
+  ros_type_name: "sensor_msgs/msg/LaserScan"
+  gz_type_name: "gz.msgs.LaserScan"
+  direction: GZ_TO_ROS
+
+- ros_topic_name: "/camera/camera/color/image_raw"
+  gz_topic_name: "/camera/image"
+  ros_type_name: "sensor_msgs/msg/Image"
+  gz_type_name: "gz.msgs.Image"
+  direction: GZ_TO_ROS
+
+- ros_topic_name: "/camera/camera/color/camera_info"
+  gz_topic_name: "/camera/camera_info"
+  ros_type_name: "sensor_msgs/msg/CameraInfo"
+  gz_type_name: "gz.msgs.CameraInfo"
+  direction: GZ_TO_ROS
+
+# 32FC1 metres here; the RealSense driver publishes 16UC1 millimetres.
+# rtabmap accepts both. Anything reading the raw buffer must not assume.
+- ros_topic_name: "/camera/camera/aligned_depth_to_color/image_raw"
+  gz_topic_name: "/camera/depth_image"
+  ros_type_name: "sensor_msgs/msg/Image"
+  gz_type_name: "gz.msgs.Image"
+  direction: GZ_TO_ROS
+
+- ros_topic_name: "/imu/data"
+  gz_topic_name: "/imu/data"
+  ros_type_name: "sensor_msgs/msg/Imu"
+  gz_type_name: "gz.msgs.IMU"
+  direction: GZ_TO_ROS
+
+- ros_topic_name: "/ground_truth/odom"
+  gz_topic_name: "/ground_truth/odom"
+  ros_type_name: "nav_msgs/msg/Odometry"
+  gz_type_name: "gz.msgs.Odometry"
+  direction: GZ_TO_ROS

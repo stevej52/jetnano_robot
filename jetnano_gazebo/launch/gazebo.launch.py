@@ -18,10 +18,11 @@ Put the robot in Gazebo and nothing more.
     ros2 launch jetnano_gazebo gazebo.launch.py
     ros2 launch jetnano_gazebo gazebo.launch.py headless:=true
 
-Layer 1 of 4. This spawns the robot in the textured testbed and publishes its
-transforms; it does not drive it, and the sensors are not wired yet. That is
-on purpose. Gazebo Harmonic's plugin syntax is where the surprises are, and a
-launch file that does one thing tells you which thing broke.
+Layers 1 and 2 of 4. This spawns the robot in the textured testbed, publishes
+its transforms, and bridges the lidar, RGB-D camera and IMU onto the topic
+names the real drivers use, so odometry.launch.py and slam.launch.py run
+against it unmodified. It does not drive the robot: ros2_control and the
+four-wheel steering are layer 3.
 
 use_sim_time is true throughout. Everything downstream must agree, or the TF
 tree will be timestamped from two different clocks and nothing will line up.
@@ -109,5 +110,18 @@ def generate_launch_description():
             output='screen',
             arguments=['/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock'],
             parameters=[{'use_sim_time': True}],
+        ),
+
+        # Renames Gazebo's sensor topics to the ones the real drivers publish,
+        # so odometry, SLAM and Nav2 cannot tell they are in a simulator.
+        Node(
+            package='ros_gz_bridge',
+            executable='parameter_bridge',
+            name='sensor_bridge',
+            output='screen',
+            parameters=[{
+                'config_file': os.path.join(gazebo_pkg, 'config', 'ros_gz_bridge.yaml'),
+                'use_sim_time': True,
+            }],
         ),
     ])

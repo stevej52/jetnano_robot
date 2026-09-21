@@ -24,15 +24,16 @@
       real robot:  jetnano_description/urdf/jetnano.urdf.xacro
       simulator:   this file, which includes that one
 
-  Layer 1 of 4: enough to spawn and sit still without sinking, exploding or
-  sliding. Sensors are layer 2, ros2_control and the four-wheel steering are
-  layer 3. Kept deliberately small because Gazebo Harmonic's plugin syntax is
-  where the surprises live, and a small file makes a failure readable.
+  Layers 1 and 2: spawn, contact surfaces, ground truth, and the three
+  sensors. ros2_control and the four-wheel steering are layer 3.
 -->
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="jetnano">
 
   <!-- The real robot's description, unmodified. -->
   <xacro:include filename="$(find jetnano_description)/urdf/jetnano.urdf.xacro"/>
+
+  <!-- Layer 2: lidar, RGB-D camera and IMU, with realistic noise. -->
+  <xacro:include filename="$(find jetnano_gazebo)/urdf/jetnano_sensors.gazebo.xacro"/>
 
   <!--
     Wheel contact.

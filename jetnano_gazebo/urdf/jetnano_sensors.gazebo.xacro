@@ -1,0 +1,169 @@
+<?xml version="1.0"?>
+<!--
+  Copyright 2026 stevej52
+  Licensed under the Apache License, Version 2.0. See LICENSE.
+
+  Layer 2: the three sensors, simulated.
+
+  The frame ids below MUST match jetnano.urdf.xacro - lidar_link, camera_link,
+  imu_link - for the same reason sensors.launch.py says so for the real robot:
+  getting one wrong is the classic cause of a map that slowly shears away from
+  reality, and it is invisible until the map is already wrong.
+
+  Every sensor carries noise on purpose. A noiseless simulator flatters the
+  hardware and any tuning done against it fails to transfer: an EKF tuned
+  against a perfect IMU is tuned for a robot that does not exist. The numbers
+  approximate the real parts (BNO055, RPLidar A1M8, RealSense D435) and are
+  documented per sensor so they can be argued with.
+
+  Gazebo publishes these on gz topics; config/ros_gz_bridge.yaml maps them to
+  the topic names the real drivers use, so Nav2, slam_toolbox and
+  rgbd_odometry run against the simulator unmodified.
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!--
+    RPLidar A1M8.
+
+    360 degrees at 10 Hz. The real unit does about 8000 samples a second, so
+    720 samples a revolution (0.5 degree) is close. Range is clamped to match
+    slam_toolbox's min_laser_range 0.15 / max_laser_range 10.0, so the
+    simulator cannot hand SLAM returns the real lidar would never produce.
+
+    Range noise: the A1M8 is roughly 1% of distance; 0.01 m standard deviation
+    is representative at indoor ranges.
+  -->
+  <gazebo reference="lidar_link">
+    <sensor name="rplidar" type="gpu_lidar">
+      <pose>0 0 0 0 0 0</pose>
+      <topic>scan</topic>
+      <gz_frame_id>lidar_link</gz_frame_id>
+      <update_rate>10.0</update_rate>
+      <always_on>true</always_on>
+      <visualize>false</visualize>
+      <lidar>
+        <scan>
+          <horizontal>
+            <samples>720</samples>
+            <resolution>1</resolution>
+            <min_angle>-3.14159</min_angle>
+            <max_angle>3.14159</max_angle>
+          </horizontal>
+          <vertical>
+            <samples>1</samples>
+            <resolution>1</resolution>
+            <min_angle>0</min_angle>
+            <max_angle>0</max_angle>
+          </vertical>
+        </scan>
+        <range>
+          <min>0.15</min>
+          <max>10.0</max>
+          <resolution>0.01</resolution>
+        </range>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.01</stddev>
+        </noise>
+      </lidar>
+    </sensor>
+  </gazebo>
+
+  <!--
+    RealSense D435, colour plus registered depth.
+
+    An rgbd_camera is used rather than a separate camera and depth_camera
+    because the real driver runs with align_depth.enable, so depth arrives
+    already registered to the colour frame. One sensor gives that for free;
+    two would have to be aligned by hand and would drift apart.
+
+    640x480 at 30 Hz matches sensors.launch.py. The horizontal field of view
+    is 1.211 rad (69.4 degrees), the D435's colour FOV.
+
+    ONE REAL DIFFERENCE FROM HARDWARE, worth knowing before trusting a
+    measurement: Gazebo publishes depth as 32FC1 in METRES, while the
+    RealSense driver publishes 16UC1 in MILLIMETRES. rtabmap accepts both, so
+    nothing breaks, but anything that reads the raw buffer must handle both.
+
+    Camera noise is mild and deliberate. Perfectly clean images give feature
+    detectors an easier problem than reality does.
+  -->
+  <gazebo reference="camera_link">
+    <sensor name="d435" type="rgbd_camera">
+      <pose>0 0 0 0 0 0</pose>
+      <topic>camera</topic>
+      <gz_frame_id>camera_link</gz_frame_id>
+      <update_rate>30.0</update_rate>
+      <always_on>true</always_on>
+      <camera>
+        <horizontal_fov>1.211</horizontal_fov>
+        <image>
+          <width>640</width>
+          <height>480</height>
+          <format>R8G8B8</format>
+        </image>
+        <clip>
+          <near>0.05</near>
+          <far>20.0</far>
+        </clip>
+        <depth_camera>
+          <clip>
+            <near>0.28</near>
+            <far>10.0</far>
+          </clip>
+        </depth_camera>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.007</stddev>
+        </noise>
+        <optical_frame_id>camera_link</optical_frame_id>
+      </camera>
+    </sensor>
+  </gazebo>
+
+  <!--
+    BNO055.
+
+    50 Hz, matching data_query_frequency in sensors.launch.py. The real part
+    fuses accelerometer, gyroscope and magnetometer on-chip and reports an
+    absolute orientation, which is why the EKF trusts its yaw; Gazebo's imu
+    sensor likewise reports orientation directly.
+
+    Noise figures approximate the datasheet: gyro noise density near
+    0.014 deg/s/sqrt(Hz) and accelerometer near 150 ug/sqrt(Hz), converted to
+    per-sample standard deviations at 50 Hz and rounded. Bias terms are
+    included because a bias is what actually ruins dead reckoning - a double
+    integration turns a constant bias into an error growing as t squared, and
+    without it the simulated IMU would look far better than the real one.
+  -->
+  <gazebo reference="imu_link">
+    <sensor name="bno055" type="imu">
+      <pose>0 0 0 0 0 0</pose>
+      <topic>imu/data</topic>
+      <gz_frame_id>imu_link</gz_frame_id>
+      <update_rate>50.0</update_rate>
+      <always_on>true</always_on>
+      <imu>
+        <angular_velocity>
+          <x><noise type="gaussian"><mean>0.0</mean><stddev>0.002</stddev>
+            <bias_mean>0.0</bias_mean><bias_stddev>0.0001</bias_stddev></noise></x>
+          <y><noise type="gaussian"><mean>0.0</mean><stddev>0.002</stddev>
+            <bias_mean>0.0</bias_mean><bias_stddev>0.0001</bias_stddev></noise></y>
+          <z><noise type="gaussian"><mean>0.0</mean><stddev>0.002</stddev>
+            <bias_mean>0.0</bias_mean><bias_stddev>0.0001</bias_stddev></noise></z>
+        </angular_velocity>
+        <linear_acceleration>
+          <x><noise type="gaussian"><mean>0.0</mean><stddev>0.017</stddev>
+            <bias_mean>0.0</bias_mean><bias_stddev>0.001</bias_stddev></noise></x>
+          <y><noise type="gaussian"><mean>0.0</mean><stddev>0.017</stddev>
+            <bias_mean>0.0</bias_mean><bias_stddev>0.001</bias_stddev></noise></y>
+          <z><noise type="gaussian"><mean>0.0</mean><stddev>0.017</stddev>
+            <bias_mean>0.0</bias_mean><bias_stddev>0.001</bias_stddev></noise></z>
+        </linear_acceleration>
+      </imu>
+    </sensor>
+  </gazebo>
+
+</robot>
