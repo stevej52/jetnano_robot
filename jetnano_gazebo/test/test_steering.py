@@ -150,20 +150,34 @@ def test_stationary_is_all_zeros():
         assert commands.speed[name] == pytest.approx(0.0)
 
 
-def test_reverse_turn_keeps_steering_on_the_same_side():
+def test_reversing_puts_the_icr_on_the_other_side():
     """
-    Backing up while turning left must not flip the wheels.
+    Backing up while yawing the same way moves the centre of rotation across.
 
-    R = v / w changes sign with v, so a naive implementation mirrors the
-    steering when reversing and the robot backs the wrong way out of a turn.
+    To yaw counter-clockwise while REVERSING, the ICR must be to the right,
+    not the left: R = v / w flips sign with v. The steering therefore mirrors
+    left-to-right as well as changing sign, so a wheel's angle when reversing
+    matches the OPPOSITE wheel's angle going forward, negated.
+
+    Getting this wrong is not obvious from watching the robot - it still backs
+    up and still turns - so it is asserted rather than eyeballed.
     """
     forward = commands_from_twist(CHASSIS, linear_x=0.4, angular_z=0.8)
     reverse = commands_from_twist(CHASSIS, linear_x=-0.4, angular_z=0.8)
+
     assert reverse.speed['front_left'] < 0.0, 'reverse must spin wheels backwards'
-    # Same yaw rate about the same ICR side: the ICR flips to the other side
-    # when v flips, so the steering legitimately mirrors. Assert it is
-    # consistent rather than accidental.
-    assert reverse.steer['front_left'] == pytest.approx(-forward.steer['front_left'])
+    assert reverse.steer['front_left'] == pytest.approx(-forward.steer['front_right'])
+    assert reverse.steer['front_right'] == pytest.approx(-forward.steer['front_left'])
+    # Opposite phase still holds when reversing.
+    assert reverse.steer['rear_left'] == pytest.approx(-reverse.steer['front_left'])
+
+
+def test_reversing_straight_does_not_steer_at_all():
+    """What tilt_guard actually commands: straight back, wheels centred."""
+    commands = commands_from_twist(CHASSIS, linear_x=-0.15, angular_z=0.0)
+    for name in CORNERS:
+        assert commands.steer[name] == pytest.approx(0.0)
+        assert commands.speed[name] < 0.0
 
 
 def test_all_four_corners_are_always_present():
