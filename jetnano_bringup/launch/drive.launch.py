@@ -15,6 +15,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -31,6 +32,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'simulate', default_value='false',
             description='Log PWM writes instead of driving the board'),
+        DeclareLaunchArgument(
+            'use_tilt_guard', default_value='true',
+            description='Back out of a roll or pitch past its limit. Needs imu/data, '
+                        'so it does nothing until sensors.launch.py is up.'),
         DeclareLaunchArgument(
             'i2c_bus', default_value='7',
             description='I2C bus the PCA9685 is on. Was 1 on the Jetson Nano; '
@@ -55,5 +60,16 @@ def generate_launch_description():
             parameters=[mux_config],
             # twist_mux publishes cmd_vel_out; the driver listens on cmd_vel.
             remappings=[('cmd_vel_out', 'cmd_vel')],
+        ),
+
+        # Reads imu/data directly rather than the EKF, because the EKF runs in
+        # two_d_mode and pins roll and pitch to zero. Publishes cmd_vel_tilt,
+        # which twist_mux ranks above teleop.
+        Node(
+            package='jetnano_bringup',
+            executable='tilt_guard',
+            name='tilt_guard',
+            output='screen',
+            condition=IfCondition(LaunchConfiguration('use_tilt_guard')),
         ),
     ])

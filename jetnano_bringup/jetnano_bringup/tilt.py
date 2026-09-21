@@ -1,0 +1,179 @@
+# Copyright 2026 stevej52
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""
+Decide when the robot is tilting far enough to back out of it.
+
+This is the whole decision, with no ROS in it, so the behaviour can be tested
+against a list of angles and timestamps instead of against a robot on a slope.
+
+The shape of the problem is not "is the angle too big right now". Three things
+make it a state machine:
+
+* A jolt over a rock spikes the IMU for a few tens of milliseconds. Acting on
+  that would have the robot reversing away from every stone it drives over, so
+  the angle has to stay past the trigger for ``debounce`` before anything
+  happens.
+* Triggering and releasing on the same angle oscillates forever on the
+  threshold. Release is therefore a separate, lower angle.
+* Releasing the moment the angle drops means stopping while still on the thing
+  that caused it. Recovery runs for at least ``min_recovery`` regardless.
+
+Roll gets a tighter trigger than pitch, and that is not arbitrary: this
+chassis is longer than it is wide (0.313 m wheelbase against 0.220 m track),
+so it tips sideways sooner than it tips end over end. A crawler is also meant
+to climb steep pitch, so a pitch limit as tight as the roll limit would fight
+the robot's whole purpose.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum
+import math
+
+
+class State(Enum):
+    """Where the guard is in its cycle."""
+
+    SAFE = 'safe'
+    ARMED = 'armed'          # past the trigger, waiting out the debounce
+    RECOVERING = 'recovering'
+
+
+def roll_pitch_from_quaternion(x: float, y: float, z: float, w: float) -> tuple[float, float]:
+    """
+    Return (roll, pitch) in radians from a quaternion, ZYX convention.
+
+    ``asin`` is clamped because a quaternion that is fractionally off unit
+    length - which any real IMU will hand you - can otherwise push the
+    argument past 1.0 and raise straight out of a sensor callback.
+    """
+    sinr_cosp = 2.0 * (w * x + y * z)
+    cosr_cosp = 1.0 - 2.0 * (x * x + y * y)
+    roll = math.atan2(sinr_cosp, cosr_cosp)
+
+    sinp = 2.0 * (w * y - z * x)
+    pitch = math.asin(max(-1.0, min(1.0, sinp)))
+    return roll, pitch
+
+
+@dataclass
+class TiltLimits:
+    """
+    The angles, in degrees, and the times, in seconds.
+
+    Defaults come from this chassis's geometry. Static tipping angles work out
+    at about 59 degrees in roll and 67 in pitch, using the URDF masses; the
+    real centre of mass is higher than the URDF says, because the battery, the
+    Jetson and a lidar at 0.145 m are not modelled, so the true angles are
+    lower. Dynamic rollover happens well below static in any case. These
+    triggers sit near half the static figure, which is a starting point to
+    tune down from, not a measurement.
+    """
+
+    roll_trigger_deg: float = 25.0
+    pitch_trigger_deg: float = 35.0
+    roll_release_deg: float = 15.0
+    pitch_release_deg: float = 20.0
+    debounce_s: float = 0.2
+    min_recovery_s: float = 1.5
+    max_recovery_s: float = 5.0
+
+    def validate(self) -> None:
+        """Raise if the numbers describe a guard that cannot work."""
+        if self.roll_release_deg >= self.roll_trigger_deg:
+            raise ValueError('roll_release_deg must be below roll_trigger_deg, or the '
+                             'guard oscillates on the threshold')
+        if self.pitch_release_deg >= self.pitch_trigger_deg:
+            raise ValueError('pitch_release_deg must be below pitch_trigger_deg, or the '
+                             'guard oscillates on the threshold')
+        if self.max_recovery_s <= self.min_recovery_s:
+            raise ValueError('max_recovery_s must exceed min_recovery_s')
+        if self.debounce_s < 0.0:
+            raise ValueError('debounce_s cannot be negative')
+
+
+class TiltGuard:
+    """
+    Track roll and pitch over time and say when to reverse.
+
+    Feed it :meth:`update` with angles in radians and a monotonic timestamp in
+    seconds. Ask :meth:`reversing` whether a recovery command should go out.
+    """
+
+    def __init__(self, limits: TiltLimits | None = None) -> None:
+        """Start in SAFE with no history."""
+        self.limits = limits or TiltLimits()
+        self.limits.validate()
+        self.state = State.SAFE
+        self._armed_at: float | None = None
+        self._recovery_at: float | None = None
+        self.last_reason = ''
+        self.gave_up = False
+
+    def _past_trigger(self, roll_deg: float, pitch_deg: float) -> str:
+        """Return which axis is past its trigger, or '' for neither."""
+        if abs(roll_deg) >= self.limits.roll_trigger_deg:
+            return 'roll'
+        if abs(pitch_deg) >= self.limits.pitch_trigger_deg:
+            return 'pitch'
+        return ''
+
+    def _past_release(self, roll_deg: float, pitch_deg: float) -> bool:
+        """True while either axis is still above its release angle."""
+        return (abs(roll_deg) >= self.limits.roll_release_deg
+                or abs(pitch_deg) >= self.limits.pitch_release_deg)
+
+    def update(self, roll: float, pitch: float, now: float) -> State:
+        """Advance the state machine one sample and return the new state."""
+        roll_deg = math.degrees(roll)
+        pitch_deg = math.degrees(pitch)
+        axis = self._past_trigger(roll_deg, pitch_deg)
+
+        if self.state is State.SAFE:
+            if axis:
+                self.state = State.ARMED
+                self._armed_at = now
+                self.last_reason = f'{axis} {roll_deg if axis == "roll" else pitch_deg:.1f} deg'
+
+        elif self.state is State.ARMED:
+            if not axis:
+                # A jolt, not a slope. Forget it.
+                self.state = State.SAFE
+                self._armed_at = None
+            elif now - (self._armed_at or now) >= self.limits.debounce_s:
+                self.state = State.RECOVERING
+                self._recovery_at = now
+                self.gave_up = False
+
+        elif self.state is State.RECOVERING:
+            elapsed = now - (self._recovery_at or now)
+            if elapsed >= self.limits.max_recovery_s:
+                # Reversing has not helped. Stop driving blind and hand back.
+                self.state = State.SAFE
+                self.gave_up = True
+                self._recovery_at = None
+                self._armed_at = None
+            elif elapsed >= self.limits.min_recovery_s and not self._past_release(roll_deg,
+                                                                                  pitch_deg):
+                self.state = State.SAFE
+                self._recovery_at = None
+                self._armed_at = None
+
+        return self.state
+
+    def reversing(self) -> bool:
+        """True when a recovery command should be published this cycle."""
+        return self.state is State.RECOVERING
