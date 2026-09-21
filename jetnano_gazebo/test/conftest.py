@@ -12,4 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Gazebo simulation assets for the jetnano crawler."""
+"""Skip the tests whose dependencies are not installed."""
+
+import importlib.util
+
+collect_ignore = []
+if importlib.util.find_spec('rclpy') is None:
+    collect_ignore.append('test_drive_node.py')
+for linter in ('copyright', 'flake8', 'pep257'):
+    if importlib.util.find_spec(f'ament_{linter}') is None:
+        collect_ignore.append(f'test_{linter}.py')
