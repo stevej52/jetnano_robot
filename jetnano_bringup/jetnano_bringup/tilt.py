@@ -137,7 +137,15 @@ class TiltGuard:
                 or abs(pitch_deg) >= self.limits.pitch_release_deg)
 
     def update(self, roll: float, pitch: float, now: float) -> State:
-        """Advance the state machine one sample and return the new state."""
+        """
+        Advance the state machine one sample and return the new state.
+
+        ``now`` is compared against stored timestamps with explicit ``is not
+        None`` checks rather than ``or``: a timestamp of exactly 0.0 is falsy
+        in Python, and simulated clocks start at 0.0, so ``self._armed_at or
+        now`` would silently make every elapsed time zero and the guard would
+        never leave ARMED. That is a bug you would only meet in Gazebo.
+        """
         roll_deg = math.degrees(roll)
         pitch_deg = math.degrees(pitch)
         axis = self._past_trigger(roll_deg, pitch_deg)
@@ -153,13 +161,13 @@ class TiltGuard:
                 # A jolt, not a slope. Forget it.
                 self.state = State.SAFE
                 self._armed_at = None
-            elif now - (self._armed_at or now) >= self.limits.debounce_s:
+            elif self._armed_at is not None and now - self._armed_at >= self.limits.debounce_s:
                 self.state = State.RECOVERING
                 self._recovery_at = now
                 self.gave_up = False
 
         elif self.state is State.RECOVERING:
-            elapsed = now - (self._recovery_at or now)
+            elapsed = 0.0 if self._recovery_at is None else now - self._recovery_at
             if elapsed >= self.limits.max_recovery_s:
                 # Reversing has not helped. Stop driving blind and hand back.
                 self.state = State.SAFE
