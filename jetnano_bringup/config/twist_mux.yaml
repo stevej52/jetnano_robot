@@ -27,6 +27,14 @@ twist_mux:
         topic: cmd_vel_nav
         timeout: 0.5
         priority: 10
+      # Above teleop on purpose: if the robot is going over, the operator's
+      # stick must not be able to fight the recovery. tilt_guard publishes
+      # nothing at all when it is not recovering, so this input simply times
+      # out and control falls back on its own.
+      tilt_recovery:
+        topic: cmd_vel_tilt
+        timeout: 0.5
+        priority: 150
 
     locks:
       # While this is true, everything is blocked and the output is zero.
