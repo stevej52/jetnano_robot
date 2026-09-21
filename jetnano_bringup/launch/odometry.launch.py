@@ -23,8 +23,15 @@ def generate_launch_description():
     bringup_pkg = get_package_share_directory('jetnano_bringup')
     ekf_config = os.path.join(bringup_pkg, 'config', 'ekf.yaml')
 
+    use_sim_time = LaunchConfiguration('use_sim_time')
+
     return LaunchDescription([
         DeclareLaunchArgument('use_visual_odometry', default_value='true'),
+        DeclareLaunchArgument(
+            'use_sim_time', default_value='false',
+            description='Take time from /clock. MUST be true under Gazebo, or '
+                        'rtabmap stamps its output from the wall clock while the '
+                        'images carry sim time and nothing in tf lines up.'),
 
         Node(
             package='rtabmap_odom',
@@ -33,6 +40,7 @@ def generate_launch_description():
             output='screen',
             condition=IfCondition(LaunchConfiguration('use_visual_odometry')),
             parameters=[{
+                'use_sim_time': use_sim_time,
                 'frame_id': 'base_link',
                 'odom_frame_id': 'odom',
                 'publish_tf': False,
@@ -53,6 +61,6 @@ def generate_launch_description():
             executable='ekf_node',
             name='ekf_filter_node',
             output='screen',
-            parameters=[ekf_config],
+            parameters=[ekf_config, {'use_sim_time': use_sim_time}],
         ),
     ])

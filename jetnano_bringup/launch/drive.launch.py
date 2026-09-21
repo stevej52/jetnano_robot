@@ -33,6 +33,9 @@ def generate_launch_description():
             'simulate', default_value='false',
             description='Log PWM writes instead of driving the board'),
         DeclareLaunchArgument(
+            'use_sim_time', default_value='false',
+            description='Take time from /clock. Must be true under Gazebo.'),
+        DeclareLaunchArgument(
             'use_tilt_guard', default_value='true',
             description='Back out of a roll or pitch past its limit. Needs imu/data, '
                         'so it does nothing until sensors.launch.py is up.'),
@@ -49,6 +52,7 @@ def generate_launch_description():
             parameters=[pca_config, {
                 'simulate': simulate,
                 'i2c_bus': i2c_bus,
+                'use_sim_time': LaunchConfiguration('use_sim_time'),
             }],
         ),
 
@@ -57,7 +61,9 @@ def generate_launch_description():
             executable='twist_mux',
             name='twist_mux',
             output='screen',
-            parameters=[mux_config],
+            parameters=[mux_config, {
+                'use_sim_time': LaunchConfiguration('use_sim_time'),
+            }],
             # twist_mux publishes cmd_vel_out; the driver listens on cmd_vel.
             remappings=[('cmd_vel_out', 'cmd_vel')],
         ),
@@ -70,6 +76,7 @@ def generate_launch_description():
             executable='tilt_guard',
             name='tilt_guard',
             output='screen',
+            parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time')}],
             condition=IfCondition(LaunchConfiguration('use_tilt_guard')),
         ),
     ])

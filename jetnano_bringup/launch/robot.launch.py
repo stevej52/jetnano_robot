@@ -34,9 +34,13 @@ def generate_launch_description():
     simulate = LaunchConfiguration('simulate')
     i2c_bus = LaunchConfiguration('i2c_bus')
     use_camera = LaunchConfiguration('use_camera')
+    use_sim_time = LaunchConfiguration('use_sim_time')
 
     return LaunchDescription([
         DeclareLaunchArgument('simulate', default_value='false'),
+        DeclareLaunchArgument(
+            'use_sim_time', default_value='false',
+            description='Take time from /clock. Must be true under Gazebo.'),
         DeclareLaunchArgument('i2c_bus', default_value='7'),
         DeclareLaunchArgument('use_lidar', default_value='true'),
         DeclareLaunchArgument('use_camera', default_value='true'),
@@ -44,11 +48,14 @@ def generate_launch_description():
         DeclareLaunchArgument('use_odometry', default_value='true'),
         DeclareLaunchArgument('use_teleop', default_value='false'),
 
-        _include('description.launch.py'),
+        _include('description.launch.py', arguments={
+            'use_sim_time': use_sim_time,
+        }.items()),
 
         _include('drive.launch.py', arguments={
             'simulate': simulate,
             'i2c_bus': i2c_bus,
+            'use_sim_time': use_sim_time,
         }.items()),
 
         _include('sensors.launch.py', arguments={
@@ -58,7 +65,8 @@ def generate_launch_description():
         }.items()),
 
         _include('odometry.launch.py',
-                 condition=IfCondition(LaunchConfiguration('use_odometry'))),
+                 condition=IfCondition(LaunchConfiguration('use_odometry')),
+                 arguments={'use_sim_time': use_sim_time}.items()),
 
         _include('teleop.launch.py',
                  condition=IfCondition(LaunchConfiguration('use_teleop'))),

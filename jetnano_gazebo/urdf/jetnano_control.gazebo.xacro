@@ -11,6 +11,34 @@
   ros2_pca9685 drives three PWM channels: a throttle, a front steering servo
   and a rear steering servo.
 
+  WHERE THIS DIFFERS FROM THE REAL DRIVETRAIN, and it matters on a crawler.
+
+  The robot is four-wheel DRIVE from a SINGLE motor: one ESC on channel 0, a
+  centre shaft, and a differential on each axle. The wheels end up at
+  different speeds through a turn because the differentials let them, not
+  because anything commands them to.
+
+  Here each wheel is commanded to its own velocity independently. The speeds
+  that come out match what the differentials would produce, so a turn looks
+  right - but the failure mode does not. With an open differential, a wheel
+  that lifts or loses grip takes all the torque and the robot stops dead; that
+  is THE characteristic way a rock crawler gets stuck. A velocity-commanded
+  joint is forced to its speed whatever the traction, so the simulated robot
+  cannot wheelspin and cannot lose drive to a lifted wheel.
+
+  The consequence, stated plainly so nobody is surprised by it: THIS ROBOT
+  CLIMBS BETTER IN SIMULATION THAN IT DOES ON ROCKS. Use the simulator for
+  navigation, SLAM, odometry and tilt behaviour, where it is faithful. Do not
+  use it to answer "can the robot get up this", and do not tune traction
+  against it.
+
+  Tilt thresholds are unaffected: driving onto a 30 degree ramp tilts the
+  robot 30 degrees whether or not the wheels are slipping, so tuning
+  tilt_guard here is still valid.
+
+  Modelling it properly would mean effort commands and one torque source split
+  across the axles. That is a real piece of work and is not layer 3.
+
   Deliberately NOT ackermann_steering_controller. That controller models two
   steered wheels and two driven ones - a front-steering car. This chassis
   steers all four, which it cannot express. Instead the joints are exposed
