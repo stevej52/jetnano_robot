@@ -41,10 +41,17 @@
       min_limit: -1.0          # robot forward: all the ESC has (1292 us)
       # Robot backward is capped so it is no faster than forward - a rock
       # crawler wants torque, not speed, and full reverse (1650+) is quicker
-      # than the ESC's forward side can ever be. 0.6 of the way to 1650 is
-      # 1540 us, matched to forward's top speed by eye. Raise toward 1.0 for
-      # more reverse; lower it if backward still outruns forward.
-      max_limit: 0.6
+      # than the ESC's forward side can ever be. Bench runs showed forward is
+      # effectively ONE slow speed (it saturates just past the dead zone), and
+      # ranking free-spinning wheels by eye beyond that was unreliable - two
+      # runs disagreed. 0.2 of the way to 1650 is 1430 us, which read as
+      # "slow" in every run: a safe match for forward. Raise toward 1.0 for
+      # more reverse. The real fix is recalibrating the ESC (see below).
+      max_limit: 0.2
+      # TODO: recalibrate the ESC's throttle range from the PCA9685 so neutral
+      # is 1500 us with symmetric endpoints, and set the crawler speed limit in
+      # the ESC's own settings. That removes the asymmetry entirely. Needs the
+      # ESC's make/model for its calibration procedure.
       home: 0.0
       timeout: 0.5             # back to neutral if commands stop
       twist:
