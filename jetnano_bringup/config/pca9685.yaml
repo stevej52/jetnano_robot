@@ -22,36 +22,23 @@
     throttle:
       channel: 0
       type: continuous
-      # Bench-measured 2026-09-21 on the real ESC, wheels up. This ESC runs the
-      # OPPOSITE of RC convention: neutral is 1375 us (1500 drives it backward),
-      # SHORTER pulses go forward, longer go backward. The pulse limits are the
-      # ESC's own endpoints, found by driving it: forward speed PEAKS at
-      # ~1292 us and falls off again by 1250 (past its calibration), so 1292
-      # is full forward - only ~80 us of forward travel exists. Backward keeps
-      # gaining to ~1750 ("turbo"); capped at 1650 here on purpose.
+      # The 2021 joystick mapping, recovered from nanoserverlite.py and the
+      # PC-side senders, reproduced exactly - it was driven for hours and is
+      # more trustworthy than ranking free-spinning wheels by eye. That chain
+      # was LINEAR with no deadzone and no curve: stick -> servo degrees on
+      # ServoKit defaults (750-2250 us over 180 deg) at 100 Hz, throttle
+      # neutral 75 deg with full forward 60 and full back 100.
       #
-      # That asymmetry (narrow forward, wide backward) is the signature of an
-      # RC ESC whose 50%-limited REVERSE is wired as the robot's forward. The
-      # robot therefore has more speed backward than forward. Swapping two
-      # motor wires would flip that; if you ever do, negate linear_x below and
-      # swap forward_start/reverse_start.
-      min_pulse_us: 1292.0
-      neutral_pulse_us: 1375.0
-      max_pulse_us: 1650.0
-      min_limit: -1.0          # robot forward: all the ESC has (1292 us)
-      # Robot backward is capped so it is no faster than forward - a rock
-      # crawler wants torque, not speed, and full reverse (1650+) is quicker
-      # than the ESC's forward side can ever be. Bench runs showed forward is
-      # effectively ONE slow speed (it saturates just past the dead zone), and
-      # ranking free-spinning wheels by eye beyond that was unreliable - two
-      # runs disagreed. 0.2 of the way to 1650 is 1430 us, which read as
-      # "slow" in every run: a safe match for forward. Raise toward 1.0 for
-      # more reverse. The real fix is recalibrating the ESC (see below).
-      max_limit: 0.2
-      # TODO: recalibrate the ESC's throttle range from the PCA9685 so neutral
-      # is 1500 us with symmetric endpoints, and set the crawler speed limit in
-      # the ESC's own settings. That removes the asymmetry entirely. Needs the
-      # ESC's make/model for its calibration procedure.
+      # This ESC runs the OPPOSITE of RC convention: neutral is 1375 us (1500
+      # drives it backward), SHORTER pulses go forward. Bench-confirmed.
+      # Forward travel is the short side (125 us) and back the long side
+      # (208 us), so the robot is quicker backward than forward - that is how
+      # it was tuned; it is a crawler. Cap max_limit below 1.0 to change that.
+      min_pulse_us: 1250.0     # 60 deg: full forward, as the joystick drove it
+      neutral_pulse_us: 1375.0 # 75 deg
+      max_pulse_us: 1583.0     # 100 deg: full back
+      min_limit: -1.0
+      max_limit: 1.0
       home: 0.0
       timeout: 0.5             # back to neutral if commands stop
       twist:
@@ -61,13 +48,10 @@
           values: [0.0]
           durations: [2.0]
         deadband: 0.02
-        # Where the motor actually starts moving, as a fraction of each side's
-        # travel. The driver names sides by PULSE direction: its "reverse" is
-        # toward min_pulse_us, which with linear_x -1.0 is the ROBOT'S FORWARD.
-        # Measured: nothing moves within ~25 us of neutral either way, which
-        # is 25/83 of the short forward side and 25/275 of the long back side.
-        reverse_start: 0.30    # robot forward (short pulses) starts here
-        forward_start: 0.09    # robot backward (long pulses) starts here
+        # No start offsets: the 2021 chain had none, and the ESC's own dead
+        # zone (~25 us either side of neutral) is small enough to leave to it.
+        forward_start: 0.0
+        reverse_start: 0.0
 
     steering:
       channel: 1
