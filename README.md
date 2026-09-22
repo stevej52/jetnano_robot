@@ -174,18 +174,28 @@ Likewise `odom` parents `base_footprint`, not `base_link` — `base_link`
 already has a parent in the URDF, and a frame with two parents is not a tree.
 TF stops resolving and nothing tells you why.
 
-## Things that are guesses, not measurements
+## What is measured and what is still a guess
 
-Marked `MEASURE ME` in the files:
+The drive chain was calibrated on the real robot on 2026-09-21 - see
+[docs/bench-calibration-2026-09-21.md](docs/bench-calibration-2026-09-21.md)
+for the method, the numbers and the lessons. **Measured**, and in
+`pca9685.yaml`: the ESC's neutral (1375 us - it runs the opposite of RC
+convention, shorter is forward), both throttle endpoints, the steering
+centre (84) and limits (40-125), the rear mirror, and the twist signs. The
+I2C bus, both addresses and the BNO055's saved calibration offsets are
+confirmed too.
 
-- **Chassis geometry** (`jetnano.urdf.xacro`): wheelbase 0.313 m, track
-  0.220 m, wheel radius 0.060 m, and the sensor mount positions. Estimates for
-  a 1/10 crawler, written while the robot was in storage.
-- **`i2c_bus: 7`** (`pca9685.yaml`): it was 1 on the Jetson Nano. JetPack 7 on
-  the Orin numbers the 40-pin header differently. Confirm with `i2cdetect -l`
-  and `i2cdetect -y -r 7`, looking for address `40`.
+Still marked `MEASURE ME` in the files, because they are still guesses:
+
+- **Chassis geometry and sensor mounts** (`jetnano.urdf.xacro`): wheelbase
+  0.313 m, track 0.220 m, wheel radius 0.060 m, and where the sensors sit.
+  Estimates for a 1/10 crawler, written while the robot was in storage.
 - **`minimum_turning_radius: 0.30`** (`nav2.yaml`): geometry gives 0.27 m for
-  both axles at 30°, but tyre scrub on a crawler makes the real figure larger.
+  both axles at 30 deg, but tyre scrub on a crawler makes the real figure
+  larger. Drive a full-lock circle and measure it.
+- **Throttle to ground speed**: `cmd_vel` is not in m/s until a taped-out run
+  is timed. **Servo to wheel angle**: the `-18.33` gain is a guess until a
+  protractor meets a tyre.
 - **Joystick axis and button numbers** (`joysticks.yaml`): run
   `ros2 run jetnano_teleop list_devices --watch` and replace them with what
   you actually see.
