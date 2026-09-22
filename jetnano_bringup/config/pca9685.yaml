@@ -22,21 +22,22 @@
     throttle:
       channel: 0
       type: continuous
-      # The 2021 joystick mapping, recovered from nanoserverlite.py and the
-      # PC-side senders, reproduced exactly - it was driven for hours and is
-      # more trustworthy than ranking free-spinning wheels by eye. That chain
-      # was LINEAR with no deadzone and no curve: stick -> servo degrees on
-      # ServoKit defaults (750-2250 us over 180 deg) at 100 Hz, throttle
-      # neutral 75 deg with full forward 60 and full back 100.
-      #
+      # Bench-calibrated 2026-09-21 on the real ESC, wheels up, by stepping the
+      # pulse 20 us at a time and having the owner rate speed out of 10:
+      #   forward  1292:2  1272:4  1252:6  1232:8  1212:9  1192:10  1172:11
+      #   reverse  1514:3  1530:4  1550:5  1570:7  1595:8  1625:8   1665:8
       # This ESC runs the OPPOSITE of RC convention: neutral is 1375 us (1500
-      # drives it backward), SHORTER pulses go forward. Bench-confirmed.
-      # Forward travel is the short side (125 us) and back the long side
-      # (208 us), so the robot is quicker backward than forward - that is how
-      # it was tuned; it is a crawler. Cap max_limit below 1.0 to change that.
-      min_pulse_us: 1250.0     # 60 deg: full forward, as the joystick drove it
-      neutral_pulse_us: 1375.0 # 75 deg
-      max_pulse_us: 1583.0     # 100 deg: full back
+      # drives it backward), SHORTER pulses go forward. Forward is the
+      # full-power side; reverse plateaus around 1600 - a limited reverse,
+      # which is the right way round for a crawler. Nothing moves within
+      # ~25 us of neutral either way.
+      # The 2021 code stopped at 1250 / 1583 (ServoKit 60 / 100 deg); the
+      # ESC has more than that on both sides, so the range is now what it
+      # actually does. Pull max_pulse_us in toward 1600 if you want the
+      # reverse stick's top quarter to do something.
+      min_pulse_us: 1172.0     # robot full forward ("11 out of 10")
+      neutral_pulse_us: 1375.0
+      max_pulse_us: 1665.0     # robot full reverse (speed plateaus from ~1600)
       min_limit: -1.0
       max_limit: 1.0
       home: 0.0
@@ -48,10 +49,12 @@
           values: [0.0]
           durations: [2.0]
         deadband: 0.02
-        # No start offsets: the 2021 chain had none, and the ESC's own dead
-        # zone (~25 us either side of neutral) is small enough to leave to it.
-        forward_start: 0.0
-        reverse_start: 0.0
+        # Where the motor actually starts moving, as a fraction of each side's
+        # travel: ~25 us either side of neutral. The driver names sides by
+        # PULSE direction - its "reverse" is toward min_pulse_us, which with
+        # linear_x -1.0 is the ROBOT'S FORWARD.
+        reverse_start: 0.12    # robot forward: 25 / (1375 - 1172)
+        forward_start: 0.09    # robot backward: 25 / (1665 - 1375)
 
     steering:
       channel: 1
