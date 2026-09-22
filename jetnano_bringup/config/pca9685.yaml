@@ -38,8 +38,13 @@
       min_pulse_us: 1292.0
       neutral_pulse_us: 1375.0
       max_pulse_us: 1650.0
-      min_limit: -1.0
-      max_limit: 1.0
+      min_limit: -1.0          # robot forward: all the ESC has (1292 us)
+      # Robot backward is capped so it is no faster than forward - a rock
+      # crawler wants torque, not speed, and full reverse (1650+) is quicker
+      # than the ESC's forward side can ever be. 0.6 of the way to 1650 is
+      # 1540 us, matched to forward's top speed by eye. Raise toward 1.0 for
+      # more reverse; lower it if backward still outruns forward.
+      max_limit: 0.6
       home: 0.0
       timeout: 0.5             # back to neutral if commands stop
       twist:
