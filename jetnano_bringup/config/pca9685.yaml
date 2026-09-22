@@ -25,11 +25,19 @@
       # Bench-measured 2026-09-21 on the real ESC, wheels up. This ESC runs the
       # OPPOSITE of RC convention: neutral is 1375 us (1500 drives it backward),
       # SHORTER pulses go forward, longer go backward. The pulse limits are the
-      # 2021 code's full-forward (60 deg = 1250 us) and full-reverse
-      # (100 deg = 1583 us) endpoints; 1750 us was "turbo" backward.
-      min_pulse_us: 1250.0
+      # ESC's own endpoints, found by driving it: forward speed PEAKS at
+      # ~1292 us and falls off again by 1250 (past its calibration), so 1292
+      # is full forward - only ~80 us of forward travel exists. Backward keeps
+      # gaining to ~1750 ("turbo"); capped at 1650 here on purpose.
+      #
+      # That asymmetry (narrow forward, wide backward) is the signature of an
+      # RC ESC whose 50%-limited REVERSE is wired as the robot's forward. The
+      # robot therefore has more speed backward than forward. Swapping two
+      # motor wires would flip that; if you ever do, negate linear_x below and
+      # swap forward_start/reverse_start.
+      min_pulse_us: 1292.0
       neutral_pulse_us: 1375.0
-      max_pulse_us: 1583.0
+      max_pulse_us: 1650.0
       min_limit: -1.0
       max_limit: 1.0
       home: 0.0
@@ -41,6 +49,13 @@
           values: [0.0]
           durations: [2.0]
         deadband: 0.02
+        # Where the motor actually starts moving, as a fraction of each side's
+        # travel. The driver names sides by PULSE direction: its "reverse" is
+        # toward min_pulse_us, which with linear_x -1.0 is the ROBOT'S FORWARD.
+        # Measured: nothing moves within ~25 us of neutral either way, which
+        # is 25/83 of the short forward side and 25/275 of the long back side.
+        reverse_start: 0.30    # robot forward (short pulses) starts here
+        forward_start: 0.09    # robot backward (long pulses) starts here
 
     steering:
       channel: 1
