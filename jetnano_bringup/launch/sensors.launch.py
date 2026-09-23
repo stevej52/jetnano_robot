@@ -37,7 +37,9 @@ def generate_launch_description():
                     'serial_baudrate': 115200,
                     'frame_id': 'lidar_link',
                     'angle_compensate': True,
-                    'scan_mode': 'Sensitivity',
+                    # A1M8 (fw 1.27) offers Standard/Express/Boost/Stability;
+                    # Boost = 8K samples/s = 720 points per turn at ~7.6 Hz.
+                    'scan_mode': 'Boost',
                 }],
             )],
         ),
@@ -56,6 +58,10 @@ def generate_launch_description():
                     'enable_accel': False,
                     'enable_color': True,
                     'enable_depth': True,
+                    # The stock Jetson kernel's UVC driver does not know the
+                    # IR streams' Y8 format; leaving them on stalls depth.
+                    'enable_infra1': False,
+                    'enable_infra2': False,
                     # Visual odometry needs depth registered to the colour frame.
                     'align_depth.enable': True,
                     'pointcloud.enable': False,
@@ -81,6 +87,9 @@ def generate_launch_description():
                     'data_query_frequency': 50,
                     'ros_topic_prefix': 'imu/',
                 }],
+                # The driver names its fused output imu/imu; everything
+                # downstream (EKF, tilt guard, the sim bridge) uses imu/data.
+                remappings=[('imu/imu', 'imu/data')],
             )],
         ),
     ])
