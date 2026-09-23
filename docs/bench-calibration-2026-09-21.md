@@ -176,6 +176,22 @@ colour by a frame, so rtabmap logged "time difference ... is high" and
 dropped pairs about a hundred times a minute - synced, that falls to ~20
 (colour settles at 25 Hz).
 
+**Slid by hand, 2026-09-22 evening.** Forward about a metre and back on the
+tile floor, robot pushed by hand. VO tracked the whole way: 0 to **0.83 m**
+out, back to **x 0.09, y -0.08 m** - about 12 cm off the true start after a
+1.7 m round trip (~7 %), heading **3.8 deg** off at the end. Inliers fell
+from ~340 at rest to 90-200 while moving (motion blur on a plain floor 0.4 m
+from the lens) and tracking was lost **once**, for one frame, which is where
+most of the heading error came from (a 6 deg jump on recovery). The EKF
+followed VO within a centimetre.
+
+The EKF's heading had been flapping between -15 and -105 deg with the robot
+parked: `ekf.yaml` fused two absolute yaws (VO's, and the BNO055's
+magnetometer heading through the mount) and flipped between them. The IMU
+now contributes yaw *rate* only, and `imu0_remove_gravitational_acceleration`
+is off because this driver's `imu/data` is already gravity-free. Heading
+steady at 0.0 deg afterwards.
+
 ### Tilt guard, live
 
 Real robot, level, mount read from TF: SAFE. Steve lifted the left side past
