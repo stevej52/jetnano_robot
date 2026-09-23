@@ -154,10 +154,48 @@ Orientations, checked by hand:
   (`DEFAULT_OFFSET_ACC` and friends), not a calibration. `imu/calib_status`
   at power-up: sys 0, gyro 3, accel 1, mag 0.
 
+### Visual odometry on the real camera
+
+`odometry.launch.py` (rtabmap `rgbd_odometry` + the EKF) against the live
+D435, robot parked on the tile floor, MAXN_SUPER:
+
+| | |
+|---|---|
+| `/vo` | ~10 Hz (9.9 over a 30 s window; 8.5-14.9 in short ones) |
+| tracking | 810 features, 508 matches, 357 inliers, 67 ms per estimate, never lost |
+| `rgbd_odometry` | **84-88 % of one core** (single-threaded, as with the stand-in) |
+| `realsense2_camera` | 39-54 % of a core (depth alignment plus stamp sync) |
+| bno055 / ekf / rplidar | 12-15 % / 5-6 % / 1 % |
+| whole system | 27-39 % of six cores, 6.4-7.0 W, GPU 0 %, 1.17 GB used |
+
+Two things had to be fixed before `/vo` appeared at all: realsense2_camera
+4.58 prefixes `base_frame_id` with the camera name, so `'camera_link'`
+produced `camera_camera_link` and the TF chain to the images was cut
+(`'link'` is right); and without `enable_sync` the aligned depth trailed the
+colour by a frame, so rtabmap logged "time difference ... is high" and
+dropped pairs about a hundred times a minute - synced, that falls to ~20
+(colour settles at 25 Hz).
+
+### Tilt guard, live
+
+Real robot, level, mount read from TF: SAFE. Steve lifted the left side past
+30 deg: `safe -> armed (roll 25.2) -> recovering` (reverse published for the
+full 5 s) `-> locked_out -> safe` once level. In Gazebo the same guard first
+fired non-stop on flat ground, because Gazebo's IMU reports orientation
+against its own starting pose (identity at rest, whatever the mount) while
+the BNO055 reports it against the world; the sim IMU now uses an ENU
+reference and behaves like the chip - at rest it reports the mount, and the
+robot dropped from 0.5 m rolled 40 deg gives `safe -> armed (40.0) ->
+recovering -> safe`. Headless Gazebo on the host's iGPU sometimes starves
+the simulated IMU for over a second, so the guard's "IMU stopped, holding
+still" trips occasionally there; it never does on the robot.
+
 Lessons: hold each pose ten seconds and let the plateaus speak; start the
 recorder *before* asking for the motion; scan for Wi-Fi only while
-disconnected (the Realtek driver lists just its current AP otherwise); and
-never `pkill -x ros2` on a robot with more than one launch running.
+disconnected (the Realtek driver lists just its current AP otherwise); a
+`SIGKILL`ed rplidar driver leaves the next one spinning at 100 % CPU with no
+scans, so stop it gently; and never `pkill -x ros2` on a robot with more
+than one launch running.
 
 ## Still guesses
 
