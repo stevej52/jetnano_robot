@@ -51,7 +51,7 @@ def test_four_wheel_steering_halves_the_turning_radius():
     front_only = CHASSIS.wheelbase / math.tan(CHASSIS.steer_limit)
     four_wheel = CHASSIS.min_turning_radius()
     assert four_wheel == pytest.approx(front_only / 2.0, rel=1e-9)
-    assert four_wheel == pytest.approx(0.271, abs=0.002)
+    assert four_wheel == pytest.approx(0.286, abs=0.002)     # 0.330 / (2 tan 30)
 
 
 def test_nav2_minimum_turning_radius_is_achievable():
