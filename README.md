@@ -91,6 +91,17 @@ sudo usermod -aG i2c,dialout,input $USER    # then log out and back in
 
 Logging out and back in is not optional; group membership is read at login.
 
+### 6. Device rules
+
+```bash
+sudo cp jetnano_bringup/udev/99-robot-sensors.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+This opens the D435 for libusb without root and names the lidar's serial
+port `/dev/rplidar`, which is what `sensors.launch.py` expects. The
+RealSense apt packages for Jazzy do not ship udev rules of their own.
+
 ## Running it
 
 On the robot:
