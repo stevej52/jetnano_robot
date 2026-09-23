@@ -101,10 +101,62 @@ at every place it matters.
 A full copy of the old card (rootfs plus the 13 bootloader partitions) is on
 the Orin at `/home/jeston/nano-backup/`.
 
+## Sensors on the Orin, 2026-09-22
+
+The harness moved to the Orin - pins 1/3/5/9 (3.3 V, SDA, SCL, GND), all on
+the inner row, nothing on 5 V - and the sensors were brought up with the
+Jetson on its 56 W wall adapter and the drive rail dead. `i2cdetect -y -r 7`
+shows `28`, `40`, `70` exactly as the Nano's bus did; BNO055 chip id `0xa0`,
+self-test `0x0f`.
+
+What `sensors.launch.py` needed before any driver ran:
+
+- rplidar_ros 2.1.0 ships `rplidar_composition`, not `rplidar_node`.
+- The A1M8 (firmware 1.27) rejects the `Sensitivity` scan mode (an A2/A3
+  mode). `Boost` gives **720 points per turn at 7.6 Hz** - the count the
+  simulator was built around.
+- The bno055 driver publishes `imu/imu`; everything downstream wants
+  `imu/data`, so the launch remaps it.
+- The D435's IR streams use a Y8 format the stock Jetson kernel's UVC driver
+  does not know, and leaving them enabled stalled depth ("Frames didn't
+  arrive within 5 seconds"). With `enable_infra1/2: false`: colour, depth and
+  aligned depth all at 30 Hz over USB 3.2.
+- `jeston` needs `dialout`; `jetnano_bringup/udev/99-robot-sensors.rules`
+  opens the D435 for libusb and names the lidar `/dev/rplidar`.
+
+Rates: `/scan` 7.7 Hz, `/imu/data` 49.8 Hz, colour / depth / aligned 30 Hz.
+
+Orientations, checked by hand:
+
+- **Camera**: the colour frame is upright; depth matches it pixel for pixel,
+  91 % valid, the desk at 0.28 m along the bottom edge.
+- **Lidar**: the owner stood at the robot's left and appeared at **+90 deg**,
+  so angles run counter-clockwise (REP-103) and **0 deg is the nose** - the
+  proof being that the thing blocking 0 deg was the camera. The camera
+  mount sat in the scan plane and blinded **-19..+13 deg** at 0.17 m; it is
+  being lowered out of the plane.
+- **IMU**: raw accelerometer at rest x -0.6, y +1.7, **z -9.9** - the chip's
+  z points at the floor. Tipping the nose up moved the sensor's **+y** (+1.7
+  to +6.2); lifting the left side moved its **+x** (-0.5 to +4.4). So the
+  sensor's +y is the robot's +x, its +x the robot's +y, its +z the robot's
+  -z, with a 10 deg residual from the bracket. Solving those three vectors
+  gives `imu_rpy = "2.9698 0.0552 1.5680"` (roll 170.2, pitch 3.2, yaw 89.8
+  deg); rotated through it the rest reading is x 0.00, y 0.00, z +9.96. The
+  tilt guard reads the mount from TF and, with the robot level, stays SAFE
+  where the raw reading would have said "rolled 170 degrees".
+- The "saved calibration" on the old card is the driver's example defaults
+  (`DEFAULT_OFFSET_ACC` and friends), not a calibration. `imu/calib_status`
+  at power-up: sys 0, gyro 3, accel 1, mag 0.
+
+Lessons: hold each pose ten seconds and let the plateaus speak; start the
+recorder *before* asking for the motion; scan for Wi-Fi only while
+disconnected (the Realtek driver lists just its current AP otherwise); and
+never `pkill -x ros2` on a robot with more than one launch running.
+
 ## Still guesses
 
 - Chassis geometry in `jetnano.urdf.xacro`: wheelbase, track, loaded wheel
-  radius, body box, and every sensor mount position and tilt.
+  radius, body box, and every sensor's position (orientations are done).
 - Real minimum turning radius on the floor (`nav2.yaml` has 0.30 m; geometry
   says 0.27; tyre scrub makes it larger).
 - Throttle to ground speed - `cmd_vel` is not in metres per second until a
@@ -114,8 +166,8 @@ the Orin at `/home/jeston/nano-backup/`.
 - Static tip angles, roll and pitch, on a board with a phone inclinometer -
   they set `tilt_guard`'s thresholds.
 - Joystick axis and button numbers (`ros2 run jetnano_teleop list_devices`).
-- Camera image orientation, lidar zero angle and IMU axis signs, checked by
-  eye with the sensors running on the Orin.
+- BNO055 calibration offsets - drive it around until `imu/calib_status` is
+  3/3, then read them back and save them.
 
 ## To repeat the sweep
 

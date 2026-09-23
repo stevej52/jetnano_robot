@@ -176,20 +176,25 @@ TF stops resolving and nothing tells you why.
 
 ## What is measured and what is still a guess
 
-The drive chain was calibrated on the real robot on 2026-09-21 - see
+The drive chain was calibrated on the real robot on 2026-09-21 and the
+sensors were brought up on the Orin on 2026-09-22 - see
 [docs/bench-calibration-2026-09-21.md](docs/bench-calibration-2026-09-21.md)
-for the method, the numbers and the lessons. **Measured**, and in
-`pca9685.yaml`: the ESC's neutral (1375 us - it runs the opposite of RC
-convention, shorter is forward), both throttle endpoints, the steering
-centre (84) and limits (40-125), the rear mirror, and the twist signs. The
-I2C bus, both addresses and the BNO055's saved calibration offsets are
-confirmed too.
+for the methods, the numbers and the lessons. **Measured**: the ESC's
+neutral (1375 us - it runs the opposite of RC convention, shorter is
+forward), both throttle endpoints, the steering centre (84) and limits
+(40-125), the rear mirror and the twist signs (all in `pca9685.yaml`); the
+I2C bus and both addresses; the lidar's zero (the nose) and direction
+(counter-clockwise); the camera's orientation (upright); and the IMU's
+mount - upside down, turned 90 degrees, 10 degrees of bracket tilt -
+which is `imu_rpy` in the URDF and which the tilt guard reads back
+through TF.
 
-Still marked `MEASURE ME` in the files, because they are still guesses:
+Still guesses:
 
-- **Chassis geometry and sensor mounts** (`jetnano.urdf.xacro`): wheelbase
-  0.313 m, track 0.220 m, wheel radius 0.060 m, and where the sensors sit.
-  Estimates for a 1/10 crawler, written while the robot was in storage.
+- **Chassis geometry and sensor positions** (`jetnano.urdf.xacro`): wheelbase
+  0.313 m, track 0.220 m, wheel radius 0.060 m, and where each sensor sits.
+  Estimates for a 1/10 crawler, written while the robot was in storage. The
+  sensor orientations are measured; the positions are not.
 - **`minimum_turning_radius: 0.30`** (`nav2.yaml`): geometry gives 0.27 m for
   both axles at 30 deg, but tyre scrub on a crawler makes the real figure
   larger. Drive a full-lock circle and measure it.
@@ -199,6 +204,10 @@ Still marked `MEASURE ME` in the files, because they are still guesses:
 - **Joystick axis and button numbers** (`joysticks.yaml`): run
   `ros2 run jetnano_teleop list_devices --watch` and replace them with what
   you actually see.
+- **BNO055 calibration**: the chip has never been calibrated - the offsets
+  file recovered from the old card holds the driver's example defaults.
+  NDOF mode self-calibrates as the robot moves; once `imu/calib_status`
+  reports 3/3 everywhere, read the offsets back and save them.
 
 ## Licence
 
