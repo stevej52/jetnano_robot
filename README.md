@@ -141,6 +141,32 @@ ros2 launch jetnano_bringup rviz.launch.py
 This is a wiring harness, not a simulator. It proves the graph is connected; it
 proves nothing about physics. Gazebo is the right tool for that, on a desktop.
 
+## Starting at boot
+
+Two systemd units in `jetnano_bringup/systemd/` bring the robot up on power:
+`isaac-vo.service` starts the Isaac ROS container that runs the GPU visual
+odometry (waiting for the GPU driver first), and `jetnano-robot.service` runs
+`robot.launch.py` as the robot user once the container is up.
+
+```bash
+sudo cp jetnano_bringup/systemd/*.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now isaac-vo.service jetnano-robot.service
+```
+
+For bench work, `sudo systemctl stop jetnano-robot` and launch things by hand.
+Every bringup launch (`robot`, `drive`, `sensors`, `odometry`) refuses to start a
+second copy of itself on the same machine (`jetnano_bringup/launch_lock.py`),
+so a manual `robot.launch.py` while the service is running just prints who
+holds the lock and exits; two lidar drivers on one serial port both die, and
+two of everything else is worse because nothing complains.
+
+When starting a launch from a script or over SSH, keep it in the foreground or
+enable job control first (`set -m`): a background job from a non-interactive
+shell inherits SIGINT-ignored, and so does every node it starts, which turns a
+clean shutdown into SIGKILLs - and a SIGKILLed lidar driver leaves the sensor
+needing a USB reset.
+
 ## How commands reach the wheels
 
 ```

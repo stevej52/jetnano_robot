@@ -1,0 +1,27 @@
+[Unit]
+Description=jetnano robot: ros2 launch jetnano_bringup robot.launch.py
+Documentation=https://github.com/stevej52/jetnano_robot
+# The GPU visual odometry lives in the isaac_vo container; wait for it so the
+# odometry launch does not have to.
+After=network-online.target isaac-vo.service
+Wants=network-online.target isaac-vo.service
+
+[Service]
+Type=simple
+User=jeston
+Group=jeston
+SupplementaryGroups=docker i2c dialout input video
+WorkingDirectory=/home/jeston
+Environment=ROS_DOMAIN_ID=7
+Environment=HOME=/home/jeston
+# A login shell so the workspace overlay is sourced the same way a terminal does.
+ExecStart=/bin/bash -lc 'source /opt/ros/jazzy/setup.bash && source /home/jeston/ros2_ws/install/setup.bash && exec ros2 launch jetnano_bringup robot.launch.py'
+# ros2 launch shuts its nodes down on SIGINT (the lidar driver must not be
+# SIGKILLed: the sensor then needs a USB replug). Give it time.
+KillSignal=SIGINT
+TimeoutStopSec=40
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

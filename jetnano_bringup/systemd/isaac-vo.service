@@ -1,0 +1,20 @@
+[Unit]
+Description=Isaac ROS container isaac_vo (GPU visual odometry for the robot)
+Documentation=https://github.com/stevej52/ros2_gpu_robot/blob/main/cuvslam_d435/README.md
+After=docker.service nvpmodel.service
+Requires=docker.service
+
+[Service]
+Type=simple
+# The GPU driver can still be initialising when docker is up, and the NVIDIA
+# runtime refuses to create the container until it is. Wait for the device
+# node, start the container, then follow it so systemd knows if it dies.
+# (Docker's own restart policy gives up when the runtime hook fails at boot;
+# the container is created with --restart no and this unit owns it.)
+ExecStart=/bin/sh -c 'for i in $(seq 1 60); do [ -e /dev/nvgpu/igpu0 ] && break; sleep 2; done; docker start isaac_vo && exec docker wait isaac_vo'
+ExecStop=/usr/bin/docker stop -t 10 isaac_vo
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target
