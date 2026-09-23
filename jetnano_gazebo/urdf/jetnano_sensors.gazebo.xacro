@@ -146,6 +146,14 @@
       <update_rate>50.0</update_rate>
       <always_on>true</always_on>
       <imu>
+        <!-- Report orientation against a world-aligned (ENU) frame, as the
+             real BNO055 does in NDOF mode. Gazebo's default reference is the
+             sensor's own starting pose, which reads identity at rest whatever
+             the mount, so the tilt guard's TF correction for the upside-down
+             bracket would have made a flat robot look capsized in the sim. -->
+        <orientation_reference_frame>
+          <localization>ENU</localization>
+        </orientation_reference_frame>
         <angular_velocity>
           <x><noise type="gaussian"><mean>0.0</mean><stddev>0.002</stddev>
             <bias_mean>0.0</bias_mean><bias_stddev>0.0001</bias_stddev></noise></x>
