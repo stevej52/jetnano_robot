@@ -154,6 +154,13 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now isaac-vo.service jetnano-robot.service
 ```
 
+The service starts `robot.launch.py nvblox:=true`: the GPU visual odometry
+(cuVSLAM, ~40 Hz) plus nvblox's 3D map of what the camera sees, published as
+an occupancy grid that `navigation.launch.py nvblox:=true` puts into the local
+costmap - steps, low rocks and table edges the lidar's single plane cannot
+see. Without `nvblox:=true`, `robot.launch.py` runs the odometry alone at
+89 Hz. Both are in `ros2_gpu_robot/cuvslam_d435/README.md`.
+
 For bench work, `sudo systemctl stop jetnano-robot` and launch things by hand.
 Every bringup launch (`robot`, `drive`, `sensors`, `odometry`) refuses to start a
 second copy of itself on the same machine (`jetnano_bringup/launch_lock.py`),
