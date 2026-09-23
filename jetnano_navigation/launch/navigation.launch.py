@@ -25,13 +25,18 @@ DIRECTLY - straight past twist_mux, which means past the joystick's priority
 and past the e-stop lock. An autonomous robot you cannot override is not a
 feature.
 
-So both of Nav2's outputs are remapped away from /cmd_vel:
+So Nav2's outputs are remapped away from /cmd_vel, and the chain inside Nav2 is
 
-    cmd_vel           -> cmd_vel_nav_raw   (controller -> smoother, internal)
-    cmd_vel_smoothed  -> cmd_vel_nav       (the smoothed output twist_mux sees)
+    controller  --cmd_vel_nav_raw-->  velocity_smoother  --cmd_vel_nav_smoothed-->
+    collision_monitor  --cmd_vel_nav-->  twist_mux
 
-twist_mux then treats Nav2 as the low-priority input it should be: teleop
-outranks it, and the e_stop lock stops it dead. Both are tested.
+The collision monitor (Jazzy's bringup always starts one) is last, so what
+twist_mux sees has already been slowed or stopped for anything in the lidar
+scan on a collision course. Its topics are parameters in nav2.yaml, not
+remaps: with the stock names its output would have landed on cmd_vel_nav_raw
+(a loop into the smoother) and twist_mux would have read the smoother's
+unfiltered output. twist_mux then treats Nav2 as the low-priority input it
+should be: teleop outranks it, and the e_stop lock stops it dead.
 """
 
 import os
@@ -85,7 +90,7 @@ def generate_launch_description():
         GroupAction([
             # Keep Nav2 off the driver's topic. See the docstring above.
             SetRemap(src='/cmd_vel', dst='/cmd_vel_nav_raw'),
-            SetRemap(src='/cmd_vel_smoothed', dst='/cmd_vel_nav'),
+            SetRemap(src='/cmd_vel_smoothed', dst='/cmd_vel_nav_smoothed'),
 
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(nav2_bringup),
