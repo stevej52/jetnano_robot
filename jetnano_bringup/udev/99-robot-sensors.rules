@@ -1,0 +1,6 @@
+# Robot sensors on the Jetson. Install with:
+#   sudo cp 99-robot-sensors.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules && sudo udevadm trigger
+# RealSense D435: libusb needs write access to the device node (no root, no realsense udev package needed).
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="8086", ATTRS{idProduct}=="0b07", MODE="0666", GROUP="plugdev"
+# RPLidar A1M8 on its CP2102 bridge: stable name /dev/rplidar (sensors.launch.py default). User must be in dialout.
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", SYMLINK+="rplidar", MODE="0666"

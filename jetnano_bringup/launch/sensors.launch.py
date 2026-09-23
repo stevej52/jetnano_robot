@@ -19,8 +19,8 @@ def generate_launch_description():
         DeclareLaunchArgument('use_camera', default_value='true'),
         DeclareLaunchArgument('use_imu', default_value='true'),
         DeclareLaunchArgument(
-            'lidar_port', default_value='/dev/ttyUSB0',
-            description='RPLidar serial port. A udev rule gives it a stable name.'),
+            'lidar_port', default_value='/dev/rplidar',
+            description='RPLidar serial port. udev/99-robot-sensors.rules gives it this stable name.'),
         DeclareLaunchArgument(
             'imu_i2c_bus', default_value='7',
             description='I2C bus the BNO055 is on (same header as the PCA9685)'),
@@ -29,7 +29,7 @@ def generate_launch_description():
             condition=IfCondition(LaunchConfiguration('use_lidar')),
             actions=[Node(
                 package='rplidar_ros',
-                executable='rplidar_node',
+                executable='rplidar_composition',
                 name='rplidar',
                 output='screen',
                 parameters=[{
