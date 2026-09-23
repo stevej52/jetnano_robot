@@ -123,7 +123,7 @@ class TiltLimits:
     Defaults come from this chassis's geometry. With the measured 0.230 m
     track and 0.330 m wheelbase and a guessed 0.10 m centre-of-mass height,
     the static tipping angles are about 49 degrees in roll and 59 in pitch;
-    the true centre of mass (battery, Jetson, a lidar at 0.145 m) is probably
+    the true centre of mass (battery, Jetson, a lidar at 0.160 m) is probably
     higher, which lowers both, and dynamic rollover happens well below
     static in any case. These triggers sit near half the static figure,
     which is a starting point to tune down from, not a measurement.

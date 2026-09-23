@@ -202,11 +202,11 @@ through TF.
 
 Still guesses:
 
-- **Body box, lidar height and IMU position** (`jetnano.urdf.xacro`). The
-  wheelbase (0.330 m), track (0.230 m), wheel radius (0.065 m) and the
-  lidar's and camera's positions along the chassis were tape-measured on
-  2026-09-22, and every sensor orientation is measured; the rest of the
-  model is still an estimate.
+- **Body box and IMU position** (`jetnano.urdf.xacro`). The wheelbase
+  (0.330 m), track (0.230 m), wheel radius (0.065 m), the lidar's and
+  camera's positions and the lidar's height were tape-measured on
+  2026-09-22, and every sensor orientation is measured; the body box and
+  where the IMU sits are still estimates.
 - **`minimum_turning_radius: 0.30`** (`nav2.yaml`): geometry gives 0.29 m for
   both axles at 30 deg, but tyre scrub on a crawler makes the real figure
   larger. Drive a full-lock circle and measure it.

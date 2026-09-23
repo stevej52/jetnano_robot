@@ -219,11 +219,12 @@ than one launch running.
 
 ## Still guesses
 
-- The body box, the lidar's height and the IMU's position in
-  `jetnano.urdf.xacro`. Tape-measured 2026-09-22 and no longer guesses:
-  wheelbase **0.330 m**, track **0.230 m**, loaded tyre radius **0.065 m**,
-  lidar 0.15 m and camera 0.29 m forward of the rear axle. Full-lock
-  geometry is now (0.330/2)/tan 30 = **0.29 m**.
+- The body box and the IMU's position in `jetnano.urdf.xacro`.
+  Tape-measured 2026-09-22 and no longer guesses: wheelbase **0.330 m**,
+  track **0.230 m**, loaded tyre radius **0.065 m**, lidar 0.15 m and camera
+  0.29 m forward of the rear axle, lidar scan plane **0.225 m** above the
+  floor (0.160 above the axle line, which agrees with the tyre radius).
+  Full-lock geometry is now (0.330/2)/tan 30 = **0.29 m**.
 - Real minimum turning radius on the floor (`nav2.yaml` has 0.30 m; geometry
   says 0.27; tyre scrub makes it larger).
 - Throttle to ground speed - `cmd_vel` is not in metres per second until a

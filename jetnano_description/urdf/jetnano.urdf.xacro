@@ -49,8 +49,9 @@
   <!-- Where the sensors are bolted, relative to base_link (the middle of
        the wheelbase, on the axle line). Tape-measured 2026-09-22: the lidar
        is 0.15 m and the camera 0.29 m forward of the rear axle, so -0.015 m
-       and +0.125 m from base_link. The lidar's height and the IMU's position
-       are still estimates. The ORIENTATIONS were checked on the robot
+       and +0.125 m from base_link; the lidar's scan plane is 0.225 m above
+       the floor, 0.160 above the axle line. The IMU's position is still an
+       estimate. The ORIENTATIONS were checked on the robot
        2026-09-22: lidar 0 deg is the nose and angles run
        counter-clockwise (REP-103), the camera image is upright, and the
        BNO055 is bolted upside down, turned 90 deg and tilted 10 deg on its
@@ -59,7 +60,7 @@
        (docs/bench-calibration-2026-09-21.md), exact to a couple of degrees.
        The tilt guard reads it back through TF, so this is the only place
        it lives. -->
-  <xacro:property name="lidar_xyz"  value="-0.015 0.0 0.145"/>
+  <xacro:property name="lidar_xyz"  value="-0.015 0.0 0.160"/>
   <xacro:property name="lidar_rpy"  value="0 0 0"/>
   <!-- Camera re-mounted 2026-09-22 below the lidar plane and pitched down:
        27.1 deg down, +0.9 deg roll, lens 0.178 m above the floor, all from a
