@@ -11,7 +11,7 @@ Jetson Nano on ROS 2 Eloquent to an Orin Nano on Jazzy.
 | Lidar | RPLidar A1M8 |
 | Camera | Intel RealSense D435 |
 | IMU | BNO055 |
-| Odometry | visual (rtabmap) + IMU, fused by robot_localization — **no wheel encoders** |
+| Odometry | visual (NVIDIA cuVSLAM on the GPU at 89 Hz, or rtabmap on the CPU) + IMU, fused by robot_localization — **no wheel encoders** |
 | Teleop | Thrustmaster HOTAS or Xbox pad, auto-detected |
 
 ## Packages

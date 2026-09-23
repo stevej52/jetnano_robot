@@ -8,7 +8,11 @@ driver behind twist_mux, the three sensors, visual odometry and the EKF.
 Useful variations:
 
     simulate:=true          no I2C writes; everything else real
-    use_camera:=false       skip the RealSense (also disables visual odometry)
+    vo:=rtabmap             visual odometry on the CPU instead of cuVSLAM on the
+                            GPU (the default here; see odometry.launch.py). With
+                            cuvslam the container's driver owns the camera, so the
+                            host RealSense node is not started.
+    use_camera:=false       skip the RealSense (and any visual odometry)
     use_teleop:=true        run the joystick node HERE instead of on the PC
 
 Teleop is off by default because the controller is normally plugged into the
@@ -19,7 +23,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -35,6 +39,15 @@ def generate_launch_description():
     i2c_bus = LaunchConfiguration('i2c_bus')
     use_camera = LaunchConfiguration('use_camera')
     use_sim_time = LaunchConfiguration('use_sim_time')
+    vo = LaunchConfiguration('vo')
+
+    # cuVSLAM brings its own RealSense driver (in the container); the host
+    # driver must stay off or the two fight over the camera.
+    host_camera = PythonExpression(
+        ["'", use_camera, "' == 'true' and '", vo, "' != 'cuvslam'"])
+    # No camera at all means no visual odometry either.
+    vo_source = PythonExpression(
+        ["'", vo, "' if '", use_camera, "' == 'true' else 'none'"])
 
     return LaunchDescription([
         DeclareLaunchArgument('simulate', default_value='false'),
@@ -46,6 +59,9 @@ def generate_launch_description():
         DeclareLaunchArgument('use_camera', default_value='true'),
         DeclareLaunchArgument('use_imu', default_value='true'),
         DeclareLaunchArgument('use_odometry', default_value='true'),
+        DeclareLaunchArgument(
+            'vo', default_value='cuvslam', choices=['cuvslam', 'rtabmap', 'none'],
+            description='visual odometry: cuvslam (GPU, in the isaac_vo container) or rtabmap (CPU)'),
         DeclareLaunchArgument('use_teleop', default_value='false'),
 
         _include('description.launch.py', arguments={
@@ -60,13 +76,13 @@ def generate_launch_description():
 
         _include('sensors.launch.py', arguments={
             'use_lidar': LaunchConfiguration('use_lidar'),
-            'use_camera': use_camera,
+            'use_camera': host_camera,
             'use_imu': LaunchConfiguration('use_imu'),
         }.items()),
 
         _include('odometry.launch.py',
                  condition=IfCondition(LaunchConfiguration('use_odometry')),
-                 arguments={'use_sim_time': use_sim_time}.items()),
+                 arguments={'use_sim_time': use_sim_time, 'vo': vo_source}.items()),
 
         _include('teleop.launch.py',
                  condition=IfCondition(LaunchConfiguration('use_teleop'))),
