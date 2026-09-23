@@ -20,6 +20,15 @@ pose, so nothing downstream of it knows the robot is on its side. The BNO055
 still publishes full orientation on ``imu/data`` at 50 Hz, though, so this
 node reads the IMU directly and needs no change to the EKF at all.
 
+The IMU is not bolted on level: on this robot it is upside down, turned 90
+degrees and tilted 10 degrees on its bracket, so its raw orientation says a
+parked robot is rolled 170 degrees. The guard therefore rotates every sample
+into base_link using the imu_link -> base_link transform, which it looks up
+from TF once (robot_state_publisher serves it from the URDF's ``imu_rpy``).
+Set ``use_tf_for_imu_mount`` false and give ``imu_mount_rpy`` to run without
+TF. Until the mount is known the guard cannot judge tilt, so it stays idle
+and says so every few seconds rather than guessing.
+
 It publishes on ``cmd_vel_tilt``, which belongs in twist_mux ABOVE teleop:
 
     tilt_recovery:
@@ -38,13 +47,24 @@ The decision itself lives in ``tilt.py`` and has no ROS in it, so it can be
 tested against a list of angles rather than against a robot on a slope.
 """
 
+import math
+
 from geometry_msgs.msg import Twist
-from jetnano_bringup.tilt import roll_pitch_from_quaternion, State, TiltGuard, TiltLimits
+from jetnano_bringup.tilt import (
+    orientation_of_base,
+    quaternion_from_rpy,
+    roll_pitch_from_quaternion,
+    State,
+    TiltGuard,
+    TiltLimits,
+)
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSPresetProfiles
+from rclpy.time import Time
 from sensor_msgs.msg import Imu
 from std_msgs.msg import String
+from tf2_ros import Buffer, TransformException, TransformListener
 
 
 class TiltGuardNode(Node):
@@ -65,6 +85,9 @@ class TiltGuardNode(Node):
         self.declare_parameter('publish_rate', 20.0)
         self.declare_parameter('imu_timeout_s', 1.0)
         self.declare_parameter('stop_on_imu_timeout', True)
+        self.declare_parameter('use_tf_for_imu_mount', True)
+        self.declare_parameter('imu_mount_rpy', [0.0, 0.0, 0.0])
+        self.declare_parameter('base_frame', 'base_link')
 
         limits = TiltLimits(
             roll_trigger_deg=float(self.get_parameter('roll_trigger_deg').value),
@@ -91,6 +114,18 @@ class TiltGuardNode(Node):
         self._timed_out = False
         self._recoveries = 0
 
+        self._base_frame = str(self.get_parameter('base_frame').value)
+        self._mount = None                 # imu_link -> base_link rotation, once known
+        self._tf_buffer = None
+        if bool(self.get_parameter('use_tf_for_imu_mount').value):
+            self._tf_buffer = Buffer()
+            self._tf_listener = TransformListener(self._tf_buffer, self)
+        else:
+            rpy = [float(v) for v in self.get_parameter('imu_mount_rpy').value]
+            self._mount = quaternion_from_rpy(*rpy)
+            self.get_logger().info(
+                'IMU mount from parameter: rpy %.3f %.3f %.3f rad' % tuple(rpy))
+
         self._cmd_pub = self.create_publisher(Twist, 'cmd_vel_tilt', 10)
         self._status_pub = self.create_publisher(String, '~/status', 10)
         self.create_subscription(
@@ -115,13 +150,35 @@ class TiltGuardNode(Node):
             self.get_logger().info('imu/data is publishing again, tilt guard restored')
             self._timed_out = False
 
-        orientation = message.orientation
-        roll, pitch = roll_pitch_from_quaternion(
-            orientation.x, orientation.y, orientation.z, orientation.w)
+        if self._mount is None and not self._find_mount(message.header.frame_id):
+            return
+
+        o = message.orientation
+        x, y, z, w = orientation_of_base((o.x, o.y, o.z, o.w), self._mount)
+        roll, pitch = roll_pitch_from_quaternion(x, y, z, w)
         before = self._guard.state
         after = self._guard.update(roll, pitch, self._last_imu)
         if after is not before:
             self._announce(before, after)
+
+    def _find_mount(self, imu_frame: str) -> bool:
+        """Look the IMU's mounting rotation up from TF; True once it is known."""
+        try:
+            transform = self._tf_buffer.lookup_transform(self._base_frame, imu_frame, Time())
+        except TransformException as error:
+            self.get_logger().warning(
+                f'no transform {self._base_frame} <- {imu_frame} yet, so the tilt guard '
+                f'cannot tell which way is up and is idle. Is robot_state_publisher '
+                f'running? ({error})', throttle_duration_sec=5.0)
+            return False
+        q = transform.transform.rotation
+        self._mount = (q.x, q.y, q.z, q.w)
+        roll, pitch = roll_pitch_from_quaternion(*self._mount)
+        self.get_logger().info(
+            f'IMU mount from TF ({imu_frame} in {self._base_frame}): roll '
+            f'{math.degrees(roll):.1f} deg, pitch {math.degrees(pitch):.1f} deg; '
+            f'guard active')
+        return True
 
     def _announce(self, before: State, after: State) -> None:
         """Log and publish every state change, so the robot's reasons are visible."""

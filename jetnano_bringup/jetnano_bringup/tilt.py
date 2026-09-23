@@ -70,6 +70,51 @@ def roll_pitch_from_quaternion(x: float, y: float, z: float, w: float) -> tuple[
     return roll, pitch
 
 
+Quaternion = tuple[float, float, float, float]   # (x, y, z, w), as ROS orders them
+
+
+def quaternion_from_rpy(roll: float, pitch: float, yaw: float) -> Quaternion:
+    """Build a quaternion the way URDF reads an ``rpy``: Rz(yaw) Ry(pitch) Rx(roll)."""
+    cr, sr = math.cos(roll / 2), math.sin(roll / 2)
+    cp, sp = math.cos(pitch / 2), math.sin(pitch / 2)
+    cy, sy = math.cos(yaw / 2), math.sin(yaw / 2)
+    return (sr * cp * cy - cr * sp * sy,
+            cr * sp * cy + sr * cp * sy,
+            cr * cp * sy - sr * sp * cy,
+            cr * cp * cy + sr * sp * sy)
+
+
+def quaternion_multiply(a: Quaternion, b: Quaternion) -> Quaternion:
+    """Hamilton product a * b: apply b's rotation first, then a's."""
+    ax, ay, az, aw = a
+    bx, by, bz, bw = b
+    return (aw * bx + ax * bw + ay * bz - az * by,
+            aw * by - ax * bz + ay * bw + az * bx,
+            aw * bz + ax * by - ay * bx + az * bw,
+            aw * bw - ax * bx - ay * by - az * bz)
+
+
+def quaternion_conjugate(q: Quaternion) -> Quaternion:
+    """The inverse rotation of a unit quaternion."""
+    x, y, z, w = q
+    return (-x, -y, -z, w)
+
+
+def orientation_of_base(imu_orientation: Quaternion, mount: Quaternion) -> Quaternion:
+    """
+    Turn the IMU's reported orientation into the robot's.
+
+    ``imu_orientation`` is what the driver publishes: the IMU frame's rotation
+    in the world. ``mount`` is how the IMU is bolted on - the rotation that
+    takes imu_link vectors into base_link, which is the URDF ``imu_joint``
+    rotation and what ``lookup_transform('base_link', 'imu_link')`` returns.
+    With R_world<-imu = R_world<-base * R_base<-imu, the robot's orientation is
+    R_world<-imu * R_base<-imu^-1. The IMU's own yaw does not touch the roll
+    and pitch this yields, which is all the guard reads.
+    """
+    return quaternion_multiply(imu_orientation, quaternion_conjugate(mount))
+
+
 @dataclass
 class TiltLimits:
     """

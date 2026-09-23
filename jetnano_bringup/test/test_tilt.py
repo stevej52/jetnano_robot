@@ -17,6 +17,9 @@
 import math
 
 from jetnano_bringup.tilt import (
+    orientation_of_base,
+    quaternion_from_rpy,
+    quaternion_multiply,
     roll_pitch_from_quaternion,
     State,
     TiltGuard,
@@ -202,3 +205,55 @@ def test_a_second_tilt_after_recovery_triggers_again():
     assert guard.state is State.SAFE
     drive(guard, 30.0, LEVEL, start=now, duration=0.5)
     assert guard.state is State.RECOVERING, 'guard did not re-arm after recovering'
+
+
+# --- the IMU mount -----------------------------------------------------------
+
+# How the BNO055 is bolted to this robot, measured 2026-09-22 (URDF imu_rpy):
+# upside down, turned 90 degrees, 10 degrees of bracket tilt.
+MOUNT_RPY = (2.9698, 0.0552, 1.5680)
+MOUNT = quaternion_from_rpy(*MOUNT_RPY)
+# What the driver actually reported with the robot parked level that day.
+IMU_AT_REST = (0.941, 0.327, 0.000, 0.089)
+
+
+def test_quaternion_from_rpy_matches_the_roll_pitch_helper():
+    ours = quaternion_from_rpy(0.3, -0.2, 0.0)
+    theirs = quaternion_from_roll_pitch(0.3, -0.2)
+    assert ours == pytest.approx(theirs, abs=1e-12)
+
+
+def test_identity_mount_changes_nothing():
+    q = quaternion_from_roll_pitch(0.4, 0.1)
+    assert orientation_of_base(q, quaternion_from_rpy(0, 0, 0)) == pytest.approx(q)
+
+
+def test_level_robot_reads_level_through_the_real_mount():
+    # A level robot makes the IMU report exactly its own mounting rotation.
+    roll, pitch = roll_pitch_from_quaternion(*orientation_of_base(MOUNT, MOUNT))
+    assert abs(math.degrees(roll)) < 1e-6
+    assert abs(math.degrees(pitch)) < 1e-6
+
+
+def test_the_real_rest_reading_comes_out_level():
+    roll, pitch = roll_pitch_from_quaternion(*orientation_of_base(IMU_AT_REST, MOUNT))
+    assert abs(math.degrees(roll)) < 1.0
+    assert abs(math.degrees(pitch)) < 1.0
+
+
+@pytest.mark.parametrize('roll_deg, pitch_deg, yaw_deg', [
+    (0.0, 20.0, 0.0), (-25.0, 0.0, 0.0), (15.0, -30.0, 40.0), (0.0, 0.0, 170.0),
+])
+def test_robot_attitude_survives_the_mount(roll_deg, pitch_deg, yaw_deg):
+    robot = quaternion_from_rpy(math.radians(roll_deg), math.radians(pitch_deg),
+                                math.radians(yaw_deg))
+    imu = quaternion_multiply(robot, MOUNT)          # what a mounted IMU would report
+    roll, pitch = roll_pitch_from_quaternion(*orientation_of_base(imu, MOUNT))
+    assert math.degrees(roll) == pytest.approx(roll_deg, abs=1e-6)
+    assert math.degrees(pitch) == pytest.approx(pitch_deg, abs=1e-6)
+
+
+def test_raw_reading_through_no_mount_would_look_capsized():
+    # The reason the mount matters: uncorrected, a parked robot reads 170 deg of roll.
+    roll, _ = roll_pitch_from_quaternion(*IMU_AT_REST)
+    assert abs(math.degrees(roll)) > 160.0
