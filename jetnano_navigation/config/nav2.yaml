@@ -264,6 +264,42 @@ collision_monitor:
       max_height: 2.0
       enabled: true
 
+# The robot has no charging dock. This block exists only because Jazzy's
+# nav2_bringup always starts the docking server and aborts the whole bringup
+# when it has no dock plugin to load. A placeholder dock at the map origin
+# that nothing ever asks to use.
+docking_server:
+  ros__parameters:
+    controller_frequency: 50.0
+    initial_perception_timeout: 5.0
+    wait_charge_timeout: 5.0
+    dock_approach_timeout: 30.0
+    undock_linear_tolerance: 0.05
+    undock_angular_tolerance: 0.1
+    max_retries: 3
+    base_frame: "base_footprint"
+    fixed_frame: "odom"
+    dock_backwards: false
+    dock_prestaging_tolerance: 0.5
+    dock_plugins: ["placeholder_dock"]
+    placeholder_dock:
+      plugin: "opennav_docking::SimpleChargingDock"
+      docking_threshold: 0.05
+      staging_x_offset: -0.7
+      use_external_detection_pose: false
+      use_battery_status: false
+      use_stall_detection: false
+    docks: ["no_dock"]
+    no_dock:
+      type: "placeholder_dock"
+      frame: map
+      pose: [0.0, 0.0, 0.0]
+    controller:
+      k_phi: 3.0
+      k_delta: 2.0
+      v_linear_min: 0.10
+      v_linear_max: 0.15
+
 map_server:
   ros__parameters:
     yaml_filename: ""
