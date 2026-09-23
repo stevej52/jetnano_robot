@@ -61,12 +61,18 @@ def generate_launch_description():
     slam_launch = PathJoinSubstitution(
         [FindPackageShare('jetnano_navigation'), 'launch', 'slam.launch.py'])
 
+    # The behaviour trees without Spin live in this package; nav2.yaml names
+    # them with a placeholder for the install path.
+    bt_params = ReplaceString(
+        source_file=LaunchConfiguration('params_file'),
+        replacements={'__BT_DIR__': os.path.join(nav_pkg, 'behavior_trees')})
+
     # nvblox:=true adds the camera's 3D obstacle layer to the local costmap by
     # rewriting the plugin list in a copy of the params file. The layer's own
     # parameters are always in nav2.yaml; only the list decides whether Nav2
     # loads the plugin, so the simulator (no nvblox there) is untouched.
     params_file = ReplaceString(
-        source_file=LaunchConfiguration('params_file'),
+        source_file=bt_params,
         replacements={
             'plugins: ["obstacle_layer", "inflation_layer"]':
             'plugins: ["obstacle_layer", "nvblox_layer", "inflation_layer"]',
