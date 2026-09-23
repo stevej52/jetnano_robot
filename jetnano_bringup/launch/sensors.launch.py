@@ -65,7 +65,10 @@ def generate_launch_description():
                     # Visual odometry needs depth registered to the colour frame.
                     'align_depth.enable': True,
                     'pointcloud.enable': False,
-                    'base_frame_id': 'camera_link',
+                    # The driver prefixes this with the camera name, so 'link'
+                    # yields camera_link (the URDF frame); 'camera_link' would
+                    # give camera_camera_link and cut the TF chain to the images.
+                    'base_frame_id': 'link',
                     'rgb_camera.color_profile': '640,480,30',
                     'depth_module.depth_profile': '640,480,30',
                 }],
