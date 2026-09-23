@@ -37,15 +37,23 @@ ekf_filter_node:
     # BNO055. Yaw and yaw rate are what matter in 2D; forward acceleration
     # helps ride out short visual-odometry dropouts (blank walls, motion blur).
     imu0: imu/data
+    # Yaw RATE from the gyro, not yaw itself: the visual odometry already
+    # supplies an absolute heading in the odom frame, and a second absolute
+    # heading (the BNO055's magnetometer, uncalibrated, and offset by the
+    # mount's yaw) made the filter flip between the two, tens of degrees a
+    # second, with the robot standing still (measured 2026-09-22).
     imu0_config: [false, false, false,
-                  false, false, true,
+                  false, false, false,
                   false, false, false,
                   false, false, true,
                   true,  false, false]
     imu0_differential: false
     imu0_relative: false
     imu0_queue_size: 10
-    imu0_remove_gravitational_acceleration: true
+    # The bno055 driver's imu/data carries the chip's own gravity-free
+    # linear acceleration (raw+gravity is on imu/imu_raw), so the EKF must
+    # not subtract gravity a second time.
+    imu0_remove_gravitational_acceleration: false
 
     # process_noise_covariance is a full 15x15 matrix (225 values). The
     # robot_localization defaults are sane; tune it only with real data, and
