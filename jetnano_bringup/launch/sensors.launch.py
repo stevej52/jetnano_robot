@@ -73,6 +73,10 @@ def generate_launch_description():
                     # yields camera_link (the URDF frame); 'camera_link' would
                     # give camera_camera_link and cut the TF chain to the images.
                     'base_frame_id': 'link',
+                    # Hardware-reset the camera before streaming. After a driver
+                    # crash the D435 can keep colour running while depth never
+                    # starts ('Frames didn't arrive'); the reset clears it.
+                    'initial_reset': True,
                     'rgb_camera.color_profile': '640,480,30',
                     'depth_module.depth_profile': '640,480,30',
                 }],
