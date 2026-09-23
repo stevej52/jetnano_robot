@@ -59,10 +59,14 @@ def generate_launch_description():
     model = LaunchConfiguration('model')
     headless = LaunchConfiguration('headless')
 
+    # --headless-rendering: the sensors (camera, lidar) still need a render
+    # engine with no window; without it Ogre wants an X display and the server
+    # dies with 'Failed to create dummy render window' when nobody is logged
+    # in on the desktop (H2-Host after a reboot, 2026-09-23).
     # -r runs physics immediately; -s is server only, for a machine with no
     # display or for a test that should not open a window.
     gz_args = PythonExpression([
-        "'-r -s ' + '", world, "' if '", headless, "' == 'true' else '-r ' + '", world, "'"])
+        "'-r -s --headless-rendering ' + '", world, "' if '", headless, "' == 'true' else '-r ' + '", world, "'"])
 
     robot_description = ParameterValue(Command(['xacro ', model]), value_type=str)
 
