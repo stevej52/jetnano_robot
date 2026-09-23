@@ -129,7 +129,13 @@ Rates: `/scan` 7.7 Hz, `/imu/data` 49.8 Hz, colour / depth / aligned 30 Hz.
 Orientations, checked by hand:
 
 - **Camera**: the colour frame is upright; depth matches it pixel for pixel,
-  91 % valid, the desk at 0.28 m along the bottom edge.
+  91 % valid, the desk at 0.28 m along the bottom edge. After Steve lowered
+  it out of the lidar plane it points **27.1 deg down** with **+0.9 deg
+  roll**, lens **0.178 m above the floor** - a plane fit to the floor in the
+  aligned depth with the robot on the ground (19,600 px, 0.1 mm residual,
+  three identical readings), cross-checked by the depth at the image centre
+  (0.178 / sin 27.1 deg = 0.39 m, as measured). `camera_rpy = "0.016 0.473
+  0"`, `camera_xyz` z = 0.118.
 - **Lidar**: the owner stood at the robot's left and appeared at **+90 deg**,
   so angles run counter-clockwise (REP-103) and **0 deg is the nose** - the
   proof being that the thing blocking 0 deg was the camera. The camera
