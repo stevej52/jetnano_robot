@@ -62,8 +62,12 @@ def generate_launch_description():
                     # IR streams' Y8 format; leaving them on stalls depth.
                     'enable_infra1': False,
                     'enable_infra2': False,
-                    # Visual odometry needs depth registered to the colour frame.
+                    # Visual odometry needs depth registered to the colour frame,
+                    # and colour and depth stamped together: without enable_sync
+                    # the aligned depth trails the colour by a frame and rtabmap
+                    # drops pairs ('time difference ... is high').
                     'align_depth.enable': True,
+                    'enable_sync': True,
                     'pointcloud.enable': False,
                     # The driver prefixes this with the camera name, so 'link'
                     # yields camera_link (the URDF frame); 'camera_link' would
