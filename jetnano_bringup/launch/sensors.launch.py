@@ -6,6 +6,9 @@ Getting one of these wrong is the classic cause of a map that slowly shears
 away from reality.
 """
 
+import os
+
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, GroupAction
 from launch.conditions import IfCondition
@@ -14,6 +17,10 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
+    # The BNO055's saved calibration; see the file for where it came from.
+    imu_config = os.path.join(get_package_share_directory('jetnano_bringup'),
+                              'config', 'bno055.yaml')
+
     return LaunchDescription([
         DeclareLaunchArgument('use_lidar', default_value='true'),
         DeclareLaunchArgument('use_camera', default_value='true'),
@@ -90,7 +97,7 @@ def generate_launch_description():
                 executable='bno055',
                 name='bno055',
                 output='screen',
-                parameters=[{
+                parameters=[imu_config, {
                     'connection_type': 'i2c',
                     'i2c_bus': LaunchConfiguration('imu_i2c_bus'),
                     'i2c_addr': 0x28,

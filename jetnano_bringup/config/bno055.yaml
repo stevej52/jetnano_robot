@@ -1,0 +1,14 @@
+# BNO055 calibration, read off the chip in CONFIG mode on 2026-09-22 after a
+# hand routine (six accelerometer placements, figure-eights) took every
+# status to 3/3. The driver writes these at startup, so the robot boots
+# calibrated instead of at zero. Values are the chip's raw 16-bit registers
+# (two's complement, as the driver expects): acc -18/-32/+10, mag
+# 557/184/773, gyro -1/-4/-2.
+bno055:
+  ros__parameters:
+    set_offsets: true
+    offset_acc: [65518, 65504, 10]
+    radius_acc: 1000
+    offset_mag: [557, 184, 773]
+    radius_mag: 734
+    offset_gyr: [65535, 65532, 65534]

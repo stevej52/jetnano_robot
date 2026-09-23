@@ -152,7 +152,11 @@ Orientations, checked by hand:
   where the raw reading would have said "rolled 170 degrees".
 - The "saved calibration" on the old card is the driver's example defaults
   (`DEFAULT_OFFSET_ACC` and friends), not a calibration. `imu/calib_status`
-  at power-up: sys 0, gyro 3, accel 1, mag 0.
+  at power-up: sys 0, gyro 3, accel 1, mag 0. **Calibrated for real that
+  evening**: six accelerometer placements and some figure-eights by hand
+  took it to 3/3/3/3 in 47 s. The offsets were read in CONFIG mode (a
+  fusion-mode read returns zeros for the magnetometer) and live in
+  `config/bno055.yaml`, which the launch loads with `set_offsets`.
 
 ### Visual odometry on the real camera
 

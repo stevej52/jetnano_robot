@@ -215,10 +215,6 @@ Still guesses:
 - **Joystick axis and button numbers** (`joysticks.yaml`): run
   `ros2 run jetnano_teleop list_devices --watch` and replace them with what
   you actually see.
-- **BNO055 calibration**: the chip has never been calibrated - the offsets
-  file recovered from the old card holds the driver's example defaults.
-  NDOF mode self-calibrates as the robot moves; once `imu/calib_status`
-  reports 3/3 everywhere, read the offsets back and save them.
 
 ## Licence
 
