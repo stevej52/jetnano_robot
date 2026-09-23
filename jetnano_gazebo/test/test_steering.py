@@ -35,9 +35,9 @@ CHASSIS = Chassis()
 
 def test_chassis_matches_the_urdf():
     """If jetnano.urdf.xacro changes, this should fail and be updated."""
-    assert CHASSIS.wheelbase == pytest.approx(0.313)
-    assert CHASSIS.track_width == pytest.approx(0.220)
-    assert CHASSIS.wheel_radius == pytest.approx(0.060)
+    assert CHASSIS.wheelbase == pytest.approx(0.330)
+    assert CHASSIS.track_width == pytest.approx(0.230)
+    assert CHASSIS.wheel_radius == pytest.approx(0.065)
     assert CHASSIS.steer_limit == pytest.approx(0.5236, abs=1e-4)
 
 
@@ -71,7 +71,7 @@ def test_straight_points_everything_forward():
 
 def test_straight_speed_is_linear_velocity_over_wheel_radius():
     commands = straight_commands(CHASSIS, linear_x=0.6)
-    assert commands.speed['front_left'] == pytest.approx(0.6 / 0.060)
+    assert commands.speed['front_left'] == pytest.approx(0.6 / 0.065)
 
 
 def test_reverse_spins_the_wheels_backwards():

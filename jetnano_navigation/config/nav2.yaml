@@ -13,10 +13,12 @@
 #               Rotating to heading is exactly the manoeuvre this chassis
 #               cannot perform.
 #
-# MEASURE ME: minimum_turning_radius. With a 0.313 m wheelbase and both axles
-# steering to 30 degrees, geometry gives (wheelbase/2)/tan(30) = 0.27 m. 0.30 m
-# is set below as a safety margin. Check it on carpet before trusting it -
-# tyre scrub on a crawler makes the real number larger than the geometry says.
+# MEASURE ME: minimum_turning_radius. With the tape-measured 0.330 m
+# wheelbase and both axles steering to 30 degrees, geometry gives
+# (wheelbase/2)/tan(30) = 0.29 m, so the 0.30 m below is barely a margin.
+# Drive a full-lock circle on the floor before trusting it - tyre scrub on a
+# crawler makes the real number larger than the geometry says, and a radius
+# set too small plans turns the robot cannot make.
 
 amcl:
   ros__parameters:

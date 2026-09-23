@@ -31,10 +31,10 @@ make it a state machine:
   that caused it. Recovery runs for at least ``min_recovery`` regardless.
 
 Roll gets a tighter trigger than pitch, and that is not arbitrary: this
-chassis is longer than it is wide (0.313 m wheelbase against 0.220 m track),
-so it tips sideways sooner than it tips end over end. A crawler is also meant
-to climb steep pitch, so a pitch limit as tight as the roll limit would fight
-the robot's whole purpose.
+chassis is longer than it is wide (0.330 m wheelbase against 0.230 m track,
+tape-measured 2026-09-22), so it tips sideways sooner than it tips end over
+end. A crawler is also meant to climb steep pitch, so a pitch limit as tight
+as the roll limit would fight the robot's whole purpose.
 """
 
 from __future__ import annotations
@@ -120,13 +120,13 @@ class TiltLimits:
     """
     The angles, in degrees, and the times, in seconds.
 
-    Defaults come from this chassis's geometry. Static tipping angles work out
-    at about 59 degrees in roll and 67 in pitch, using the URDF masses; the
-    real centre of mass is higher than the URDF says, because the battery, the
-    Jetson and a lidar at 0.145 m are not modelled, so the true angles are
-    lower. Dynamic rollover happens well below static in any case. These
-    triggers sit near half the static figure, which is a starting point to
-    tune down from, not a measurement.
+    Defaults come from this chassis's geometry. With the measured 0.230 m
+    track and 0.330 m wheelbase and a guessed 0.10 m centre-of-mass height,
+    the static tipping angles are about 49 degrees in roll and 59 in pitch;
+    the true centre of mass (battery, Jetson, a lidar at 0.145 m) is probably
+    higher, which lowers both, and dynamic rollover happens well below
+    static in any case. These triggers sit near half the static figure,
+    which is a starting point to tune down from, not a measurement.
     """
 
     roll_trigger_deg: float = 25.0

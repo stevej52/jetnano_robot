@@ -33,11 +33,12 @@
 <robot name="jetnano" xmlns:xacro="http://www.ros.org/wiki/xacro">
 
   <!-- ============================================================
-       MEASURE ME - chassis geometry (metres, radians)
+       Chassis geometry (metres, radians). Wheelbase, track and tyre
+       radius tape-measured 2026-09-22; the body box is still an estimate.
        ============================================================ -->
-  <xacro:property name="wheelbase"        value="0.313"/>  <!-- front axle to rear axle -->
-  <xacro:property name="track_width"      value="0.220"/>  <!-- left wheel to right wheel -->
-  <xacro:property name="wheel_radius"     value="0.060"/>  <!-- tyre radius, loaded -->
+  <xacro:property name="wheelbase"        value="0.330"/>  <!-- front axle to rear axle -->
+  <xacro:property name="track_width"      value="0.230"/>  <!-- left wheel to right wheel -->
+  <xacro:property name="wheel_radius"     value="0.065"/>  <!-- tyre radius, loaded -->
   <xacro:property name="wheel_width"      value="0.045"/>
   <xacro:property name="chassis_length"   value="0.400"/>
   <xacro:property name="chassis_width"    value="0.180"/>
@@ -45,9 +46,12 @@
   <xacro:property name="chassis_z_offset" value="0.010"/>  <!-- chassis centre above axle line -->
   <xacro:property name="steer_limit"      value="0.5236"/> <!-- 30 degrees -->
 
-  <!-- Where the sensors are bolted, relative to base_link. Positions are
-       still estimates (tape measure pending); the ORIENTATIONS were checked
-       on the robot 2026-09-22: lidar 0 deg is the nose and angles run
+  <!-- Where the sensors are bolted, relative to base_link (the middle of
+       the wheelbase, on the axle line). Tape-measured 2026-09-22: the lidar
+       is 0.15 m and the camera 0.29 m forward of the rear axle, so -0.015 m
+       and +0.125 m from base_link. The lidar's height and the IMU's position
+       are still estimates. The ORIENTATIONS were checked on the robot
+       2026-09-22: lidar 0 deg is the nose and angles run
        counter-clockwise (REP-103), the camera image is upright, and the
        BNO055 is bolted upside down, turned 90 deg and tilted 10 deg on its
        bracket - the sensor's +y is the robot's +x, its +x the robot's +y,
@@ -55,13 +59,13 @@
        (docs/bench-calibration-2026-09-21.md), exact to a couple of degrees.
        The tilt guard reads it back through TF, so this is the only place
        it lives. -->
-  <xacro:property name="lidar_xyz"  value="0.0 0.0 0.145"/>
+  <xacro:property name="lidar_xyz"  value="-0.015 0.0 0.145"/>
   <xacro:property name="lidar_rpy"  value="0 0 0"/>
   <!-- Camera re-mounted 2026-09-22 below the lidar plane and pitched down:
        27.1 deg down, +0.9 deg roll, lens 0.178 m above the floor, all from a
-       plane fit to the floor in the aligned depth (0.1 mm residual). x is
-       still a tape-measure job; z = 0.178 - wheel_radius. -->
-  <xacro:property name="camera_xyz" value="0.150 0.0 0.118"/>
+       plane fit to the floor in the aligned depth (0.1 mm residual).
+       z = 0.178 - wheel_radius. -->
+  <xacro:property name="camera_xyz" value="0.125 0.0 0.113"/>
   <xacro:property name="camera_rpy" value="0.016 0.473 0"/>
   <xacro:property name="imu_xyz"    value="0.0 0.0 0.060"/>
   <xacro:property name="imu_rpy"    value="2.9698 0.0552 1.5680"/>

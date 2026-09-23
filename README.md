@@ -202,11 +202,12 @@ through TF.
 
 Still guesses:
 
-- **Chassis geometry and sensor positions** (`jetnano.urdf.xacro`): wheelbase
-  0.313 m, track 0.220 m, wheel radius 0.060 m, and where each sensor sits.
-  Estimates for a 1/10 crawler, written while the robot was in storage. The
-  sensor orientations are measured; the positions are not.
-- **`minimum_turning_radius: 0.30`** (`nav2.yaml`): geometry gives 0.27 m for
+- **Body box, lidar height and IMU position** (`jetnano.urdf.xacro`). The
+  wheelbase (0.330 m), track (0.230 m), wheel radius (0.065 m) and the
+  lidar's and camera's positions along the chassis were tape-measured on
+  2026-09-22, and every sensor orientation is measured; the rest of the
+  model is still an estimate.
+- **`minimum_turning_radius: 0.30`** (`nav2.yaml`): geometry gives 0.29 m for
   both axles at 30 deg, but tyre scrub on a crawler makes the real figure
   larger. Drive a full-lock circle and measure it.
 - **Throttle to ground speed**: `cmd_vel` is not in m/s until a taped-out run

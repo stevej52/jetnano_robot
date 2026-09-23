@@ -30,11 +30,11 @@ ahead of the ICR instead of a whole one, so::
     front-only Ackermann   tan(delta) = L / R
     opposite-phase 4WS     tan(delta) = (L/2) / R
 
-Same steering angle, half the turning radius. For this chassis, L = 0.313 m
+Same steering angle, half the turning radius. For this chassis, L = 0.330 m
 and a 30 degree limit::
 
-    front-only   R = 0.313 / tan(30) = 0.542 m
-    4WS          R = 0.313 / (2 tan(30)) = 0.271 m
+    front-only   R = 0.330 / tan(30) = 0.572 m
+    4WS          R = 0.330 / (2 tan(30)) = 0.286 m
 
 which is where nav2.yaml's minimum_turning_radius of 0.30 m comes from, with
 a little margin on top.
@@ -75,9 +75,9 @@ STRAIGHT_EPSILON = 1e-4
 class Chassis:
     """Measurements from jetnano.urdf.xacro. Defaults are that robot."""
 
-    wheelbase: float = 0.313
-    track_width: float = 0.220
-    wheel_radius: float = 0.060
+    wheelbase: float = 0.330
+    track_width: float = 0.230
+    wheel_radius: float = 0.065
     steer_limit: float = 0.5236      # 30 degrees, the servo's mechanical limit
 
     @property

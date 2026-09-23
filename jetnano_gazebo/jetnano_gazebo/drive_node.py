@@ -52,9 +52,9 @@ class DriveNode(Node):
         """Read the chassis geometry from parameters and start listening."""
         super().__init__('sim_drive')
 
-        self.declare_parameter('wheelbase', 0.313)
-        self.declare_parameter('track_width', 0.220)
-        self.declare_parameter('wheel_radius', 0.060)
+        self.declare_parameter('wheelbase', 0.330)
+        self.declare_parameter('track_width', 0.230)
+        self.declare_parameter('wheel_radius', 0.065)
         self.declare_parameter('steer_limit', 0.5236)
         self.declare_parameter('cmd_timeout', 0.5)
         self.declare_parameter('publish_rate', 50.0)
