@@ -12,6 +12,9 @@ Useful variations:
                             GPU (the default here; see odometry.launch.py). With
                             cuvslam the container's driver owns the camera, so the
                             host RealSense node is not started.
+    nvblox:=true            with cuvslam: also build a 3D map of what the camera
+                            sees, for Nav2's local costmap (navigation.launch.py
+                            nvblox:=true). Odometry drops from 89 to ~43 Hz.
     use_camera:=false       skip the RealSense (and any visual odometry)
     use_teleop:=true        run the joystick node HERE instead of on the PC
 
@@ -68,6 +71,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'vo', default_value='cuvslam', choices=['cuvslam', 'rtabmap', 'none'],
             description='visual odometry: cuvslam (GPU, in the isaac_vo container) or rtabmap (CPU)'),
+        DeclareLaunchArgument(
+            'nvblox', default_value='false',
+            description='with vo:=cuvslam, also run nvblox 3D mapping for the Nav2 costmap'),
         DeclareLaunchArgument('use_teleop', default_value='false'),
 
         # One robot per machine: a second copy of this launch stops itself.
@@ -93,7 +99,8 @@ def generate_launch_description():
 
         _include('odometry.launch.py',
                  condition=IfCondition(LaunchConfiguration('use_odometry')),
-                 arguments={'use_sim_time': use_sim_time, 'vo': vo_source}.items()),
+                 arguments={'use_sim_time': use_sim_time, 'vo': vo_source,
+                            'nvblox': LaunchConfiguration('nvblox')}.items()),
 
         _include('teleop.launch.py',
                  condition=IfCondition(LaunchConfiguration('use_teleop'))),

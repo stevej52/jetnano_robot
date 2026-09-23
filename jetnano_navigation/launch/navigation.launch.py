@@ -39,10 +39,12 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import SetRemap
 from launch_ros.substitutions import FindPackageShare
+from nav2_common.launch import ReplaceString
 
 
 def generate_launch_description():
@@ -54,6 +56,18 @@ def generate_launch_description():
     slam_launch = PathJoinSubstitution(
         [FindPackageShare('jetnano_navigation'), 'launch', 'slam.launch.py'])
 
+    # nvblox:=true adds the camera's 3D obstacle layer to the local costmap by
+    # rewriting the plugin list in a copy of the params file. The layer's own
+    # parameters are always in nav2.yaml; only the list decides whether Nav2
+    # loads the plugin, so the simulator (no nvblox there) is untouched.
+    params_file = ReplaceString(
+        source_file=LaunchConfiguration('params_file'),
+        replacements={
+            'plugins: ["obstacle_layer", "inflation_layer"]':
+            'plugins: ["obstacle_layer", "nvblox_layer", "inflation_layer"]',
+        },
+        condition=IfCondition(LaunchConfiguration('nvblox')))
+
     return LaunchDescription([
         DeclareLaunchArgument(
             'mode', default_value='mapping',
@@ -63,6 +77,10 @@ def generate_launch_description():
             description='Serialised pose-graph, no extension (continue/localization)'),
         DeclareLaunchArgument('params_file', default_value=nav2_params),
         DeclareLaunchArgument('autostart', default_value='true'),
+        DeclareLaunchArgument(
+            'nvblox', default_value='false',
+            description='Add the nvblox 3D-map layer to the local costmap (Jetson only: '
+                        'needs ros-jazzy-nvblox-nav2 and the nvblox node running)'),
 
         GroupAction([
             # Keep Nav2 off the driver's topic. See the docstring above.
@@ -73,7 +91,7 @@ def generate_launch_description():
                 PythonLaunchDescriptionSource(nav2_bringup),
                 launch_arguments={
                     'use_sim_time': 'false',
-                    'params_file': LaunchConfiguration('params_file'),
+                    'params_file': params_file,
                     'autostart': LaunchConfiguration('autostart'),
                 }.items(),
             ),

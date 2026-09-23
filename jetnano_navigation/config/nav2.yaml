@@ -118,6 +118,22 @@ local_costmap:
           data_type: "LaserScan"
           raytrace_max_range: 10.0
           obstacle_max_range: 8.0
+      # What the camera sees in 3D: nvblox (on the GPU, in the isaac_vo
+      # container) publishes a 2D occupancy grid of everything between 10 cm
+      # and 35 cm above the floor - steps, low rocks and table edges the
+      # lidar's single plane cannot see. A plain nav_msgs/OccupancyGrid in the
+      # odom frame, so Nav2's own static layer reads it and no NVIDIA package
+      # is needed on this side. Inert unless navigation.launch.py is started
+      # with nvblox:=true, which inserts it into the plugin list above; the
+      # nvblox node must be running (robot.launch.py nvblox:=true).
+      nvblox_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        enabled: true
+        map_topic: /nvblox_node/static_occupancy_grid
+        map_subscribe_transient_local: false
+        subscribe_to_updates: false
+        track_unknown_space: false
+        lethal_cost_threshold: 65
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0

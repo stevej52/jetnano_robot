@@ -63,6 +63,11 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'cuvslam_jitter_ms', default_value='12.0',
             description='cuvslam image_jitter_threshold_ms: 12 for 90 fps, 19 for 60'),
+        DeclareLaunchArgument(
+            'nvblox', default_value='false',
+            description='cuvslam only: also run nvblox 3D mapping from the same camera '
+                        '(projector alternates, odometry drops to ~43 Hz, Nav2 gets a '
+                        'costmap layer of what the camera sees)'),
 
         # One odometry source and one EKF: a second copy stops itself.
         only_one('jetnano_odometry', [
@@ -77,7 +82,8 @@ def generate_launch_description():
             cmd=['bash', cuvslam_script,
                  LaunchConfiguration('cuvslam_infra_profile'),
                  LaunchConfiguration('cuvslam_jitter_ms'),
-                 'base_link'],
+                 'base_link',
+                 LaunchConfiguration('nvblox')],
             output='screen',
             condition=wants('cuvslam'),
         ),

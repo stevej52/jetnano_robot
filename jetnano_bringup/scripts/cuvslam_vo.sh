@@ -12,20 +12,34 @@
 # when this process is told to stop (a plain docker exec client ignores
 # SIGINT, and the nodes would keep running after Ctrl-C).
 #
-#     cuvslam_vo.sh [infra_profile] [image_jitter_threshold_ms] [base_frame]
+#     cuvslam_vo.sh [infra_profile] [image_jitter_threshold_ms] [base_frame] [nvblox]
 #
 # Defaults: 640,360,90 (the fastest stable profile measured on 2026-09-23),
-# 12 ms, base_link. Everything about the container itself is in
-# ros2_gpu_robot/cuvslam_d435/README.md. On a machine without the container
-# (the host PC) this exits with a message: use vo:=rtabmap there.
+# 12 ms, base_link, nvblox=false. With nvblox=true the container runs
+# cuvslam_nvblox_d435.launch.py instead: the same odometry plus nvblox 3D
+# mapping from the same camera, with the projector alternating between
+# frames, so each gets half the frame rate (odometry ~43 Hz instead of 89)
+# and Nav2 gains a costmap layer of what the camera sees. Everything about
+# the container itself is in ros2_gpu_robot/cuvslam_d435/README.md. On a
+# machine without the container (the host PC) this exits with a message:
+# use vo:=rtabmap there.
 
 set -u
 
 PROFILE=${1:-640,360,90}
 JITTER=${2:-12.0}
 BASE_FRAME=${3:-base_link}
+NVBLOX=${4:-false}
 CONTAINER=${CUVSLAM_CONTAINER:-isaac_vo}
-LAUNCH=/workspaces/isaac_ros-dev/cuvslam_d435_stereo.launch.py
+if [ "${NVBLOX}" = "true" ] || [ "${NVBLOX}" = "1" ]; then
+    LAUNCH=/workspaces/isaac_ros-dev/cuvslam_nvblox_d435.launch.py
+    # the splitter is built into the workspace, not installed from apt
+    SOURCE_WS='[ -f /workspaces/isaac_ros-dev/install/setup.bash ] && source /workspaces/isaac_ros-dev/install/setup.bash;'
+    [ "${JITTER}" = "12.0" ] && JITTER=50.0   # pairs arrive at half rate with the projector alternating
+else
+    LAUNCH=/workspaces/isaac_ros-dev/cuvslam_d435_stereo.launch.py
+    SOURCE_WS=''
+fi
 DDS_PROFILE=/workspaces/isaac_ros-dev/fastdds_udp_only.xml
 DOMAIN=${ROS_DOMAIN_ID:-0}
 
@@ -85,11 +99,15 @@ stop() {
 }
 trap 'stop; exit 0' INT TERM
 
-say "starting cuVSLAM in ${CONTAINER}: IR ${PROFILE}, jitter ${JITTER} ms, base_frame ${BASE_FRAME}, ROS_DOMAIN_ID ${DOMAIN}"
+say "starting $(basename "${LAUNCH}" .launch.py) in ${CONTAINER}: IR ${PROFILE}, jitter ${JITTER} ms, base_frame ${BASE_FRAME}, nvblox ${NVBLOX}, ROS_DOMAIN_ID ${DOMAIN}"
+if [ "${NVBLOX}" = "true" ] || [ "${NVBLOX}" = "1" ]; then
+    LAUNCH_ARGS="profile:=${PROFILE} image_jitter_threshold_ms:=${JITTER} base_frame:=${BASE_FRAME}"
+else
+    LAUNCH_ARGS="infra_profile:=${PROFILE} emitter:=0 image_jitter_threshold_ms:=${JITTER} base_frame:=${BASE_FRAME}"
+fi
 docker exec -u root \
     -e FASTRTPS_DEFAULT_PROFILES_FILE="${DDS_PROFILE}" -e ROS_DOMAIN_ID="${DOMAIN}" \
-    "${CONTAINER}" bash -c "source /opt/ros/jazzy/setup.bash; exec ros2 launch ${LAUNCH} \
-        infra_profile:=${PROFILE} emitter:=0 image_jitter_threshold_ms:=${JITTER} base_frame:=${BASE_FRAME}" &
+    "${CONTAINER}" bash -c "source /opt/ros/jazzy/setup.bash; ${SOURCE_WS} exec ros2 launch ${LAUNCH} ${LAUNCH_ARGS}" &
 CHILD=$!
 wait "${CHILD}"
 status=$?
