@@ -20,7 +20,7 @@ host PC. ROS_DOMAIN_ID must match on both machines; it is 7 for this robot.
 """
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, LogInfo
+from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription, LogInfo
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
@@ -32,8 +32,12 @@ from jetnano_bringup.launch_lock import only_one
 def _include(name, condition=None, arguments=None):
     source = PythonLaunchDescriptionSource(PathJoinSubstitution(
         [FindPackageShare('jetnano_bringup'), 'launch', name]))
-    return IncludeLaunchDescription(
+    include = IncludeLaunchDescription(
         source, condition=condition, launch_arguments=arguments or {})
+    # Scoped, because an include's arguments otherwise leak into this launch:
+    # sensors.launch.py's use_camera:=False was read by the odometry include
+    # a few lines later and turned vo into 'none' (2026-09-23).
+    return GroupAction([include], scoped=True, forwarding=True)
 
 
 def generate_launch_description():
