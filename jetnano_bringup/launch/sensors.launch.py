@@ -65,8 +65,14 @@ def generate_launch_description():
                     'enable_accel': False,
                     'enable_color': True,
                     'enable_depth': True,
-                    # The stock Jetson kernel's UVC driver does not know the
-                    # IR streams' Y8 format; leaving them on stalls depth.
+                    # Off because nothing on the CPU path uses them, not because
+                    # they fail: the stock JetPack 7.2 kernel streams the Y8
+                    # infrared pair fine (verified 2026-09-23 in every
+                    # combination, up to 848x480x60 and all four streams at
+                    # once). The 2026-09-22 stall was a wedged camera, which
+                    # initial_reset below now clears. GPU visual odometry
+                    # (ros2_gpu_robot/cuvslam_d435) runs its own driver on
+                    # the IR pair inside a container while this node is stopped.
                     'enable_infra1': False,
                     'enable_infra2': False,
                     # Visual odometry needs depth registered to the colour frame,

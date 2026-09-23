@@ -47,6 +47,17 @@ def generate_launch_description():
                 'approx_sync': True,
                 'wait_imu_to_init': False,
                 'subscribe_rgbd': False,
+                # Frame-to-frame with optical flow and fewer features: 19 Hz
+                # instead of the defaults' 10 (docs/vo-sweep-2026-09-23.md).
+                # The node has one worker thread and drops every frame that
+                # arrives while it is busy, so only a cheaper estimate raises
+                # the rate. Drift under motion with these values is unmeasured.
+                # This is the CPU fallback; the GPU path (cuVSLAM, see
+                # ros2_gpu_robot/cuvslam_d435) publishes /vo at 89 Hz instead.
+                'Odom/Strategy': '1',
+                'Vis/CorType': '1',
+                'Odom/KeyFrameThr': '0.6',
+                'Vis/MaxFeatures': '500',
             }],
             remappings=[
                 ('rgb/image', '/camera/camera/color/image_raw'),
