@@ -15,7 +15,10 @@ WorkingDirectory=/home/jeston
 Environment=ROS_DOMAIN_ID=7
 Environment=HOME=/home/jeston
 # A login shell so the workspace overlay is sourced the same way a terminal does.
-ExecStart=/bin/bash -lc 'source /opt/ros/jazzy/setup.bash && source /home/jeston/ros2_ws/install/setup.bash && exec ros2 launch jetnano_bringup robot.launch.py'
+# nvblox:=true: the robot boots with the camera's 3D obstacle map for Nav2 as
+# well as the GPU odometry (odometry ~40 Hz instead of 89; both far above the
+# 10 Hz of the CPU path). A manual robot.launch.py defaults to odometry only.
+ExecStart=/bin/bash -lc 'source /opt/ros/jazzy/setup.bash && source /home/jeston/ros2_ws/install/setup.bash && exec ros2 launch jetnano_bringup robot.launch.py nvblox:=true'
 # ros2 launch shuts its nodes down on SIGINT (the lidar driver must not be
 # SIGKILLed: the sensor then needs a USB replug). Give it time.
 KillSignal=SIGINT
