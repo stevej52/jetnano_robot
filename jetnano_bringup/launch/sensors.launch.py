@@ -15,6 +15,8 @@ from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
+from jetnano_bringup.launch_lock import only_one
+
 
 def generate_launch_description():
     # The BNO055's saved calibration; see the file for where it came from.
@@ -31,6 +33,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'imu_i2c_bus', default_value='7',
             description='I2C bus the BNO055 is on (same header as the PCA9685)'),
+
+        # One driver per sensor: a second copy of this launch stops itself
+        # (two rplidar drivers on one serial port both die).
+        only_one('jetnano_sensors', [
 
         GroupAction(
             condition=IfCondition(LaunchConfiguration('use_lidar')),
@@ -116,4 +122,6 @@ def generate_launch_description():
                 remappings=[('imu/imu', 'imu/data')],
             )],
         ),
+
+        ]),
     ])

@@ -20,11 +20,13 @@ host PC. ROS_DOMAIN_ID must match on both machines; it is 7 for this robot.
 """
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, LogInfo
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.substitutions import FindPackageShare
+
+from jetnano_bringup.launch_lock import only_one
 
 
 def _include(name, condition=None, arguments=None):
@@ -64,6 +66,11 @@ def generate_launch_description():
             description='visual odometry: cuvslam (GPU, in the isaac_vo container) or rtabmap (CPU)'),
         DeclareLaunchArgument('use_teleop', default_value='false'),
 
+        # One robot per machine: a second copy of this launch stops itself.
+        only_one('jetnano_robot', [
+
+        LogInfo(msg=['robot.launch: vo=', vo_source, ', host camera=', host_camera]),
+
         _include('description.launch.py', arguments={
             'use_sim_time': use_sim_time,
         }.items()),
@@ -86,4 +93,6 @@ def generate_launch_description():
 
         _include('teleop.launch.py',
                  condition=IfCondition(LaunchConfiguration('use_teleop'))),
+
+        ]),
     ])

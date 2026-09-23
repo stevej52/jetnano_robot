@@ -26,11 +26,13 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, LogInfo
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackagePrefix
+
+from jetnano_bringup.launch_lock import only_one
 
 
 def generate_launch_description():
@@ -61,6 +63,11 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'cuvslam_jitter_ms', default_value='12.0',
             description='cuvslam image_jitter_threshold_ms: 12 for 90 fps, 19 for 60'),
+
+        # One odometry source and one EKF: a second copy stops itself.
+        only_one('jetnano_odometry', [
+
+        LogInfo(msg=['visual odometry source: ', vo, ' (use_visual_odometry=', use_vo, ')']),
 
         # GPU: cuVSLAM in the container. The wrapper starts the container if it
         # is stopped, refuses if the host camera driver is running, and stops
@@ -123,4 +130,6 @@ def generate_launch_description():
             output='screen',
             parameters=[ekf_config, {'use_sim_time': use_sim_time}],
         ),
+
+        ]),
     ])

@@ -19,6 +19,8 @@ from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
+from jetnano_bringup.launch_lock import only_one
+
 
 def generate_launch_description():
     bringup_pkg = get_package_share_directory('jetnano_bringup')
@@ -43,6 +45,9 @@ def generate_launch_description():
             'i2c_bus', default_value='7',
             description='I2C bus the PCA9685 is on. Was 1 on the Jetson Nano; '
                         'check with i2cdetect -l and i2cdetect -y -r <bus>'),
+
+        # One driver on the I2C bus, one twist_mux: a second copy stops itself.
+        only_one('jetnano_drive', [
 
         Node(
             package='ros2_pca9685',
@@ -79,4 +84,6 @@ def generate_launch_description():
             parameters=[{'use_sim_time': LaunchConfiguration('use_sim_time')}],
             condition=IfCondition(LaunchConfiguration('use_tilt_guard')),
         ),
+
+        ]),
     ])
