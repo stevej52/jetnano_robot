@@ -38,8 +38,21 @@ fi
 
 if ! docker ps -q -f "name=^${CONTAINER}$" | grep -q .; then
     if docker ps -aq -f "name=^${CONTAINER}$" | grep -q .; then
-        say "container ${CONTAINER} is stopped; starting it"
-        docker start "${CONTAINER}" >/dev/null || exit 1
+        # Right after boot the GPU driver can still be initialising, and the
+        # NVIDIA runtime refuses to create the container until it is ready.
+        # isaac-vo.service normally has this done already; retry for a while.
+        started=0
+        for attempt in $(seq 1 8); do
+            if [ -e /dev/nvgpu/igpu0 ] && docker start "${CONTAINER}" >/dev/null 2>/tmp/cuvslam_vo_start.err; then
+                started=1; break
+            fi
+            say "container ${CONTAINER} not started yet (attempt ${attempt}/8): $(tail -n 1 /tmp/cuvslam_vo_start.err 2>/dev/null)"
+            sleep 5
+        done
+        if [ "${started}" -ne 1 ]; then
+            say "could not start ${CONTAINER}; is the GPU up? (dmesg | grep nvgpu, ros2 run gpu_tools gpu_info). Use vo:=rtabmap meanwhile."
+            exit 1
+        fi
         sleep 2
     else
         say "container ${CONTAINER} does not exist (see ros2_gpu_robot/cuvslam_d435/README.md). Use vo:=rtabmap."
