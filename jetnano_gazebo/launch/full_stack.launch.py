@@ -17,10 +17,13 @@ The whole robot, in simulation.
 
     ros2 launch jetnano_gazebo full_stack.launch.py
     ros2 launch jetnano_gazebo full_stack.launch.py headless:=true slam:=false
+    ros2 launch jetnano_gazebo full_stack.launch.py headless:=true navigation:=true
 
 Layer 4. On top of the simulator this adds the robot's own stack, unmodified:
-visual odometry, the EKF, twist_mux, the tilt guard and slam_toolbox. They are
-the same launch files the real robot uses, given use_sim_time:=true.
+visual odometry, the EKF, twist_mux, the tilt guard and slam_toolbox - and with
+navigation:=true the whole of Nav2 through navigation.launch.py, which brings
+its own slam_toolbox. They are the same launch files the real robot uses, given
+use_sim_time:=true.
 
 WHY drive.launch.py RUNS HERE WITH simulate:=true
 
@@ -47,7 +50,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, TimerAction
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 
 SIM_TIME = {'use_sim_time': 'true'}
 
@@ -74,6 +77,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'tilt_guard', default_value='true',
             description='Back out of a roll or pitch past its limit'),
+        DeclareLaunchArgument(
+            'navigation', default_value='false',
+            description='The whole of Nav2 (navigation.launch.py, mapping mode); '
+                        'it includes slam_toolbox, so slam:= is then ignored'),
 
         # Layers 1 to 3: the simulator, its sensors and the drive chain.
         include(gazebo_pkg, 'gazebo.launch.py', arguments={
@@ -100,7 +107,14 @@ def generate_launch_description():
         # base_footprint, both of which exist by now.
         TimerAction(period=25.0, actions=[
             include(navigation_pkg, 'slam.launch.py',
-                    condition=IfCondition(LaunchConfiguration('slam')),
+                    condition=IfCondition(PythonExpression([
+                        "'", LaunchConfiguration('slam'), "' == 'true' and '",
+                        LaunchConfiguration('navigation'), "' != 'true'"])),
                     arguments={'use_sim_time': 'true', 'mode': 'mapping'}),
+            # Or all of Nav2, which starts slam_toolbox itself. No nvblox in the
+            # simulator: that needs the Jetson's GPU.
+            include(navigation_pkg, 'navigation.launch.py',
+                    condition=IfCondition(LaunchConfiguration('navigation')),
+                    arguments={'use_sim_time': 'true', 'mode': 'mapping', 'nvblox': 'false'}),
         ]),
     ])

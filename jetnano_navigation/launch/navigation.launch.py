@@ -89,6 +89,9 @@ def generate_launch_description():
         DeclareLaunchArgument('params_file', default_value=nav2_params),
         DeclareLaunchArgument('autostart', default_value='true'),
         DeclareLaunchArgument(
+            'use_sim_time', default_value='false',
+            description='Take time from /clock. Must be true under Gazebo.'),
+        DeclareLaunchArgument(
             'nvblox', default_value='false',
             description='Add the nvblox 3D-map layer to the local costmap (Jetson only: '
                         'needs ros-jazzy-nvblox-nav2 and the nvblox node running)'),
@@ -101,7 +104,7 @@ def generate_launch_description():
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(nav2_bringup),
                 launch_arguments={
-                    'use_sim_time': 'false',
+                    'use_sim_time': LaunchConfiguration('use_sim_time'),
                     'params_file': params_file,
                     'autostart': LaunchConfiguration('autostart'),
                 }.items(),
@@ -114,6 +117,7 @@ def generate_launch_description():
             launch_arguments={
                 'mode': LaunchConfiguration('mode'),
                 'map': LaunchConfiguration('map'),
+                'use_sim_time': LaunchConfiguration('use_sim_time'),
             }.items(),
         ),
     ])
