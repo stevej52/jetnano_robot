@@ -48,9 +48,10 @@ def generate_launch_description():
     # robot for good (source_timeout), which is right for a dead lidar and
     # wrong for a camera that was never started.
     cliff = LaunchConfiguration('cliff')
+    # .lower(): robot.launch.py hands nvblox over as a Python bool's 'True'.
     sources = PythonExpression([
-        "'[\"scan\"' + (', \"nvblox\"' if '", nvblox, "' == 'true' else '') + "
-        "(', \"cliff\"' if '", cliff, "' == 'true' else '') + ']'"])
+        "'[\"scan\"' + (', \"nvblox\"' if '", nvblox, "'.lower() == 'true' else '') + "
+        "(', \"cliff\"' if '", cliff, "'.lower() == 'true' else '') + ']'"])
     guard_params = ReplaceString(
         source_file=guard_config,
         replacements={'observation_sources: ["scan"]': ['observation_sources: ', sources]})
