@@ -48,6 +48,10 @@ def generate_launch_description():
                     executable='rplidar_composition',
                     name='rplidar',
                     output='screen',
+                    # Plugged in late, or a port hiccup: try again rather than
+                    # driving blind until someone notices.
+                    respawn=True,
+                    respawn_delay=5.0,
                     parameters=[{
                         'serial_port': LaunchConfiguration('lidar_port'),
                         'serial_baudrate': 115200,
@@ -124,6 +128,10 @@ def generate_launch_description():
                 executable='bno055',
                 name='bno055',
                 output='screen',
+                # The driver exits on an I2C error at start (a loose ground on
+                # 2026-09-24 left the IMU dead until a full restart); try again.
+                respawn=True,
+                respawn_delay=5.0,
                 parameters=[imu_config, {
                     'connection_type': 'i2c',
                     'i2c_bus': LaunchConfiguration('imu_i2c_bus'),
