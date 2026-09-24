@@ -3,10 +3,11 @@
 <package format="3">
   <name>jetnano_teleop</name>
   <version>0.1.0</version>
-  <description>Joystick teleoperation for the jetnano robot. One node that
-  detects which controller is attached - a two-device Thrustmaster HOTAS set or
-  a single Xbox pad - and publishes cmd_vel_teleop plus an e_stop lock for
-  twist_mux.</description>
+  <description>Teleoperation for the jetnano robot. teleop_node detects which
+  controller is attached - a two-device Thrustmaster HOTAS set or a single
+  Xbox pad - and publishes cmd_vel_teleop plus an e_stop lock for twist_mux;
+  web_teleop serves a driving page (camera feed and arrows) for a phone or a
+  laptop and publishes cmd_vel_web.</description>
   <maintainer email="stevej52@gmail.com">stevej52</maintainer>
   <license>Apache-2.0</license>
 

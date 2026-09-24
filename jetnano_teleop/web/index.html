@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>jetnano</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: #111; color: #ddd; font: 16px/1.3 system-ui, sans-serif;
+               touch-action: manipulation; user-select: none; -webkit-user-select: none; overscroll-behavior: none; }
+  main { max-width: 640px; margin: 0 auto; padding: 8px; }
+  header { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px 6px; }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  #status { font-size: 14px; padding: 3px 10px; border-radius: 12px; background: #333; }
+  #status.ok { background: #1d4d2a; }
+  #status.driving { background: #1a4a7a; }
+  #status.stopped { background: #7a1d1d; }
+  #status.nolink { background: #5a4a10; }
+  #video { display: block; width: 100%; aspect-ratio: 4 / 3; background: #000; border-radius: 6px; object-fit: contain; }
+  #pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 12px 0; }
+  button { font: inherit; }
+  .key { height: 84px; border: 0; border-radius: 10px; background: #2a2a2a; color: #eee; font-size: 34px;
+         touch-action: none; cursor: pointer; }
+  .key.on { background: #3d7fd6; }
+  .key:disabled { opacity: 0.35; }
+  #stop { background: #a02020; font-size: 20px; font-weight: 700; letter-spacing: 1px; }
+  #stop.go { background: #1f8a3a; }
+  #speed { display: flex; align-items: center; gap: 10px; padding: 0 4px; }
+  #speed input { flex: 1; }
+  #speed output { width: 3.5em; text-align: right; font-variant-numeric: tabular-nums; }
+  footer { font-size: 12px; color: #777; padding: 10px 4px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>jetnano</h1>
+    <span id="status">connecting</span>
+  </header>
+
+  <img id="video" alt="camera" draggable="false">
+
+  <div id="pad">
+    <span></span>
+    <button class="key" data-lin="1" data-ang="0" aria-label="forward">&#9650;</button>
+    <span></span>
+    <button class="key" data-lin="0" data-ang="1" aria-label="left">&#9664;</button>
+    <button id="stop" class="key" aria-label="stop">STOP</button>
+    <button class="key" data-lin="0" data-ang="-1" aria-label="right">&#9654;</button>
+    <span></span>
+    <button class="key" data-lin="-1" data-ang="0" aria-label="back">&#9660;</button>
+    <span></span>
+  </div>
+
+  <div id="speed">
+    <span>speed</span>
+    <input id="speedSlider" type="range" min="10" max="100" step="5" value="40">
+    <output id="speedOut">40%</output>
+  </div>
+
+  <footer>Hold an arrow to drive; two at once to steer while moving. Keyboard: arrows or WASD, space = STOP.
+    Speed is a fraction of the robot's throttle limit. Tap the picture if it freezes.</footer>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  var status = document.getElementById('status');
+  var video = document.getElementById('video');
+  var stopBtn = document.getElementById('stop');
+  var slider = document.getElementById('speedSlider');
+  var speedOut = document.getElementById('speedOut');
+  var keys = Array.prototype.slice.call(document.querySelectorAll('.key[data-lin]'));
+
+  var pressed = {};         // pointerId or key name -> button element
+  var wasSending = false;
+  var eStop = false;
+  var linkOk = false;
+  var videoUrl = 'http://' + location.hostname + ':8080/stream?topic=/camera/color/image_raw';
+
+  function post(path, body) {
+    return fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                         body: JSON.stringify(body || {}) })
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); });
+  }
+
+  function loadVideo() {
+    video.src = videoUrl + '&t=' + Date.now();      // a new query defeats a stuck cached stream
+  }
+  video.addEventListener('error', function () { setTimeout(loadVideo, 2000); });
+  video.addEventListener('click', loadVideo);
+
+  // ------------------------------------------------------------ the command --
+  function current() {
+    var lin = 0, ang = 0, any = false;
+    keys.forEach(function (b) {
+      if (b.classList.contains('on')) {
+        any = true;
+        lin += Number(b.dataset.lin);
+        ang += Number(b.dataset.ang);
+      }
+    });
+    var s = Number(slider.value) / 100;
+    return { any: any, lin: Math.max(-1, Math.min(1, lin)) * s, ang: Math.max(-1, Math.min(1, ang)) };
+  }
+
+  function show(st) {
+    if (st.e_stop) { status.textContent = 'STOPPED - press GO'; status.className = 'stopped'; }
+    else if (st.driving) { status.textContent = 'driving'; status.className = 'driving'; }
+    else { status.textContent = 'ready'; status.className = 'ok'; }
+    eStop = !!st.e_stop;
+    stopBtn.textContent = eStop ? 'GO' : 'STOP';
+    stopBtn.classList.toggle('go', eStop);
+    keys.forEach(function (b) { b.disabled = eStop; });
+  }
+
+  function noLink() {
+    linkOk = false;
+    status.textContent = 'no link to robot';
+    status.className = 'nolink';
+  }
+
+  // Ten times a second while anything is held, once more with zeros on release.
+  setInterval(function () {
+    var c = current();
+    if (c.any || wasSending) {
+      wasSending = c.any;
+      post('/cmd', { lin: c.any ? c.lin : 0, ang: c.any ? c.ang : 0 })
+        .then(function (st) { linkOk = true; show(st); })
+        .catch(noLink);
+    }
+  }, 100);
+
+  // The status pill when idle.
+  setInterval(function () {
+    if (current().any) return;
+    fetch('/status', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (st) { linkOk = true; show(st); })
+      .catch(noLink);
+  }, 700);
+
+  // ------------------------------------------------------------ the buttons --
+  function press(b) { if (!eStop) b.classList.add('on'); }
+  function release(b) { b.classList.remove('on'); }
+  function releaseAll() { keys.forEach(release); }
+
+  keys.forEach(function (b) {
+    b.addEventListener('pointerdown', function (e) {
+      e.preventDefault();
+      b.setPointerCapture(e.pointerId);
+      pressed[e.pointerId] = b;
+      press(b);
+    });
+    function up(e) {
+      var held = pressed[e.pointerId];
+      if (held) { release(held); delete pressed[e.pointerId]; }
+    }
+    b.addEventListener('pointerup', up);
+    b.addEventListener('pointercancel', up);
+    b.addEventListener('lostpointercapture', up);
+    b.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+  });
+
+  stopBtn.addEventListener('click', function () {
+    releaseAll();
+    post(eStop ? '/go' : '/stop').then(show).catch(noLink);
+  });
+
+  // Anything that takes the page away releases everything.
+  window.addEventListener('blur', releaseAll);
+  document.addEventListener('visibilitychange', function () { if (document.hidden) releaseAll(); });
+
+  // ------------------------------------------------------------ the keyboard --
+  var keyMap = { ArrowUp: 0, KeyW: 0, ArrowLeft: 1, KeyA: 1, ArrowRight: 2, KeyD: 2, ArrowDown: 3, KeyS: 3 };
+  document.addEventListener('keydown', function (e) {
+    if (e.repeat) return;
+    if (e.code === 'Space') { e.preventDefault(); stopBtn.click(); return; }
+    if (e.code in keyMap) { e.preventDefault(); press(keys[keyMap[e.code]]); }
+  });
+  document.addEventListener('keyup', function (e) {
+    if (e.code === 'Space') { e.preventDefault(); return; }   // no second click from a focused button
+    if (e.code in keyMap) { e.preventDefault(); release(keys[keyMap[e.code]]); }
+  });
+
+  slider.addEventListener('input', function () { speedOut.textContent = slider.value + '%'; });
+
+  // ------------------------------------------------------------------ start --
+  fetch('/config', { cache: 'no-store' })
+    .then(function (r) { return r.json(); })
+    .then(function (cfg) { if (cfg.video_url) videoUrl = cfg.video_url; })
+    .catch(function () {})
+    .then(loadVideo);
+})();
+</script>
+</body>
+</html>

@@ -23,6 +23,13 @@ twist_mux:
         topic: cmd_vel_teleop
         timeout: 0.5
         priority: 100
+      # The driving web page (jetnano_teleop web_teleop). It publishes only
+      # while a button is held (plus half a second of zeros), so it times out
+      # on its own and Nav2 gets the robot back; a joystick still outranks it.
+      web:
+        topic: cmd_vel_web
+        timeout: 0.5
+        priority: 90
       navigation:
         topic: cmd_vel_nav
         timeout: 0.5

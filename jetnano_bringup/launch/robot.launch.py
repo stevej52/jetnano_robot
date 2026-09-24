@@ -17,9 +17,11 @@ Useful variations:
                             nvblox:=true). Odometry drops from 89 to ~43 Hz.
     use_camera:=false       skip the RealSense (and any visual odometry)
     use_teleop:=true        run the joystick node HERE instead of on the PC
+    use_web_teleop:=false   no driving web page (http://<robot>:8081/)
 
-Teleop is off by default because the controller is normally plugged into the
-host PC. ROS_DOMAIN_ID must match on both machines; it is 7 for this robot.
+Joystick teleop is off by default because the controller is normally plugged
+into the host PC; the web page is on by default because it lives on the robot.
+ROS_DOMAIN_ID must match on both machines; it is 7 for this robot.
 """
 
 from launch import LaunchDescription
@@ -75,6 +77,9 @@ def generate_launch_description():
             'nvblox', default_value='false',
             description='with vo:=cuvslam, also run nvblox 3D mapping for the Nav2 costmap'),
         DeclareLaunchArgument('use_teleop', default_value='false'),
+        DeclareLaunchArgument(
+            'use_web_teleop', default_value='true',
+            description='serve the driving web page (camera + arrows) on port 8081'),
 
         # One robot per machine: a second copy of this launch stops itself.
         only_one('jetnano_robot', [
@@ -104,6 +109,9 @@ def generate_launch_description():
 
         _include('teleop.launch.py',
                  condition=IfCondition(LaunchConfiguration('use_teleop'))),
+
+        _include('web_teleop.launch.py',
+                 condition=IfCondition(LaunchConfiguration('use_web_teleop'))),
 
         ]),
     ])

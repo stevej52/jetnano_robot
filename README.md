@@ -131,6 +131,20 @@ same container; `ros2_gpu_robot/cuvslam_d435/README.md`, "Watching the camera"):
   (`/camera/color/image_raw/compressed`, 2.3 MB/s at 30 Hz over Wi-Fi); the raw image
   topics are ~10x that and are not for another machine.
 
+### Driving it from a phone
+
+`http://192.168.1.7:8081/` - the camera feed with four arrows and STOP under it,
+served by the robot itself (`jetnano_teleop web_teleop`, started by
+`robot.launch.py`). Arrows drive only while held, two at once to steer while
+moving; the slider is the throttle limit (the default caps the page at half of
+full throttle, `web_teleop.launch.py max_linear`). The page posts a command ten
+times a second while a button is down and the node publishes `cmd_vel_web` only
+while those keep coming, so a closed page, a sleeping phone or a lost Wi-Fi
+link stops the robot within half a second and hands control back to Nav2. STOP
+raises the same `e_stop` lock the joystick uses, which blocks everything
+including Nav2 until GO is pressed. On a laptop the arrow keys / WASD and space
+do the same. No login: it is for the robot's own network.
+
 Mapping, in three modes:
 
 ```bash
@@ -214,12 +228,15 @@ needing a USB reset.
 ## How commands reach the wheels
 
 ```
-teleop  ──/cmd_vel_teleop (priority 100)──┐
-                                          ├─ twist_mux ──/cmd_vel──▶ ros2_pca9685 ──I²C──▶ ESC + servos
-Nav2    ──/cmd_vel_nav    (priority 10)───┘        ▲
-                                                   │
-                                        /e_stop ───┘  (lock, priority 255)
+teleop    ──/cmd_vel_teleop (priority 100)──┐
+web page  ──/cmd_vel_web    (priority 90)───┼─ twist_mux ──/cmd_vel──▶ ros2_pca9685 ──I²C──▶ ESC + servos
+Nav2      ──/cmd_vel_nav    (priority 10)───┘        ▲
+                                                     │
+                                          /e_stop ───┘  (lock, priority 255)
 ```
+
+(`tilt_guard` also has an input, `cmd_vel_tilt` at priority 150, that it uses
+only while backing the robot off a tilt.)
 
 Three rules hold this together, and each was a bug before it was a rule:
 

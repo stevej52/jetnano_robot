@@ -13,6 +13,7 @@ setup(
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         (os.path.join('share', package_name), ['package.xml']),
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
+        (os.path.join('share', package_name, 'web'), glob('web/*.html')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -25,6 +26,7 @@ setup(
         'console_scripts': [
             'teleop_node = jetnano_teleop.teleop_node:main',
             'list_devices = jetnano_teleop.list_devices:main',
+            'web_teleop = jetnano_teleop.web_teleop:main',
         ],
     },
 )
