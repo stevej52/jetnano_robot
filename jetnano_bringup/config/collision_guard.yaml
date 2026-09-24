@@ -122,3 +122,13 @@ collision_guard:
       min_height: 0.05
       max_height: 1.0
       enabled: true
+    # drive.launch.py cliff:=true adds this one: cliff_guard publishes a
+    # cluster of points outside any corner whose downward sensor sees a drop
+    # (an empty cloud otherwise), so a drop ahead is refused like a wall and
+    # reversing away from it is allowed.
+    cliff:
+      type: "pointcloud"
+      topic: "/cliff/points"
+      min_height: 0.05
+      max_height: 1.0
+      enabled: true

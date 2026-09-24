@@ -24,7 +24,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, GroupAction
 from launch.conditions import IfCondition, UnlessCondition
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from nav2_common.launch import ReplaceString
 
@@ -47,10 +47,13 @@ def generate_launch_description():
     # not in the file by default: a source that never publishes stops the
     # robot for good (source_timeout), which is right for a dead lidar and
     # wrong for a camera that was never started.
+    cliff = LaunchConfiguration('cliff')
+    sources = PythonExpression([
+        "'[\"scan\"' + (', \"nvblox\"' if '", nvblox, "' == 'true' else '') + "
+        "(', \"cliff\"' if '", cliff, "' == 'true' else '') + ']'"])
     guard_params = ReplaceString(
         source_file=guard_config,
-        replacements={'observation_sources: ["scan"]': 'observation_sources: ["scan", "nvblox"]'},
-        condition=IfCondition(nvblox))
+        replacements={'observation_sources: ["scan"]': ['observation_sources: ', sources]})
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -69,6 +72,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'nvblox', default_value='false',
             description="also feed the guard the camera's 3D map (robot.launch.py nvblox:=true)"),
+        DeclareLaunchArgument(
+            'cliff', default_value='false',
+            description='also feed the guard the cliff sensors (sensors.launch.py use_cliff:=true)'),
         DeclareLaunchArgument(
             'i2c_bus', default_value='7',
             description='I2C bus the PCA9685 is on. Was 1 on the Jetson Nano; '

@@ -79,6 +79,11 @@ def generate_launch_description():
             description='with vo:=cuvslam, also run nvblox 3D mapping for the Nav2 costmap'),
         DeclareLaunchArgument('use_teleop', default_value='false'),
         DeclareLaunchArgument(
+            'use_cliff', default_value='false',
+            description='the four downward VL53L0X (fit them first); the collision guard reads them too'),
+        DeclareLaunchArgument('cliff_simulate', default_value='false'),
+        DeclareLaunchArgument('cliff_simulated_drops', default_value="['']"),
+        DeclareLaunchArgument(
             'use_web_teleop', default_value='true',
             description='serve the driving web page (camera + arrows) on port 8081'),
 
@@ -95,15 +100,20 @@ def generate_launch_description():
             'simulate': simulate,
             'i2c_bus': i2c_bus,
             'use_sim_time': use_sim_time,
-            # The collision guard also reads the camera's map when nvblox runs.
+            # The collision guard also reads the camera's map when nvblox runs,
+            # and the cliff sensors when they are fitted.
             'nvblox': PythonExpression(["'", vo_source, "' == 'cuvslam' and '",
                                         LaunchConfiguration('nvblox'), "' == 'true'"]),
+            'cliff': LaunchConfiguration('use_cliff'),
         }.items()),
 
         _include('sensors.launch.py', arguments={
             'use_lidar': LaunchConfiguration('use_lidar'),
             'use_camera': host_camera,
             'use_imu': LaunchConfiguration('use_imu'),
+            'use_cliff': LaunchConfiguration('use_cliff'),
+            'cliff_simulate': LaunchConfiguration('cliff_simulate'),
+            'cliff_simulated_drops': LaunchConfiguration('cliff_simulated_drops'),
         }.items()),
 
         _include('odometry.launch.py',

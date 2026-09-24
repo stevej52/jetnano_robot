@@ -34,7 +34,19 @@ def generate_launch_description():
             description='RPLidar serial port. udev/99-robot-sensors.rules gives it this stable name.'),
         DeclareLaunchArgument(
             'imu_i2c_bus', default_value='7',
-            description='I2C bus the BNO055 is on (same header as the PCA9685)'),
+            description='I2C bus the BNO055 is on (same header as the PCA9685, the INA219 and the cliff mux)'),
+        DeclareLaunchArgument('use_battery', default_value='true',
+                              description='INA219 battery monitor (battery topic, e_stop when flat)'),
+        DeclareLaunchArgument('battery_voltage_only', default_value='true',
+                              description='nothing flows through the shunt: report the pack voltage only'),
+        DeclareLaunchArgument('battery_simulate', default_value='false'),
+        DeclareLaunchArgument('use_cliff', default_value='false',
+                              description='VL53L0X cliff sensors behind a TCA9548A (fit them first)'),
+        DeclareLaunchArgument('cliff_python', default_value='/home/jeston/venv-sensors/bin/python3',
+                              description='the venv python with the Adafruit VL53L0X driver (system site-packages on)'),
+        DeclareLaunchArgument('cliff_simulate', default_value='false'),
+        DeclareLaunchArgument('cliff_simulated_drops', default_value="['']",
+                              description="corners to pretend are drops in simulate mode, e.g. ['front_left']"),
 
         # One driver per sensor: a second copy of this launch stops itself
         # (two rplidar drivers on one serial port both die).
@@ -143,6 +155,49 @@ def generate_launch_description():
                 # The driver names its fused output imu/imu; everything
                 # downstream (EKF, tilt guard, the sim bridge) uses imu/data.
                 remappings=[('imu/imu', 'imu/data')],
+            )],
+        ),
+
+        # The INA219 on the same I2C header (A0 bridged: 0x41). Without the
+        # board it logs once every 30 s and keeps trying; a pack under 6 V
+        # (the wall supply) is reported as absent and never stops anything.
+        GroupAction(
+            condition=IfCondition(LaunchConfiguration('use_battery')),
+            actions=[Node(
+                package='jetnano_bringup',
+                executable='battery_monitor',
+                name='battery_monitor',
+                output='screen',
+                respawn=True,
+                respawn_delay=10.0,
+                parameters=[{
+                    'i2c_bus': LaunchConfiguration('imu_i2c_bus'),
+                    'address': 0x41,
+                    'voltage_only': LaunchConfiguration('battery_voltage_only'),
+                    'simulate': LaunchConfiguration('battery_simulate'),
+                }],
+            )],
+        ),
+
+        # Four VL53L0X behind a TCA9548A, looking down at the corners. Its
+        # driver lives in a venv (see cliff_guard.py), so the node runs under
+        # that venv's python. Off until the sensors are fitted; when on,
+        # drive.launch.py cliff:=true makes the collision guard read them.
+        GroupAction(
+            condition=IfCondition(LaunchConfiguration('use_cliff')),
+            actions=[Node(
+                package='jetnano_bringup',
+                executable='cliff_guard',
+                name='cliff_guard',
+                output='screen',
+                respawn=True,
+                respawn_delay=10.0,
+                prefix=[LaunchConfiguration('cliff_python'), ' '],
+                parameters=[{
+                    'i2c_bus': LaunchConfiguration('imu_i2c_bus'),
+                    'simulate': LaunchConfiguration('cliff_simulate'),
+                    'simulated_drops': LaunchConfiguration('cliff_simulated_drops'),
+                }],
             )],
         ),
 

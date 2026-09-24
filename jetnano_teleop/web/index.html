@@ -13,6 +13,11 @@
   main { max-width: 640px; margin: 0 auto; padding: 8px; }
   header { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px 6px; }
   header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  header .right { display: flex; align-items: center; gap: 8px; }
+  #battery { font-size: 13px; color: #9c9; font-variant-numeric: tabular-nums; }
+  #battery.low { color: #fb6; }
+  #battery.flat { color: #f66; font-weight: 700; }
+  #battery:empty { display: none; }
   #status { font-size: 14px; padding: 3px 10px; border-radius: 12px; background: #333; }
   #status.ok { background: #1d4d2a; }
   #status.driving { background: #1a4a7a; }
@@ -65,7 +70,7 @@
 <main>
   <header>
     <h1>jetnano</h1>
-    <span id="status">connecting</span>
+    <span class="right"><span id="battery"></span><span id="status">connecting</span></span>
   </header>
 
   <img id="video" alt="camera" draggable="false">
@@ -101,6 +106,7 @@
 (function () {
   'use strict';
   var status = document.getElementById('status');
+  var battery = document.getElementById('battery');
   var video = document.getElementById('video');
   var stick = document.getElementById('stick');
   var knob = document.getElementById('knob');
@@ -217,6 +223,13 @@
     stopBtn.classList.toggle('go', eStop);
     stick.classList.toggle('off', eStop);
     showGuard(st.guard_enabled);
+    if (st.battery) {
+      var pct = st.battery[1] === null ? '' : ' · ' + st.battery[1] + ' %';
+      battery.textContent = (st.battery[2] === 'flat' ? 'BATTERY FLAT ' : '') + st.battery[0].toFixed(1) + ' V' + pct;
+      battery.className = st.battery[2];
+    } else {
+      battery.textContent = '';
+    }
   }
 
   var guardEnabled = null;

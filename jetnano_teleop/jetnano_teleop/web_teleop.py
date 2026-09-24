@@ -60,6 +60,7 @@ from geometry_msgs.msg import Twist
 from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
 from rcl_interfaces.srv import GetParameters, SetParameters
 from rclpy.node import Node
+from sensor_msgs.msg import BatteryState
 from std_msgs.msg import Bool
 
 try:
@@ -243,6 +244,11 @@ class WebTeleop(Node):
             self.create_subscription(
                 CollisionMonitorState, 'collision_guard/state', self._on_guard, 10)
 
+        # The battery, from battery_monitor: shown in the page header.
+        self._battery = None        # (voltage, percentage 0..100 or None, 'ok'|'low'|'flat')
+        self._battery_stamp = 0.0
+        self.create_subscription(BatteryState, 'battery', self._on_battery, 10)
+
         # The switch: None until the guard has answered once (or if it is not running).
         guard_node = str(self.get_parameter('guard_node').value)
         self._zones = [str(z) for z in self.get_parameter('guard_zones').value]
@@ -272,6 +278,20 @@ class WebTeleop(Node):
             self._guard = 'slowed'
         else:
             self._guard = 'clear'
+
+    def _on_battery(self, msg) -> None:
+        if not msg.present:
+            self._battery = None
+        else:
+            pct = None if msg.percentage != msg.percentage else round(msg.percentage * 100)
+            if msg.power_supply_health == BatteryState.POWER_SUPPLY_HEALTH_DEAD:
+                state = 'flat'
+            elif pct is not None and pct <= 20:
+                state = 'low'
+            else:
+                state = 'ok'
+            self._battery = (round(msg.voltage, 2), pct, state)
+        self._battery_stamp = self.monotonic()
 
     # ------------------------------------------------------------- the switch --
 
@@ -343,6 +363,7 @@ class WebTeleop(Node):
                 'driving': self._driving,
                 'guard': self._guard if self._driving else 'clear',
                 'guard_enabled': self._guard_enabled,
+                'battery': (self._battery if self.monotonic() - self._battery_stamp < 5.0 else None),
                 'linear': self.state.linear if live else 0.0,
                 'angular': self.state.angular if live else 0.0,
             }
