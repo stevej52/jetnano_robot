@@ -99,6 +99,18 @@ def generate_launch_description():
             condition=wants('cuvslam'),
         ),
 
+        # When /vo goes quiet without anything dying (a camera USB glitch
+        # starved cuVSLAM on 2026-09-24): hold the EKF still, then restart
+        # the container launch so the wrapper above respawns it.
+        Node(
+            package='jetnano_bringup',
+            executable='vo_watchdog',
+            name='vo_watchdog',
+            output='screen',
+            parameters=[{'use_sim_time': use_sim_time}],
+            condition=wants('cuvslam'),
+        ),
+
         # CPU: rtabmap.
         DeclareLaunchArgument(
             'use_sim_time', default_value='false',

@@ -47,6 +47,19 @@ ekf_filter_node:
     odom0_relative: false
     odom0_queue_size: 10
 
+    # While /vo is silent, vo_watchdog publishes zero vx/vy here (see
+    # jetnano_bringup/vo_watchdog.py): the filter's velocity decays to zero
+    # instead of coasting forever. Silent otherwise.
+    odom1: odom_hold
+    odom1_config: [false, false, false,
+                   false, false, false,
+                   true,  true,  false,
+                   false, false, false,
+                   false, false, false]
+    odom1_differential: false
+    odom1_relative: false
+    odom1_queue_size: 10
+
     # BNO055: yaw RATE only.
     imu0: imu/data
     # Not yaw itself: the visual odometry already supplies an absolute heading
