@@ -14,6 +14,19 @@ ekf_filter_node:
     publish_tf: true
     publish_acceleration: false
 
+    # The visual odometry carries the camera's frame time and arrives ~11 ms
+    # later; the IMU stamps "now". So half of all VO messages are stamped
+    # before the newest IMU sample the filter has already used, and without
+    # this they are DISCARDED. On the bench enough VO survived to track. On
+    # the first mapping drive (2026-09-24), under load, VO latency spiked to
+    # 600 ms after a 0.75 s dropout, every VO sample was rejected for
+    # seconds, and the filter coasted on the accelerometer: 6.5 km of "path"
+    # in seven minutes, the SLAM map 4 km away, phantom camera obstacles
+    # everywhere. With a second of history the filter rewinds and re-applies
+    # late measurements instead.
+    smooth_lagged_data: true
+    history_length: 1.0
+
     map_frame: map
     odom_frame: odom
     base_link_frame: base_footprint   # NOT base_link: the URDF roots at base_footprint,
@@ -34,19 +47,24 @@ ekf_filter_node:
     odom0_relative: false
     odom0_queue_size: 10
 
-    # BNO055. Yaw and yaw rate are what matter in 2D; forward acceleration
-    # helps ride out short visual-odometry dropouts (blank walls, motion blur).
+    # BNO055: yaw RATE only.
     imu0: imu/data
-    # Yaw RATE from the gyro, not yaw itself: the visual odometry already
-    # supplies an absolute heading in the odom frame, and a second absolute
-    # heading (the BNO055's magnetometer, uncalibrated, and offset by the
-    # mount's yaw) made the filter flip between the two, tens of degrees a
-    # second, with the robot standing still (measured 2026-09-22).
+    # Not yaw itself: the visual odometry already supplies an absolute heading
+    # in the odom frame, and a second absolute heading (the BNO055's
+    # magnetometer, uncalibrated, and offset by the mount's yaw) made the
+    # filter flip between the two, tens of degrees a second, with the robot
+    # standing still (measured 2026-09-22).
+    # Not acceleration either: it was meant to ride out short VO dropouts,
+    # and instead it is what ran the filter away when VO was rejected
+    # (2026-09-24, above) - the chip's "gravity-free" acceleration carries a
+    # bias (~0.08 m/s2 measured) and integrates into a velocity that nothing
+    # pulls back. A VO dropout now leaves the filter coasting at its last
+    # velocity, which VO corrects on return.
     imu0_config: [false, false, false,
                   false, false, false,
                   false, false, false,
                   false, false, true,
-                  true,  false, false]
+                  false, false, false]
     imu0_differential: false
     imu0_relative: false
     imu0_queue_size: 10
