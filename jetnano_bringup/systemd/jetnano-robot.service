@@ -3,8 +3,8 @@ Description=jetnano robot: ros2 launch jetnano_bringup robot.launch.py
 Documentation=https://github.com/stevej52/jetnano_robot
 # The GPU visual odometry lives in the isaac_vo container; wait for it so the
 # odometry launch does not have to.
-After=network-online.target isaac-vo.service
-Wants=network-online.target isaac-vo.service
+After=network-online.target isaac-vo.service jetson-clocks.service
+Wants=network-online.target isaac-vo.service jetson-clocks.service
 
 [Service]
 Type=simple

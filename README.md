@@ -185,8 +185,15 @@ sudo cp jetnano_bringup/systemd/*.service /etc/systemd/system/
 sudo cp jetnano_bringup/systemd/logind-removeipc.conf /etc/systemd/logind.conf.d/
 sudo systemctl daemon-reload
 sudo systemctl restart systemd-logind      # only with nobody logged in on a desktop
-sudo systemctl enable --now isaac-vo.service jetnano-robot.service jetnano-slam.service wifi-watchdog.service
+sudo systemctl enable --now jetson-clocks.service isaac-vo.service jetnano-robot.service jetnano-slam.service wifi-watchdog.service
 ```
+
+`jetson-clocks.service` pins the CPU clocks at boot. With the default governor
+the cores idle down between bursts and ramp late, and every late ramp costs
+the camera pipeline a frame: measured 2026-09-24 with everything running, VO
+fell to 11-27 Hz with fifty "frame gap" warnings a minute; pinned, 36 Hz
+steady and two. It costs nothing measurable in power (9.1 W for the whole
+robot on the bench).
 
 `wifi-watchdog.service` pings the gateway through the wireless interface every
 30 s and bounces the connection after two minutes of silence: on 2026-09-23 the

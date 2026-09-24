@@ -1,0 +1,18 @@
+[Unit]
+Description=Pin the Jetson's clocks (jetson_clocks): the governor's ramp latency drops camera frames
+Documentation=https://github.com/stevej52/jetnano_robot
+# Measured 2026-09-24 with the whole stack up (cuVSLAM + nvblox + SLAM + guard):
+# with schedutil the cores sat at 800-1000 MHz between bursts and every late
+# ramp cost the camera pipeline a frame - VO 11-27 Hz, 50 "frame gap" warnings
+# a minute. Pinned at 1728 MHz: VO 36 Hz steady, 2 warnings a minute, 65 %
+# idle, 9.1 W for the whole robot. Applied after nvpmodel has set the mode.
+After=nvpmodel.service
+Before=jetnano-robot.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/jetson_clocks
+
+[Install]
+WantedBy=multi-user.target
