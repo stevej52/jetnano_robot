@@ -83,6 +83,13 @@ for pid in $(pgrep -x realsense2_came 2>/dev/null); do
     fi
 done
 
+# A previous launch may still be shutting down (this script is respawned by
+# odometry.launch.py when the container's nodes die): give it 30 s to go away
+# before refusing, so one extra respawn cycle is not wasted.
+for _ in $(seq 1 30); do
+    docker exec "${CONTAINER}" pgrep -f "${LAUNCH}" >/dev/null 2>&1 || break
+    sleep 1
+done
 if docker exec "${CONTAINER}" pgrep -f "${LAUNCH}" >/dev/null 2>&1; then
     say "cuVSLAM is already running in ${CONTAINER}; not starting a second one"
     exit 1
