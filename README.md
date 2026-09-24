@@ -258,9 +258,11 @@ into points), in the direction of the commanded throttle:
 The web page says "blocked: obstacle" / "slowed: obstacle near" while this is
 happening. The zones are drawn in RViz's `drive` view. If the lidar goes quiet
 for a second the guard stops the robot, like the tilt guard does without its
-IMU. `guard:=false` on `drive.launch.py` wires twist_mux straight to the
-driver. The distances are guesses in throttle units until the robot has been
-driven; tune them on the floor, not the bench.
+IMU; it also needs the EKF's `odom → base_footprint` transform to place the
+scans, so without odometry nothing drives (the guard says "invalid source").
+`guard:=false` on `drive.launch.py` wires twist_mux straight to the driver for
+bench work without it. The distances are guesses in throttle units until the
+robot has been driven; tune them on the floor, not the bench.
 
 For this to work the lidar must not see the robot: it does - the front-left
 Wi-Fi antenna, 25 cm away, every turn - so `sensors.launch.py` runs the raw

@@ -25,7 +25,11 @@
 #
 # If a source goes quiet for longer than source_timeout, the guard stops the
 # robot: a dead lidar means driving blind, and stopping is the right answer
-# (the tilt guard does the same when the IMU goes quiet).
+# (the tilt guard does the same when the IMU goes quiet). The same happens
+# when the sources cannot be placed: the guard needs TF odom -> base_footprint
+# (the EKF) to correct for the robot's motion since each scan, and nvblox's
+# points arrive in the odom frame anyway. No odometry, no driving - on a bench
+# without it, drive.launch.py guard:=false.
 collision_guard:
   ros__parameters:
     base_frame_id: base_footprint
