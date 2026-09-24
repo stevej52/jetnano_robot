@@ -222,14 +222,6 @@ class WebTeleop(Node):
             self.create_subscription(
                 CollisionMonitorState, 'collision_guard/state', self._on_guard, 10)
 
-    def _on_guard(self, msg) -> None:
-        if msg.action_type == CollisionMonitorState.STOP:
-            self._guard = 'blocked'
-        elif msg.action_type in (CollisionMonitorState.SLOWDOWN, CollisionMonitorState.LIMIT):
-            self._guard = 'slowed'
-        else:
-            self._guard = 'clear'
-
         port = int(self.get_parameter('port').value)
         self.server = ThreadingHTTPServer(('0.0.0.0', port), make_handler(self))
         self.server.daemon_threads = True
@@ -242,6 +234,14 @@ class WebTeleop(Node):
             f'driving page on http://0.0.0.0:{port}/  (max {self.max_linear:.2f} of full '
             f'throttle, {self.max_angular:.2f} rad/s, commands time out after '
             f'{self.command_timeout:.1f} s)')
+
+    def _on_guard(self, msg) -> None:
+        if msg.action_type == CollisionMonitorState.STOP:
+            self._guard = 'blocked'
+        elif msg.action_type in (CollisionMonitorState.SLOWDOWN, CollisionMonitorState.LIMIT):
+            self._guard = 'slowed'
+        else:
+            self._guard = 'clear'
 
     def _read_page(self, path: str) -> bytes:
         try:
