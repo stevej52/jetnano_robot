@@ -64,7 +64,14 @@
        degrees. The tilt guard reads it back through TF, so this is the only
        place it lives. -->
   <xacro:property name="lidar_xyz"  value="-0.005 0.0 0.205"/>
-  <xacro:property name="lidar_rpy"  value="0 0 0"/>
+  <!-- Mounted BACKWARDS since the 2026-09-24 remount: the lidar's 0 deg is
+       the robot's tail. Found on the floor - the lidar drew the wall behind
+       the robot in front of it, 2.5 m from where the camera put the real
+       one; rotated 180 deg its profile matches the camera's to 0.2 m
+       (a 1 deg sweep prefers 176-179, which is 180 within the method).
+       Fixing it here instead of unbolting it; if the lidar is ever turned
+       round again, this goes back to 0. -->
+  <xacro:property name="lidar_rpy"  value="0 0 ${pi}"/>
   <!-- Camera re-mounted 2026-09-24 ("about 5 deg down" by eye): measured on
        the floor with ros2_gpu_robot tools/camera_pitch.py, a plane fit to the
        floor in the depth image - 10.5 deg down, 5.6 deg roll (left side up),

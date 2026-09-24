@@ -248,9 +248,14 @@ from `ros2_gpu_robot tools/camera_pitch.py` on the floor - a plane fit to
 39 000 depth points, 3 mm mean residual: **10.5 deg down** (the eye said "about
 5"), **5.6 deg roll** (left side up), lens **0.191 m** above the floor (the
 tape to the top of the housing said 0.215). `camera_rpy = "0.098 0.183 0"`,
-`camera_xyz = "0.155 0 0.126"`, `lidar_xyz = "-0.005 0 0.205"`. Before the
-fix RViz showed the camera's obstacles well beyond the lidar's outline of the
-same wall; after it they coincide.
+`camera_xyz = "0.155 0 0.126"`, `lidar_xyz = "-0.005 0 0.205"`.
+
+The lidar also went back on **backwards**: RViz showed its outline of "the
+wall ahead" 2.5 m nearer than the camera's, and heading-by-heading the lidar's
+ranges only matched the camera's once turned 180 deg (median difference
+0.18-0.29 m; a 1 deg sweep preferred 176-179). `lidar_rpy = "0 0 pi"` rather
+than unbolting it. Lesson: after any remount, compare the two sensors on the
+same wall before trusting either.
 
 ## To repeat the sweep
 
