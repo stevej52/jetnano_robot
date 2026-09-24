@@ -89,8 +89,9 @@
     <button id="guard" disabled>&hellip;</button>
   </div>
 
-  <footer>Drag the knob: up and down is throttle, left and right is steering, further is more, and it
-    springs back to nothing when you let go. Keyboard: arrows or WASD, space = emergency stop. Tap the picture if it freezes.
+  <footer>Drag the knob: up and down is throttle, left and right is steering, further is more, and the rim is
+    full deflection on both (forward-and-right at the edge = full throttle at full lock). It springs back to nothing when
+    you let go. Keyboard: arrows or WASD, space = emergency stop. Tap the picture if it freezes.
     The obstacle guard comes back on whenever the robot restarts.</footer>
 
   <button id="stop" aria-label="emergency stop">EMERGENCY STOP</button>
@@ -150,8 +151,14 @@
     if (m > 1) { x /= m; y /= m; m = 1; }             // the knob stays inside the circle
     if (m < DEAD) { x = 0; y = 0; }
     else { var s = (m - DEAD) / (1 - DEAD) / m; x *= s; y *= s; }   // 0 at the edge of the dead zone
-    stickVec = { x: x, y: y };
     place(x, y);
+    // The knob moves in a circle but the robot wants a square: at the rim,
+    // forward-and-right should mean full throttle AND full lock, not 70 % of
+    // each. Stretch the circle onto the square (divide by the larger of the
+    // two direction cosines); the knob itself still draws where the finger is.
+    var big = Math.max(Math.abs(x), Math.abs(y));
+    if (big > 0) { var k = Math.hypot(x, y) / big; x *= k; y *= k; }
+    stickVec = { x: Math.max(-1, Math.min(1, x)), y: Math.max(-1, Math.min(1, y)) };
   }
 
   function letGo() {
