@@ -253,6 +253,23 @@ Nav2      ──/cmd_vel_nav    (priority 10)───┘        ▲            
 (`tilt_guard` also has an input, `cmd_vel_tilt` at priority 150, that it uses
 only while backing the robot off a tilt.)
 
+### Recording a drive
+
+```bash
+ros2 run jetnano_bringup drive_record.sh start     # actually: bash $(ros2 pkg prefix jetnano_bringup)/lib/jetnano_bringup/drive_record.sh start
+...drive...
+bash $(ros2 pkg prefix jetnano_bringup)/lib/jetnano_bringup/drive_record.sh stop
+```
+
+`drive_record.sh start|stop|status` writes `~/bags/drive-<date>/` (commands,
+odometry, IMU, lidar, guard decisions, TF; no images; a few MB a minute) and
+on `stop` prints `drive_report` - VO and EKF health and whether they agree,
+phone command dropouts, every guard stop attributed to the lidar or the
+camera, and throttle-to-ground-speed from steady stretches - and saves it as
+`report.txt` in the bag. `ros2 run jetnano_bringup drive_report <bag>` runs
+it again later. The first mapping drive (2026-09-24) was diagnosed from
+exactly this data: the EKF had left its sensor and run 6.5 km.
+
 ### The collision guard
 
 Whoever is driving - phone, joystick, Nav2, the tilt guard's recovery - the

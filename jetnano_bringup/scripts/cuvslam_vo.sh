@@ -15,7 +15,7 @@
 #     cuvslam_vo.sh [infra_profile] [image_jitter_threshold_ms] [base_frame] [nvblox]
 #
 # Defaults: 640,360,90 (the fastest stable profile measured on 2026-09-23),
-# 12 ms, base_link, nvblox=false. With nvblox=true the container runs
+# 30 ms (100 with nvblox), base_link, nvblox=false. With nvblox=true the container runs
 # cuvslam_nvblox_d435.launch.py instead: the same odometry plus nvblox 3D
 # mapping from the same camera, with the projector alternating between
 # frames, so each gets half the frame rate (odometry ~43 Hz instead of 89)
@@ -27,15 +27,20 @@
 set -u
 
 PROFILE=${1:-640,360,90}
-JITTER=${2:-12.0}
+JITTER=${2:-30.0}
 BASE_FRAME=${3:-base_link}
 NVBLOX=${4:-false}
 CONTAINER=${CUVSLAM_CONTAINER:-isaac_vo}
+# The jitter threshold only decides when cuVSLAM logs a "delta above
+# threshold" warning; the frame is used either way. The camera drops a frame
+# now and then (a quarter of them on a busy day), so a threshold near the
+# frame period fills the log: 30 ms at 90 fps, 100 ms with the projector
+# alternating (pairs every 22 ms nominal) still flags a real stall.
 if [ "${NVBLOX}" = "true" ] || [ "${NVBLOX}" = "1" ]; then
     LAUNCH=/workspaces/isaac_ros-dev/cuvslam_nvblox_d435.launch.py
     # the splitter is built into the workspace, not installed from apt
     SOURCE_WS='[ -f /workspaces/isaac_ros-dev/install/setup.bash ] && source /workspaces/isaac_ros-dev/install/setup.bash;'
-    [ "${JITTER}" = "12.0" ] && JITTER=50.0   # pairs arrive at half rate with the projector alternating
+    [ "${JITTER}" = "30.0" ] && JITTER=100.0
 else
     LAUNCH=/workspaces/isaac_ros-dev/cuvslam_d435_stereo.launch.py
     SOURCE_WS=''

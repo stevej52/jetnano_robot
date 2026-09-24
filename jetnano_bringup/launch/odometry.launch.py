@@ -61,8 +61,8 @@ def generate_launch_description():
             'cuvslam_infra_profile', default_value='640,360,90',
             description="D435 infrared profile for cuvslam, 'W,H,FPS'; 640,360,90 measured best"),
         DeclareLaunchArgument(
-            'cuvslam_jitter_ms', default_value='12.0',
-            description='cuvslam image_jitter_threshold_ms: 12 for 90 fps, 19 for 60'),
+            'cuvslam_jitter_ms', default_value='30.0',
+            description='cuvslam image_jitter_threshold_ms (a warning threshold only; the wrapper uses 100 with nvblox)'),
         DeclareLaunchArgument(
             'nvblox', default_value='false',
             description='cuvslam only: also run nvblox 3D mapping from the same camera '

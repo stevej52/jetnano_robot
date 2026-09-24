@@ -14,7 +14,8 @@ setup(
         (os.path.join('share', package_name), ['package.xml']),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
-        (os.path.join('lib', package_name), ['scripts/cuvslam_vo.sh', 'scripts/wifi_watchdog.sh']),
+        (os.path.join('lib', package_name), ['scripts/cuvslam_vo.sh', 'scripts/wifi_watchdog.sh',
+                                             'scripts/drive_record.sh']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -29,6 +30,7 @@ setup(
             'tilt_guard = jetnano_bringup.tilt_guard:main',
             'grid_to_points = jetnano_bringup.grid_to_points:main',
             'vo_watchdog = jetnano_bringup.vo_watchdog:main',
+            'drive_report = jetnano_bringup.drive_report:main',
         ],
     },
 )
