@@ -341,6 +341,51 @@ Likewise `odom` parents `base_footprint`, not `base_link` — `base_link`
 already has a parent in the URDF, and a frame with two parents is not a tree.
 TF stops resolving and nothing tells you why.
 
+## The small boards on the I²C header
+
+All on bus 7, the same header as the PCA9685 (0x40) and the BNO055 (0x28).
+
+**INA219 battery monitor - address 0x41** (bridge the A0 jumper: the
+default 0x40 is the servo board). Wire it for *voltage only*: battery + to
+Vin−, GND to GND, nothing through the shunt - the breakout's 0.1 Ω shunt is
+rated ~3 A and the motor rail stalls at ten times that. `battery_monitor`
+publishes `battery` (`sensor_msgs/BatteryState`), the page shows it, and at
+3.3 V/cell the node raises the `e_stop` lock every second until the pack is
+charged. A pack below 6 V (the robot on its wall supply) is "absent" and
+never trips anything. For current on the motor rail, later: an external
+10 mΩ shunt and `battery_voltage_only:=false shunt_ohms:=0.01`.
+
+**Four VL53L0X cliff sensors behind a TCA9548A - mux at 0x70, sensors on
+channels 0-3 = front_left, front_right, rear_left, rear_right** (they all
+answer at 0x29, hence the mux). Mount them at the very front and rear edges,
+looking down and tilted ~15° outward so each sees the floor 5-10 cm beyond
+the bumper: the sensor is what stops the robot, and a sensor over the edge
+means the wheels are 3 cm from it. Their positions are the node's `xs`/`ys`
+parameters. `cliff_guard` learns the floor distance from the first readings
+at start-up - **the robot must be on flat floor when it boots** - and calls
+60 mm more, or no return, a drop. Drops go to the collision guard as points
+just outside that corner (`drive.launch.py cliff:=true` adds the source), so
+a drop ahead is refused like a wall, reversing away is allowed, the page
+says "blocked", and a dead sensor stops the robot. Its driver is Adafruit's,
+in `~/venv-sensors` (system site-packages, so rclpy still imports):
+
+```bash
+python3 -m venv --system-site-packages ~/venv-sensors
+~/venv-sensors/bin/pip install adafruit-circuitpython-vl53l0x adafruit-circuitpython-tca9548a adafruit-extended-bus
+```
+
+Turn it on with `use_cliff:=true`; to make it the boot default, write
+`ROBOT_ARGS="nvblox:=true use_cliff:=true"` to `/etc/default/jetnano-robot`
+(the service reads it; no unit edit). Do not turn it on before the sensors
+are wired: the guard would time out on the missing source and refuse to
+drive, which is the fail-safe doing its job. `use_cliff:=true
+cliff_simulate:=true "cliff_simulated_drops:=[front_left]"` exercises the
+whole chain without hardware.
+
+**CR2032 on the carrier's 2-pin RTC connector**: no software. The boot
+sequence checks whether the clock is already later than the workspace's
+last build and, if so, skips the 90 s wait for NTP.
+
 ## What is measured and what is still a guess
 
 The drive chain was calibrated on the real robot on 2026-09-21 and the

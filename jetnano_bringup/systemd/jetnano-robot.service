@@ -14,17 +14,23 @@ SupplementaryGroups=docker i2c dialout input video
 WorkingDirectory=/home/jeston
 Environment=ROS_DOMAIN_ID=7
 Environment=HOME=/home/jeston
-# The devkit has no RTC battery: after a cold power-up the clock starts weeks
-# in the past and jumps when NTP syncs. Nodes started before the jump see
-# negative time points and die (cuVSLAM/nvblox did, 2026-09-23). Wait up to
-# 90 s for the sync, then start regardless (no network in the field). An RTC
-# battery on the carrier's 2-pin connector removes the problem altogether.
-ExecStartPre=/bin/sh -c 'for i in $(seq 1 45); do [ "$(timedatectl show -p NTPSynchronized --value)" = "yes" ] && exit 0; sleep 2; done; echo "jetnano-robot: no time sync after 90 s, starting anyway"'
+# Without an RTC battery a cold power-up starts the clock weeks in the past
+# and it jumps when NTP syncs; nodes started before the jump see negative
+# time points and die (cuVSLAM/nvblox did, 2026-09-23). So: if the clock is
+# already later than the workspace's last build, it is real (an RTC battery
+# is fitted, or NTP already synced) - go. Otherwise wait up to 90 s for NTP,
+# then start regardless (no network in the field).
+ExecStartPre=/bin/sh -c '[ "$(date +%%s)" -gt "$(stat -c %%Y /home/jeston/ros2_ws/install/setup.bash)" ] && exit 0; for i in $(seq 1 45); do [ "$(timedatectl show -p NTPSynchronized --value)" = "yes" ] && exit 0; sleep 2; done; echo "jetnano-robot: no time sync after 90 s, starting anyway"'
+# What the robot boots with. Override in /etc/default/jetnano-robot, e.g.
+#     ROBOT_ARGS="nvblox:=true use_cliff:=true"
+# once the cliff sensors are fitted; no unit edit needed.
+# nvblox:=true: the camera's 3D obstacle map for Nav2 and the collision guard
+# as well as the GPU odometry (~40 Hz instead of 89; both far above the 10 Hz
+# of the CPU path). A manual robot.launch.py defaults to odometry only.
+Environment=ROBOT_ARGS=nvblox:=true
+EnvironmentFile=-/etc/default/jetnano-robot
 # A login shell so the workspace overlay is sourced the same way a terminal does.
-# nvblox:=true: the robot boots with the camera's 3D obstacle map for Nav2 as
-# well as the GPU odometry (odometry ~40 Hz instead of 89; both far above the
-# 10 Hz of the CPU path). A manual robot.launch.py defaults to odometry only.
-ExecStart=/bin/bash -lc 'source /opt/ros/jazzy/setup.bash && source /home/jeston/ros2_ws/install/setup.bash && exec ros2 launch jetnano_bringup robot.launch.py nvblox:=true'
+ExecStart=/bin/bash -lc 'source /opt/ros/jazzy/setup.bash && source /home/jeston/ros2_ws/install/setup.bash && exec ros2 launch jetnano_bringup robot.launch.py $ROBOT_ARGS'
 # ros2 launch shuts its nodes down on SIGINT (the lidar driver must not be
 # SIGKILLed: the sensor then needs a USB replug). Give it time.
 KillSignal=SIGINT
