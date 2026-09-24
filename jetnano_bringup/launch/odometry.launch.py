@@ -76,7 +76,10 @@ def generate_launch_description():
 
         # GPU: cuVSLAM in the container. The wrapper starts the container if it
         # is stopped, refuses if the host camera driver is running, and stops
-        # the launch inside the container when this launch shuts down.
+        # the launch inside the container when this launch shuts down. The
+        # launch inside the container shuts itself down when one of its nodes
+        # dies, so the wrapper exits and is respawned here: the odometry heals
+        # itself instead of staying dead until someone notices.
         ExecuteProcess(
             name='cuvslam_vo',
             cmd=['bash', cuvslam_script,
@@ -85,6 +88,8 @@ def generate_launch_description():
                  'base_link',
                  LaunchConfiguration('nvblox')],
             output='screen',
+            respawn=True,
+            respawn_delay=10.0,
             condition=wants('cuvslam'),
         ),
 
