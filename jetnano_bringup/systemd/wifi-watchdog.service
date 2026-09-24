@@ -1,0 +1,16 @@
+[Unit]
+Description=Wi-Fi link watchdog: bounce the wireless connection when the gateway stops answering
+Documentation=https://github.com/stevej52/jetnano_robot
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=simple
+# The script lives in the installed jetnano_bringup package; nmcli needs root
+# to bring connections down and up.
+ExecStart=/bin/bash /home/jeston/ros2_ws/install/jetnano_bringup/lib/jetnano_bringup/wifi_watchdog.sh wlP1p1s0 192.168.1.1
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

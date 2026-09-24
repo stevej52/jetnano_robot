@@ -151,8 +151,12 @@ odometry (waiting for the GPU driver first), and `jetnano-robot.service` runs
 ```bash
 sudo cp jetnano_bringup/systemd/*.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now isaac-vo.service jetnano-robot.service
+sudo systemctl enable --now isaac-vo.service jetnano-robot.service wifi-watchdog.service
 ```
+
+`wifi-watchdog.service` pings the gateway through the wireless interface every
+30 s and bounces the connection after two minutes of silence: on 2026-09-23 the
+Orin twice became unreachable while its Wi-Fi believed it was connected.
 
 The service starts `robot.launch.py nvblox:=true`: the GPU visual odometry
 (cuVSLAM, ~40 Hz) plus nvblox's 3D map of what the camera sees, published as
