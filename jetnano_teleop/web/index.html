@@ -19,13 +19,28 @@
   #status.stopped { background: #7a1d1d; }
   #status.nolink { background: #5a4a10; }
   #video { display: block; width: 100%; aspect-ratio: 4 / 3; background: #000; border-radius: 6px; object-fit: contain; }
-  #pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 12px 0; }
+
+  /* the stick: a circle you drag the knob around in */
+  #stick { position: relative; width: min(72vw, 300px); aspect-ratio: 1; margin: 14px auto 6px; border-radius: 50%;
+           background: radial-gradient(circle, #2b2b2b 0%, #1e1e1e 70%, #191919 100%); border: 2px solid #444;
+           touch-action: none; cursor: grab; }
+  #stick.off { opacity: 0.35; cursor: default; }
+  #stick .axis { position: absolute; background: #3a3a3a; pointer-events: none; }
+  #stick .axis.h { left: 8%; right: 8%; top: 50%; height: 1px; }
+  #stick .axis.v { top: 8%; bottom: 8%; left: 50%; width: 1px; }
+  #stick .label { position: absolute; font-size: 12px; color: #666; pointer-events: none; }
+  #stick .label.n { top: 6px; left: 50%; transform: translateX(-50%); }
+  #stick .label.s { bottom: 6px; left: 50%; transform: translateX(-50%); }
+  #stick .label.w { left: 10px; top: 50%; transform: translateY(-50%); }
+  #stick .label.e { right: 10px; top: 50%; transform: translateY(-50%); }
+  #knob { position: absolute; width: 34%; height: 34%; left: 33%; top: 33%; border-radius: 50%;
+          background: #3d7fd6; box-shadow: 0 2px 8px #000a; pointer-events: none; will-change: transform; }
+  #knob.live { background: #5aa0ff; }
+  #readout { text-align: center; font-variant-numeric: tabular-nums; color: #aaa; font-size: 14px; min-height: 1.3em; }
+
   button { font: inherit; }
-  .key { height: 84px; border: 0; border-radius: 10px; background: #2a2a2a; color: #eee; font-size: 34px;
-         touch-action: none; cursor: pointer; }
-  .key.on { background: #3d7fd6; }
-  .key:disabled { opacity: 0.35; }
-  #stop { background: #a02020; font-size: 20px; font-weight: 700; letter-spacing: 1px; }
+  #stop { display: block; width: min(72vw, 300px); margin: 10px auto; height: 64px; border: 0; border-radius: 10px;
+          background: #a02020; color: #fff; font-size: 22px; font-weight: 700; letter-spacing: 1px; cursor: pointer; }
   #stop.go { background: #1f8a3a; }
   #speed { display: flex; align-items: center; gap: 10px; padding: 0 4px; }
   #speed input { flex: 1; }
@@ -42,26 +57,24 @@
 
   <img id="video" alt="camera" draggable="false">
 
-  <div id="pad">
-    <span></span>
-    <button class="key" data-lin="1" data-ang="0" aria-label="forward">&#9650;</button>
-    <span></span>
-    <button class="key" data-lin="0" data-ang="1" aria-label="left">&#9664;</button>
-    <button id="stop" class="key" aria-label="stop">STOP</button>
-    <button class="key" data-lin="0" data-ang="-1" aria-label="right">&#9654;</button>
-    <span></span>
-    <button class="key" data-lin="-1" data-ang="0" aria-label="back">&#9660;</button>
-    <span></span>
+  <div id="stick">
+    <div class="axis h"></div><div class="axis v"></div>
+    <span class="label n">forward</span><span class="label s">back</span>
+    <span class="label w">left</span><span class="label e">right</span>
+    <div id="knob"></div>
   </div>
+  <div id="readout">&nbsp;</div>
+
+  <button id="stop" aria-label="stop">STOP</button>
 
   <div id="speed">
-    <span>speed</span>
+    <span>speed limit</span>
     <input id="speedSlider" type="range" min="10" max="100" step="5" value="40">
     <output id="speedOut">40%</output>
   </div>
 
-  <footer>Hold an arrow to drive; two at once to steer while moving. Keyboard: arrows or WASD, space = STOP.
-    Speed is a fraction of the robot's throttle limit. Tap the picture if it freezes.</footer>
+  <footer>Drag the knob: up and down is throttle, left and right is steering, further is more, and it
+    springs back to nothing when you let go. Keyboard: arrows or WASD, space = STOP. Tap the picture if it freezes.</footer>
 </main>
 
 <script>
@@ -69,15 +82,21 @@
   'use strict';
   var status = document.getElementById('status');
   var video = document.getElementById('video');
+  var stick = document.getElementById('stick');
+  var knob = document.getElementById('knob');
+  var readout = document.getElementById('readout');
   var stopBtn = document.getElementById('stop');
   var slider = document.getElementById('speedSlider');
   var speedOut = document.getElementById('speedOut');
-  var keys = Array.prototype.slice.call(document.querySelectorAll('.key[data-lin]'));
 
-  var pressed = {};         // pointerId or key name -> button element
+  var DEAD = 0.08;          // fraction of travel around the centre that means "nothing"
+  var EXPO = 0.25;          // softens the centre without losing the ends, like the joystick profiles
+
+  var pointer = null;       // the pointerId holding the knob
+  var stickVec = { x: 0, y: 0 };   // -1..1 each, from the knob; y is positive DOWN like the screen
+  var keysDown = {};        // code -> true
   var wasSending = false;
   var eStop = false;
-  var linkOk = false;
   var videoUrl = 'http://' + location.hostname + ':8080/stream?topic=/camera/color/image_raw';
 
   function post(path, body) {
@@ -92,18 +111,71 @@
   video.addEventListener('error', function () { setTimeout(loadVideo, 2000); });
   video.addEventListener('click', loadVideo);
 
+  // ------------------------------------------------------------- the stick --
+  function travel() { return stick.clientWidth / 2 - knob.offsetWidth / 2; }
+
+  function place(x, y) {
+    var t = travel();
+    knob.style.transform = 'translate(' + (x * t) + 'px,' + (y * t) + 'px)';
+    knob.classList.toggle('live', x !== 0 || y !== 0);
+  }
+
+  function setFromEvent(e) {
+    var r = stick.getBoundingClientRect();
+    var t = travel();
+    var x = (e.clientX - (r.left + r.width / 2)) / t;
+    var y = (e.clientY - (r.top + r.height / 2)) / t;
+    var m = Math.hypot(x, y);
+    if (m > 1) { x /= m; y /= m; m = 1; }             // the knob stays inside the circle
+    if (m < DEAD) { x = 0; y = 0; }
+    else { var s = (m - DEAD) / (1 - DEAD) / m; x *= s; y *= s; }   // 0 at the edge of the dead zone
+    stickVec = { x: x, y: y };
+    place(x, y);
+  }
+
+  function letGo() {
+    pointer = null;
+    stickVec = { x: 0, y: 0 };
+    place(0, 0);
+  }
+
+  stick.addEventListener('pointerdown', function (e) {
+    if (eStop) return;
+    e.preventDefault();
+    pointer = e.pointerId;
+    stick.setPointerCapture(e.pointerId);
+    setFromEvent(e);
+  });
+  stick.addEventListener('pointermove', function (e) {
+    if (e.pointerId === pointer) { e.preventDefault(); setFromEvent(e); }
+  });
+  function up(e) { if (e.pointerId === pointer) letGo(); }
+  stick.addEventListener('pointerup', up);
+  stick.addEventListener('pointercancel', up);
+  stick.addEventListener('lostpointercapture', up);
+  stick.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+
   // ------------------------------------------------------------ the command --
+  function expo(v) { return v * (1 - EXPO) + v * v * v * EXPO; }
+
   function current() {
-    var lin = 0, ang = 0, any = false;
-    keys.forEach(function (b) {
-      if (b.classList.contains('on')) {
-        any = true;
-        lin += Number(b.dataset.lin);
-        ang += Number(b.dataset.ang);
-      }
-    });
-    var s = Number(slider.value) / 100;
-    return { any: any, lin: Math.max(-1, Math.min(1, lin)) * s, ang: Math.max(-1, Math.min(1, ang)) };
+    var x = stickVec.x, y = stickVec.y;
+    if (pointer === null) {                       // keyboard: full deflection per key
+      x = (keysDown.ArrowRight || keysDown.KeyD ? 1 : 0) - (keysDown.ArrowLeft || keysDown.KeyA ? 1 : 0);
+      y = (keysDown.ArrowDown || keysDown.KeyS ? 1 : 0) - (keysDown.ArrowUp || keysDown.KeyW ? 1 : 0);
+      var m = Math.hypot(x, y);
+      if (m > 1) { x /= m; y /= m; }
+    }
+    var speed = Number(slider.value) / 100;
+    // Up on the screen is forward; right on the screen is a right turn (negative yaw).
+    return { any: x !== 0 || y !== 0, lin: expo(-y) * speed, ang: expo(-x) };
+  }
+
+  function describe(c) {
+    if (!c.any) return ' ';
+    var th = Math.round(c.lin * 100), st = Math.round(c.ang * 100);
+    return 'throttle ' + (th > 0 ? 'forward ' : th < 0 ? 'back ' : '') + Math.abs(th) + ' %  ·  steer '
+      + (st > 0 ? 'left ' : st < 0 ? 'right ' : '') + Math.abs(st) + ' %';
   }
 
   function show(st) {
@@ -113,23 +185,21 @@
     eStop = !!st.e_stop;
     stopBtn.textContent = eStop ? 'GO' : 'STOP';
     stopBtn.classList.toggle('go', eStop);
-    keys.forEach(function (b) { b.disabled = eStop; });
+    stick.classList.toggle('off', eStop);
   }
 
   function noLink() {
-    linkOk = false;
     status.textContent = 'no link to robot';
     status.className = 'nolink';
   }
 
-  // Ten times a second while anything is held, once more with zeros on release.
+  // Ten times a second while the knob or a key is held, once more with zeros on release.
   setInterval(function () {
     var c = current();
+    readout.textContent = describe(c);
     if (c.any || wasSending) {
       wasSending = c.any;
-      post('/cmd', { lin: c.any ? c.lin : 0, ang: c.any ? c.ang : 0 })
-        .then(function (st) { linkOk = true; show(st); })
-        .catch(noLink);
+      post('/cmd', { lin: c.any ? c.lin : 0, ang: c.any ? c.ang : 0 }).then(show).catch(noLink);
     }
   }, 100);
 
@@ -137,57 +207,35 @@
   setInterval(function () {
     if (current().any) return;
     fetch('/status', { cache: 'no-store' })
-      .then(function (r) { return r.json(); })
-      .then(function (st) { linkOk = true; show(st); })
-      .catch(noLink);
+      .then(function (r) { return r.json(); }).then(show).catch(noLink);
   }, 700);
 
-  // ------------------------------------------------------------ the buttons --
-  function press(b) { if (!eStop) b.classList.add('on'); }
-  function release(b) { b.classList.remove('on'); }
-  function releaseAll() { keys.forEach(release); }
-
-  keys.forEach(function (b) {
-    b.addEventListener('pointerdown', function (e) {
-      e.preventDefault();
-      b.setPointerCapture(e.pointerId);
-      pressed[e.pointerId] = b;
-      press(b);
-    });
-    function up(e) {
-      var held = pressed[e.pointerId];
-      if (held) { release(held); delete pressed[e.pointerId]; }
-    }
-    b.addEventListener('pointerup', up);
-    b.addEventListener('pointercancel', up);
-    b.addEventListener('lostpointercapture', up);
-    b.addEventListener('contextmenu', function (e) { e.preventDefault(); });
-  });
-
   stopBtn.addEventListener('click', function () {
-    releaseAll();
+    letGo();
+    keysDown = {};
     post(eStop ? '/go' : '/stop').then(show).catch(noLink);
   });
 
-  // Anything that takes the page away releases everything.
-  window.addEventListener('blur', releaseAll);
-  document.addEventListener('visibilitychange', function () { if (document.hidden) releaseAll(); });
+  // Anything that takes the page away lets go of everything.
+  function dropAll() { letGo(); keysDown = {}; }
+  window.addEventListener('blur', dropAll);
+  document.addEventListener('visibilitychange', function () { if (document.hidden) dropAll(); });
 
-  // ------------------------------------------------------------ the keyboard --
-  var keyMap = { ArrowUp: 0, KeyW: 0, ArrowLeft: 1, KeyA: 1, ArrowRight: 2, KeyD: 2, ArrowDown: 3, KeyS: 3 };
+  // ---------------------------------------------------------- the keyboard --
+  var keyCodes = { ArrowUp: 1, ArrowDown: 1, ArrowLeft: 1, ArrowRight: 1, KeyW: 1, KeyA: 1, KeyS: 1, KeyD: 1 };
   document.addEventListener('keydown', function (e) {
-    if (e.repeat) return;
-    if (e.code === 'Space') { e.preventDefault(); stopBtn.click(); return; }
-    if (e.code in keyMap) { e.preventDefault(); press(keys[keyMap[e.code]]); }
+    if (e.code === 'Space') { e.preventDefault(); if (!e.repeat) stopBtn.click(); return; }
+    if (e.code in keyCodes) { e.preventDefault(); if (!eStop) keysDown[e.code] = true; }
   });
   document.addEventListener('keyup', function (e) {
     if (e.code === 'Space') { e.preventDefault(); return; }   // no second click from a focused button
-    if (e.code in keyMap) { e.preventDefault(); release(keys[keyMap[e.code]]); }
+    if (e.code in keyCodes) { e.preventDefault(); delete keysDown[e.code]; }
   });
 
   slider.addEventListener('input', function () { speedOut.textContent = slider.value + '%'; });
 
   // ------------------------------------------------------------------ start --
+  place(0, 0);
   fetch('/config', { cache: 'no-store' })
     .then(function (r) { return r.json(); })
     .then(function (cfg) { if (cfg.video_url) videoUrl = cfg.video_url; })

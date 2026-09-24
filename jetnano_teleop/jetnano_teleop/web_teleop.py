@@ -12,20 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Drive the robot from a web page: the camera feed on top, arrows underneath.
+"""Drive the robot from a web page: the camera feed on top, a virtual joystick underneath.
 
     ros2 run jetnano_teleop web_teleop
     http://<robot>:8081/
 
 For a phone or a laptop on the robot's Wi-Fi, no ROS needed on it. The page
 shows the camera's MJPEG stream (web_video_server in the Isaac container, port
-8080) and four arrows plus STOP. The arrows drive only while held: the page
-posts the command ten times a second for as long as a button, or an arrow key,
-is down, and this node publishes on ``cmd_vel_web`` only while those commands
-keep arriving. When they stop - finger lifted, page closed, phone asleep, Wi-Fi
-gone - it publishes zero for a moment and then goes quiet, so twist_mux lets
-Nav2 drive again (``cmd_vel_web`` sits between the joystick and Nav2 in
-priority) and the driver's own 0.5 s timeout is the last line of defence.
+8080) and a round pad with a knob: up and down is throttle, left and right is
+steering, further from the centre is more of it, and any direction in between
+is the mix - so the upper right corner is forward and turning right. The knob
+springs back to the centre when let go. The page posts the command ten times a
+second for as long as the knob (or an arrow key) is held, and this node
+publishes on ``cmd_vel_web`` only while those commands keep arriving. When
+they stop - finger lifted, page closed, phone asleep, Wi-Fi gone - it publishes
+zero for a moment and then goes quiet, so twist_mux lets Nav2 drive again
+(``cmd_vel_web`` sits between the joystick and Nav2 in priority) and the
+driver's own 0.5 s timeout is the last line of defence.
 
 STOP raises the ``e_stop`` lock, which blocks everything including Nav2, and
 stays raised until GO is pressed on the page; the joystick node uses the same
@@ -137,6 +140,8 @@ def make_handler(node: 'WebTeleop'):
                 })
             elif path == '/status':
                 self._json(node.status())
+            elif path == '/favicon.ico':
+                self._send(HTTPStatus.NO_CONTENT, b'', 'image/x-icon')
             else:
                 self._send(HTTPStatus.NOT_FOUND, b'not found', 'text/plain')
 
@@ -144,8 +149,10 @@ def make_handler(node: 'WebTeleop'):
 
         def do_POST(self):
             path = self.path.split('?', 1)[0]
+            # Always consume the body: the connection is kept alive, and an
+            # unread body becomes the start of the next request on it.
+            body = self._body()
             if path == '/cmd':
-                body = self._body()
                 try:
                     state.command(body.get('lin', 0.0), body.get('ang', 0.0), node.monotonic())
                 except (TypeError, ValueError):

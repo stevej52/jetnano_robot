@@ -1,11 +1,11 @@
-"""The driving web page: camera feed on top, arrows underneath.
+"""The driving web page: camera feed on top, a virtual joystick underneath.
 
     ros2 launch jetnano_bringup web_teleop.launch.py
     http://<robot>:8081/
 
 Runs on the robot (robot.launch.py includes it), for a phone or a laptop on the
 robot's Wi-Fi. The video comes from web_video_server in the Isaac container
-(port 8080); the buttons publish cmd_vel_web, which twist_mux ranks between the
+(port 8080); the knob publishes cmd_vel_web, which twist_mux ranks between the
 joystick and Nav2. Details in jetnano_teleop/web_teleop.py.
 """
 

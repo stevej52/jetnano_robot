@@ -133,17 +133,19 @@ same container; `ros2_gpu_robot/cuvslam_d435/README.md`, "Watching the camera"):
 
 ### Driving it from a phone
 
-`http://192.168.1.7:8081/` - the camera feed with four arrows and STOP under it,
-served by the robot itself (`jetnano_teleop web_teleop`, started by
-`robot.launch.py`). Arrows drive only while held, two at once to steer while
-moving; the slider is the throttle limit (the default caps the page at half of
-full throttle, `web_teleop.launch.py max_linear`). The page posts a command ten
-times a second while a button is down and the node publishes `cmd_vel_web` only
+`http://192.168.1.7:8081/` - the camera feed with a virtual joystick and STOP
+under it, served by the robot itself (`jetnano_teleop web_teleop`, started by
+`robot.launch.py`). Drag the knob: up and down is throttle, left and right is
+steering, further from the centre is more, and anywhere in between is the mix
+(upper right = forward and turning right). It springs back to nothing when let
+go. The slider is the throttle limit (the default caps the page at half of full
+throttle, `web_teleop.launch.py max_linear`). The page posts a command ten
+times a second while the knob is held and the node publishes `cmd_vel_web` only
 while those keep coming, so a closed page, a sleeping phone or a lost Wi-Fi
 link stops the robot within half a second and hands control back to Nav2. STOP
 raises the same `e_stop` lock the joystick uses, which blocks everything
-including Nav2 until GO is pressed. On a laptop the arrow keys / WASD and space
-do the same. No login: it is for the robot's own network.
+including Nav2 until GO is pressed. On a laptop the arrow keys / WASD (full
+deflection) and space do the same. No login: it is for the robot's own network.
 
 Mapping, in three modes:
 
