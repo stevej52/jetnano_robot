@@ -142,10 +142,12 @@ go. The slider is the throttle limit (the default caps the page at half of full
 throttle, `web_teleop.launch.py max_linear`). The page posts a command ten
 times a second while the knob is held and the node publishes `cmd_vel_web` only
 while those keep coming, so a closed page, a sleeping phone or a lost Wi-Fi
-link stops the robot within half a second and hands control back to Nav2. STOP
+link stops the robot within half a second and hands control back to Nav2. The
+EMERGENCY STOP bar across the bottom (it stays on screen when the page scrolls)
 raises the same `e_stop` lock the joystick uses, which blocks everything
-including Nav2 until GO is pressed. On a laptop the arrow keys / WASD (full
-deflection) and space do the same. No login: it is for the robot's own network.
+including Nav2 until it is tapped again for GO. On a laptop the arrow keys /
+WASD (full deflection) and space do the same. No login: it is for the robot's
+own network.
 
 Mapping, in three modes:
 

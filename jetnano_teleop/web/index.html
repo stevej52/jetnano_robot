@@ -39,9 +39,13 @@
   #readout { text-align: center; font-variant-numeric: tabular-nums; color: #aaa; font-size: 14px; min-height: 1.3em; }
 
   button { font: inherit; }
-  #stop { display: block; width: min(72vw, 300px); margin: 10px auto; height: 64px; border: 0; border-radius: 10px;
-          background: #a02020; color: #fff; font-size: 22px; font-weight: 700; letter-spacing: 1px; cursor: pointer; }
-  #stop.go { background: #1f8a3a; }
+  /* the emergency stop: the full width of the page, underneath everything, and
+     it stays at the bottom of the screen when the page scrolls */
+  #stop { display: block; width: 100%; height: 84px; margin: 14px 0 0; border: 0; border-radius: 12px;
+          background: #b81f1f; color: #fff; font-size: 24px; font-weight: 800; letter-spacing: 2px; cursor: pointer;
+          position: sticky; bottom: calc(8px + env(safe-area-inset-bottom, 0px)); box-shadow: 0 -4px 16px #000c; }
+  #stop.go { background: #1f8a3a; letter-spacing: 1px; }
+  #stop:active { filter: brightness(1.25); }
   #speed { display: flex; align-items: center; gap: 10px; padding: 0 4px; }
   #speed input { flex: 1; }
   #speed output { width: 3.5em; text-align: right; font-variant-numeric: tabular-nums; }
@@ -65,8 +69,6 @@
   </div>
   <div id="readout">&nbsp;</div>
 
-  <button id="stop" aria-label="stop">STOP</button>
-
   <div id="speed">
     <span>speed limit</span>
     <input id="speedSlider" type="range" min="10" max="100" step="5" value="40">
@@ -74,7 +76,9 @@
   </div>
 
   <footer>Drag the knob: up and down is throttle, left and right is steering, further is more, and it
-    springs back to nothing when you let go. Keyboard: arrows or WASD, space = STOP. Tap the picture if it freezes.</footer>
+    springs back to nothing when you let go. Keyboard: arrows or WASD, space = emergency stop. Tap the picture if it freezes.</footer>
+
+  <button id="stop" aria-label="emergency stop">EMERGENCY STOP</button>
 </main>
 
 <script>
@@ -183,7 +187,7 @@
     else if (st.driving) { status.textContent = 'driving'; status.className = 'driving'; }
     else { status.textContent = 'ready'; status.className = 'ok'; }
     eStop = !!st.e_stop;
-    stopBtn.textContent = eStop ? 'GO' : 'STOP';
+    stopBtn.textContent = eStop ? 'STOPPED — TAP TO GO' : 'EMERGENCY STOP';
     stopBtn.classList.toggle('go', eStop);
     stick.classList.toggle('off', eStop);
   }
