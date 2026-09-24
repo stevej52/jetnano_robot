@@ -47,27 +47,31 @@
   <xacro:property name="steer_limit"      value="0.5236"/> <!-- 30 degrees -->
 
   <!-- Where the sensors are bolted, relative to base_link (the middle of
-       the wheelbase, on the axle line). Tape-measured 2026-09-22: the lidar
-       is 0.15 m and the camera 0.29 m forward of the rear axle, so -0.015 m
-       and +0.125 m from base_link; the lidar's scan plane is 0.225 m above
-       the floor, 0.160 above the axle line. The IMU's position is still an
-       estimate. The ORIENTATIONS were checked on the robot
-       2026-09-22: lidar 0 deg is the nose and angles run
-       counter-clockwise (REP-103), the camera image is upright, and the
-       BNO055 is bolted upside down, turned 90 deg and tilted 10 deg on its
-       bracket - the sensor's +y is the robot's +x, its +x the robot's +y,
-       its +z the robot's -z. imu_rpy is the rotation from the tilt routine
-       (docs/bench-calibration-2026-09-21.md), exact to a couple of degrees.
-       The tilt guard reads it back through TF, so this is the only place
-       it lives. -->
-  <xacro:property name="lidar_xyz"  value="-0.015 0.0 0.160"/>
+       the wheelbase, on the axle line, 0.165 m forward of the rear axle and
+       wheel_radius above the floor). Tape-measured 2026-09-24, after the
+       battery went in under the Jetson and raised the whole stack: the lidar
+       is 0.16 m and the camera 0.32 m forward of the rear axle, so -0.005 m
+       and +0.155 m from base_link; the lidar's scan plane is 0.27 m above
+       the floor (0.205 above the axle line - it now looks OVER anything
+       lower than that; the camera covers the gap). The IMU is on the frame
+       and did not move; its position is still an estimate. The ORIENTATIONS
+       were checked on the robot 2026-09-22: lidar 0 deg is the nose and
+       angles run counter-clockwise (REP-103), the camera image is upright,
+       and the BNO055 is bolted upside down, turned 90 deg and tilted 10 deg
+       on its bracket - the sensor's +y is the robot's +x, its +x the robot's
+       +y, its +z the robot's -z. imu_rpy is the rotation from the tilt
+       routine (docs/bench-calibration-2026-09-21.md), exact to a couple of
+       degrees. The tilt guard reads it back through TF, so this is the only
+       place it lives. -->
+  <xacro:property name="lidar_xyz"  value="-0.005 0.0 0.205"/>
   <xacro:property name="lidar_rpy"  value="0 0 0"/>
-  <!-- Camera re-mounted 2026-09-22 below the lidar plane and pitched down:
-       27.1 deg down, +0.9 deg roll, lens 0.178 m above the floor, all from a
-       plane fit to the floor in the aligned depth (0.1 mm residual).
-       z = 0.178 - wheel_radius. -->
-  <xacro:property name="camera_xyz" value="0.125 0.0 0.113"/>
-  <xacro:property name="camera_rpy" value="0.016 0.473 0"/>
+  <!-- Camera re-mounted 2026-09-24: lens 0.215 m above the floor (z = 0.215
+       - wheel_radius), about 5 deg down by eye. PROVISIONAL: the pitch, roll
+       and height are to be replaced by a plane fit to the floor in the depth
+       image, as on 2026-09-22 (27.1 deg down then, 0.1 mm residual) - nvblox
+       puts the floor in the map as an obstacle if this is a few degrees off. -->
+  <xacro:property name="camera_xyz" value="0.155 0.0 0.150"/>
+  <xacro:property name="camera_rpy" value="0 0.087 0"/>
   <xacro:property name="imu_xyz"    value="0.0 0.0 0.060"/>
   <xacro:property name="imu_rpy"    value="2.9698 0.0552 1.5680"/>
 
