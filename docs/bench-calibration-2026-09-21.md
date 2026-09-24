@@ -237,6 +237,21 @@ than one launch running.
 - BNO055 calibration offsets - drive it around until `imu/calib_status` is
   3/3, then read them back and save them.
 
+## Re-measured 2026-09-24: the battery under the Jetson
+
+The 3S pack went in under the Jetson, which raised the stack, and the camera
+was re-mounted so it was not being forced down. Tape: lidar **0.16 m** forward
+of the rear axle, scan plane **0.27 m** above the floor (it now looks over
+anything lower than that - the camera covers the gap); camera **0.32 m**
+forward. The IMU is on the frame and did not move. The camera's attitude came
+from `ros2_gpu_robot tools/camera_pitch.py` on the floor - a plane fit to
+39 000 depth points, 3 mm mean residual: **10.5 deg down** (the eye said "about
+5"), **5.6 deg roll** (left side up), lens **0.191 m** above the floor (the
+tape to the top of the housing said 0.215). `camera_rpy = "0.098 0.183 0"`,
+`camera_xyz = "0.155 0 0.126"`, `lidar_xyz = "-0.005 0 0.205"`. Before the
+fix RViz showed the camera's obstacles well beyond the lidar's outline of the
+same wall; after it they coincide.
+
 ## To repeat the sweep
 
 Wheels up, ESC on, then hold each pulse at least 4 s and rate it against

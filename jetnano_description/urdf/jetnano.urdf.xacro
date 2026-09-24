@@ -65,13 +65,15 @@
        place it lives. -->
   <xacro:property name="lidar_xyz"  value="-0.005 0.0 0.205"/>
   <xacro:property name="lidar_rpy"  value="0 0 0"/>
-  <!-- Camera re-mounted 2026-09-24: lens 0.215 m above the floor (z = 0.215
-       - wheel_radius), about 5 deg down by eye. PROVISIONAL: the pitch, roll
-       and height are to be replaced by a plane fit to the floor in the depth
-       image, as on 2026-09-22 (27.1 deg down then, 0.1 mm residual) - nvblox
-       puts the floor in the map as an obstacle if this is a few degrees off. -->
-  <xacro:property name="camera_xyz" value="0.155 0.0 0.150"/>
-  <xacro:property name="camera_rpy" value="0 0.087 0"/>
+  <!-- Camera re-mounted 2026-09-24 ("about 5 deg down" by eye): measured on
+       the floor with ros2_gpu_robot tools/camera_pitch.py, a plane fit to the
+       floor in the depth image - 10.5 deg down, 5.6 deg roll (left side up),
+       lens 0.191 m above the floor, 39 000 points, 3 mm mean residual.
+       z = 0.191 - wheel_radius. Re-run the tool whenever the mount moves:
+       nvblox puts the floor in the map as an obstacle if this is a few
+       degrees off. -->
+  <xacro:property name="camera_xyz" value="0.155 0.0 0.126"/>
+  <xacro:property name="camera_rpy" value="0.098 0.183 0"/>
   <xacro:property name="imu_xyz"    value="0.0 0.0 0.060"/>
   <xacro:property name="imu_rpy"    value="2.9698 0.0552 1.5680"/>
 
