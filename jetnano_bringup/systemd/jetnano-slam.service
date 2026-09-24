@@ -1,0 +1,29 @@
+[Unit]
+Description=jetnano robot: persistent lidar map (slam_toolbox, continued from ~/maps/home)
+Documentation=https://github.com/stevej52/jetnano_robot
+# Needs /scan and the EKF's odom -> base_footprint from the robot stack.
+After=jetnano-robot.service
+Wants=jetnano-robot.service
+BindsTo=jetnano-robot.service
+
+[Service]
+Type=simple
+User=jeston
+Group=jeston
+WorkingDirectory=/home/jeston
+Environment=ROS_DOMAIN_ID=7
+Environment=HOME=/home/jeston
+# Let the sensors and the odometry settle before the first scans are matched.
+ExecStartPre=/bin/sleep 20
+# slam_boot.sh: mode:=continue if ~/maps/home.posegraph exists, else a new
+# map; autosaves every 5 min and on stop (before slam_toolbox quits).
+ExecStart=/bin/bash -lc 'source /opt/ros/jazzy/setup.bash && source /home/jeston/ros2_ws/install/setup.bash && exec /home/jeston/ros2_ws/install/jetnano_navigation/lib/jetnano_navigation/slam_boot.sh'
+# SIGINT reaches the wrapper, which saves and then stops the launch; saving a
+# big graph can take a while.
+KillSignal=SIGINT
+TimeoutStopSec=90
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

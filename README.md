@@ -184,8 +184,8 @@ odometry (waiting for the GPU driver first), and `jetnano-robot.service` runs
 sudo cp jetnano_bringup/systemd/*.service /etc/systemd/system/
 sudo cp jetnano_bringup/systemd/logind-removeipc.conf /etc/systemd/logind.conf.d/
 sudo systemctl daemon-reload
-sudo systemctl restart systemd-logind
-sudo systemctl enable --now isaac-vo.service jetnano-robot.service wifi-watchdog.service
+sudo systemctl restart systemd-logind      # only with nobody logged in on a desktop
+sudo systemctl enable --now isaac-vo.service jetnano-robot.service jetnano-slam.service wifi-watchdog.service
 ```
 
 `wifi-watchdog.service` pings the gateway through the wireless interface every
@@ -208,6 +208,17 @@ an occupancy grid that `navigation.launch.py nvblox:=true` puts into the local
 costmap - steps, low rocks and table edges the lidar's single plane cannot
 see. Without `nvblox:=true`, `robot.launch.py` runs the odometry alone at
 89 Hz. Both are in `ros2_gpu_robot/cuvslam_d435/README.md`.
+
+`jetnano-slam.service` (add it to the `enable` line above) keeps **one
+persistent map of the house**: 20 s after the robot stack, `slam_boot.sh`
+starts slam_toolbox in `continue` mode on `~/maps/home` if that map exists,
+or `mapping` mode if it does not, autosaves it every five minutes and once
+more when the service stops. So the map grows every time the robot drives,
+and loop closure keeps correcting it. The one rule: **power the robot up in
+the same spot each time** - a continued map starts the robot at the map's
+origin, which is wherever the first session began. To start over, stop the
+service and delete `~/maps/home.*`. RViz's `nav` view shows the map; the
+`drive` view draws it too, under the lidar.
 
 Stopping or restarting the service takes about 5 s: the odometry wrapper
 (`scripts/cuvslam_vo.sh`) gives the launch inside the container 10 s to stop on
