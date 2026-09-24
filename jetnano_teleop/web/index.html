@@ -18,6 +18,8 @@
   #status.driving { background: #1a4a7a; }
   #status.stopped { background: #7a1d1d; }
   #status.nolink { background: #5a4a10; }
+  #status.slowed { background: #7a5a10; }
+  #status.blocked { background: #8a3a10; }
   #video { display: block; width: 100%; aspect-ratio: 4 / 3; background: #000; border-radius: 6px; object-fit: contain; }
 
   /* the stick: a circle you drag the knob around in */
@@ -184,6 +186,8 @@
 
   function show(st) {
     if (st.e_stop) { status.textContent = 'STOPPED - press GO'; status.className = 'stopped'; }
+    else if (st.guard === 'blocked') { status.textContent = 'blocked: obstacle'; status.className = 'blocked'; }
+    else if (st.guard === 'slowed') { status.textContent = 'driving - slowed: obstacle near'; status.className = 'slowed'; }
     else if (st.driving) { status.textContent = 'driving'; status.className = 'driving'; }
     else { status.textContent = 'ready'; status.className = 'ok'; }
     eStop = !!st.e_stop;

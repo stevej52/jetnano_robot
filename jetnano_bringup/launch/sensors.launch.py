@@ -19,9 +19,11 @@ from jetnano_bringup.launch_lock import only_one
 
 
 def generate_launch_description():
+    config_dir = os.path.join(get_package_share_directory('jetnano_bringup'), 'config')
     # The BNO055's saved calibration; see the file for where it came from.
-    imu_config = os.path.join(get_package_share_directory('jetnano_bringup'),
-                              'config', 'bno055.yaml')
+    imu_config = os.path.join(config_dir, 'bno055.yaml')
+    # The box around the robot's own parts that the lidar must not report.
+    scan_filter_config = os.path.join(config_dir, 'scan_filter.yaml')
 
     return LaunchDescription([
         DeclareLaunchArgument('use_lidar', default_value='true'),
@@ -40,21 +42,34 @@ def generate_launch_description():
 
         GroupAction(
             condition=IfCondition(LaunchConfiguration('use_lidar')),
-            actions=[Node(
-                package='rplidar_ros',
-                executable='rplidar_composition',
-                name='rplidar',
-                output='screen',
-                parameters=[{
-                    'serial_port': LaunchConfiguration('lidar_port'),
-                    'serial_baudrate': 115200,
-                    'frame_id': 'lidar_link',
-                    'angle_compensate': True,
-                    # A1M8 (fw 1.27) offers Standard/Express/Boost/Stability;
-                    # Boost = 8K samples/s = 720 points per turn at ~7.6 Hz.
-                    'scan_mode': 'Boost',
-                }],
-            )],
+            actions=[
+                Node(
+                    package='rplidar_ros',
+                    executable='rplidar_composition',
+                    name='rplidar',
+                    output='screen',
+                    parameters=[{
+                        'serial_port': LaunchConfiguration('lidar_port'),
+                        'serial_baudrate': 115200,
+                        'frame_id': 'lidar_link',
+                        'angle_compensate': True,
+                        # A1M8 (fw 1.27) offers Standard/Express/Boost/Stability;
+                        # Boost = 8K samples/s = 720 points per turn at ~7.6 Hz.
+                        'scan_mode': 'Boost',
+                    }],
+                    # The raw scan includes the robot's own antenna; the filter
+                    # below publishes the scan everything else uses.
+                    remappings=[('scan', 'scan_raw')],
+                ),
+                Node(
+                    package='laser_filters',
+                    executable='scan_to_scan_filter_chain',
+                    name='scan_filter',
+                    output='screen',
+                    parameters=[scan_filter_config],
+                    remappings=[('scan', 'scan_raw'), ('scan_filtered', 'scan')],
+                ),
+            ],
         ),
 
         GroupAction(

@@ -233,14 +233,39 @@ needing a USB reset.
 
 ```
 teleop    ──/cmd_vel_teleop (priority 100)──┐
-web page  ──/cmd_vel_web    (priority 90)───┼─ twist_mux ──/cmd_vel──▶ ros2_pca9685 ──I²C──▶ ESC + servos
-Nav2      ──/cmd_vel_nav    (priority 10)───┘        ▲
-                                                     │
+web page  ──/cmd_vel_web    (priority 90)───┼─ twist_mux ──/cmd_vel_mux──▶ collision_guard ──/cmd_vel──▶ ros2_pca9685 ──I²C──▶ ESC + servos
+Nav2      ──/cmd_vel_nav    (priority 10)───┘        ▲                          ▲
+                                                     │                    /scan, nvblox points
                                           /e_stop ───┘  (lock, priority 255)
 ```
 
 (`tilt_guard` also has an input, `cmd_vel_tilt` at priority 150, that it uses
 only while backing the robot off a tilt.)
+
+### The collision guard
+
+Whoever is driving - phone, joystick, Nav2, the tilt guard's recovery - the
+last thing before the wheels is `collision_guard`: Nav2's collision monitor,
+run from `drive.launch.py` with `config/collision_guard.yaml`, after twist_mux
+instead of only inside Nav2's own chain. It looks at the lidar and, with
+`nvblox:=true`, at the camera's 3D map (`grid_to_points` turns nvblox's grid
+into points), in the direction of the commanded throttle:
+
+- anything within **30 cm** of the bumper ahead (or behind, when reversing):
+  the command becomes zero - the robot will not drive into it;
+- anything within **80 cm**: the command is scaled to 30 %.
+
+The web page says "blocked: obstacle" / "slowed: obstacle near" while this is
+happening. The zones are drawn in RViz's `drive` view. If the lidar goes quiet
+for a second the guard stops the robot, like the tilt guard does without its
+IMU. `guard:=false` on `drive.launch.py` wires twist_mux straight to the
+driver. The distances are guesses in throttle units until the robot has been
+driven; tune them on the floor, not the bench.
+
+For this to work the lidar must not see the robot: it does - the front-left
+Wi-Fi antenna, 25 cm away, every turn - so `sensors.launch.py` runs the raw
+scan through a `laser_filters` box filter (`config/scan_filter.yaml`) and
+publishes the result as `/scan`; the driver's own output is `/scan_raw`.
 
 Three rules hold this together, and each was a bug before it was a rule:
 

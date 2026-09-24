@@ -1,0 +1,120 @@
+# The collision guard: the last thing before the wheels, whoever is driving.
+#
+# Nav2's own collision monitor only sees Nav2's commands. This one (the same
+# node, nav2_collision_monitor, configured here) sits AFTER twist_mux, so the
+# web page, a joystick, Nav2 and the tilt guard's recovery all pass through it:
+#
+#     twist_mux --cmd_vel_mux--> collision_guard --cmd_vel--> ros2_pca9685
+#
+# Two zones in front of and behind the robot, chosen by the direction of the
+# commanded throttle (velocity polygons; the chassis steers, so left/right is
+# not a direction of travel). Anything the lidar or the camera's 3D map puts
+# inside the near zone stops the robot; inside the far zone slows it to 30 %.
+# Nothing is filtered by who asked: the tilt guard's reverse goes through only
+# if the way behind is clear, which is what you want.
+#
+# Distances are in base_footprint, x forward, from the robot's centre. The body
+# is 0.44 x 0.22 m, so the front bumper is at x = 0.22. The zones start a little
+# inside it: the lidar's self-returns are removed upstream (scan_filter.yaml),
+# so nothing legitimate is there.
+#
+# Speeds are throttle fractions, not m/s (see pca9685.yaml), so the zone
+# lengths are guesses until the robot has been measured on the floor: 30 cm of
+# stopping room and 80 cm of warning at half throttle. Tune with the robot
+# moving, not on the bench.
+#
+# If a source goes quiet for longer than source_timeout, the guard stops the
+# robot: a dead lidar means driving blind, and stopping is the right answer
+# (the tilt guard does the same when the IMU goes quiet).
+collision_guard:
+  ros__parameters:
+    base_frame_id: base_footprint
+    odom_frame_id: odom
+    cmd_vel_in_topic: cmd_vel_mux
+    cmd_vel_out_topic: cmd_vel
+    state_topic: collision_guard/state
+    # twist_mux publishes plain Twist (use_stamped: false) and so does the driver expect it.
+    enable_stamped_cmd_vel: false
+    transform_tolerance: 0.3
+    source_timeout: 1.0
+    base_shift_correction: true
+    # Keep publishing zeros for this long after a stop, then go quiet.
+    stop_pub_timeout: 2.0
+
+    polygons: ["stop_zone", "slow_zone"]
+
+    stop_zone:
+      type: "velocity_polygon"
+      action_type: "stop"
+      min_points: 3
+      visualize: true
+      polygon_pub_topic: "collision_guard/stop_zone"
+      enabled: true
+      holonomic: false
+      # Checked in order; the first whose velocity range matches is used.
+      velocity_polygons: ["forward", "backward", "any"]
+      forward:
+        points: "[[0.52, 0.16], [0.52, -0.16], [0.20, -0.16], [0.20, 0.16]]"
+        linear_min: 0.0
+        linear_max: 3.0
+        theta_min: -3.0
+        theta_max: 3.0
+      backward:
+        points: "[[-0.20, 0.16], [-0.20, -0.16], [-0.52, -0.16], [-0.52, 0.16]]"
+        linear_min: -3.0
+        linear_max: 0.0
+        theta_min: -3.0
+        theta_max: 3.0
+      # Fallback: a velocity no sub-polygon covers would stop the robot outright,
+      # so this one covers everything with a box nothing can ever be inside.
+      any:
+        points: "[[0.01, 0.01], [0.01, -0.01], [-0.01, -0.01], [-0.01, 0.01]]"
+        linear_min: -10.0
+        linear_max: 10.0
+        theta_min: -10.0
+        theta_max: 10.0
+
+    slow_zone:
+      type: "velocity_polygon"
+      action_type: "slowdown"
+      slowdown_ratio: 0.3
+      min_points: 3
+      visualize: true
+      polygon_pub_topic: "collision_guard/slow_zone"
+      enabled: true
+      holonomic: false
+      velocity_polygons: ["forward", "backward", "any"]
+      forward:
+        points: "[[1.00, 0.22], [1.00, -0.22], [0.20, -0.22], [0.20, 0.22]]"
+        linear_min: 0.0
+        linear_max: 3.0
+        theta_min: -3.0
+        theta_max: 3.0
+      backward:
+        points: "[[-0.20, 0.22], [-0.20, -0.22], [-0.80, -0.22], [-0.80, 0.22]]"
+        linear_min: -3.0
+        linear_max: 0.0
+        theta_min: -3.0
+        theta_max: 3.0
+      any:
+        points: "[[0.01, 0.01], [0.01, -0.01], [-0.01, -0.01], [-0.01, 0.01]]"
+        linear_min: -10.0
+        linear_max: 10.0
+        theta_min: -10.0
+        theta_max: 10.0
+
+    # drive.launch.py adds "nvblox" to this list with nvblox:=true: the camera's
+    # 3D map as points (grid_to_points), so a step or a low rock the lidar's
+    # plane misses also stops the robot. Not listed by default, because a
+    # source that never publishes would stop the robot for good.
+    observation_sources: ["scan"]
+    scan:
+      type: "scan"
+      topic: "/scan"
+      enabled: true
+    nvblox:
+      type: "pointcloud"
+      topic: "/nvblox_node/obstacle_points"
+      min_height: 0.05
+      max_height: 1.0
+      enabled: true

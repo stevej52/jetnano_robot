@@ -27,6 +27,7 @@ setup(
         'console_scripts': [
             'fake_sensors = jetnano_bringup.fake_sensors:main',
             'tilt_guard = jetnano_bringup.tilt_guard:main',
+            'grid_to_points = jetnano_bringup.grid_to_points:main',
         ],
     },
 )

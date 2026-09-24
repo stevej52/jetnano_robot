@@ -53,6 +53,11 @@ from geometry_msgs.msg import Twist
 from rclpy.node import Node
 from std_msgs.msg import Bool
 
+try:
+    from nav2_msgs.msg import CollisionMonitorState
+except ImportError:  # no Nav2 on this machine: the page just never shows the guard
+    CollisionMonitorState = None
+
 
 def default_page() -> str:
     """The installed page, or the one next to this source when run from the tree."""
@@ -208,6 +213,23 @@ class WebTeleop(Node):
         self._driving = False
         self._last_lock_publish = 0.0
 
+        # What the collision guard did with the last command (drive.launch.py):
+        # shown on the page as "slowed" or "blocked" so a robot that will not
+        # move is not a mystery. Only meaningful while commands flow; reset
+        # when they stop.
+        self._guard = 'clear'
+        if CollisionMonitorState is not None:
+            self.create_subscription(
+                CollisionMonitorState, 'collision_guard/state', self._on_guard, 10)
+
+    def _on_guard(self, msg) -> None:
+        if msg.action_type == CollisionMonitorState.STOP:
+            self._guard = 'blocked'
+        elif msg.action_type in (CollisionMonitorState.SLOWDOWN, CollisionMonitorState.LIMIT):
+            self._guard = 'slowed'
+        else:
+            self._guard = 'clear'
+
         port = int(self.get_parameter('port').value)
         self.server = ThreadingHTTPServer(('0.0.0.0', port), make_handler(self))
         self.server.daemon_threads = True
@@ -239,6 +261,7 @@ class WebTeleop(Node):
             return {
                 'e_stop': self.state.e_stop,
                 'driving': self._driving,
+                'guard': self._guard if self._driving else 'clear',
                 'linear': self.state.linear if live else 0.0,
                 'angular': self.state.angular if live else 0.0,
             }
@@ -274,6 +297,7 @@ class WebTeleop(Node):
             # than leaving the robot to time out, then hand control back.
             self.cmd_pub.publish(twist)
             self._driving = False
+            self._guard = 'clear'
         else:
             self._driving = False
 

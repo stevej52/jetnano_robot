@@ -1,0 +1,26 @@
+# Takes the robot's own parts out of the lidar scan.
+#
+# The A1M8 sits 16 cm above base_link and sees the Wi-Fi antenna 25 cm away at
+# 45 degrees to the front-left, every turn (measured 2026-09-23: three returns
+# at (0.18, 0.18) in lidar_link, nothing else under 0.5 m). Left in, that point
+# would trip the collision guard's slow zone on every forward command, sit in
+# Nav2's costmap next to the robot wherever it goes, and be drawn into every
+# map. The box is the body plus a few centimetres: anything the lidar returns
+# from inside it is the robot, and becomes "no return".
+#
+# sensors.launch.py runs this between the driver and the rest of the system:
+# the driver publishes scan_raw, this publishes scan.
+scan_filter:
+  ros__parameters:
+    filter1:
+      name: robot_body
+      type: laser_filters/LaserScanBoxFilter
+      params:
+        box_frame: base_link
+        min_x: -0.25
+        max_x: 0.25
+        min_y: -0.20
+        max_y: 0.20
+        min_z: -0.10
+        max_z: 0.50
+        invert: false

@@ -5,8 +5,9 @@
 # If a source stops publishing for longer than its timeout it is ignored, so a
 # crashed node cannot hold the robot hostage.
 #
-# Output is remapped to /cmd_vel in the launch file, which is what
-# ros2_pca9685 subscribes to (twist_topic: cmd_vel, root namespace).
+# Output is remapped in drive.launch.py: to cmd_vel_mux, which the collision
+# guard turns into the /cmd_vel that ros2_pca9685 subscribes to (twist_topic:
+# cmd_vel, root namespace) - or straight to /cmd_vel with guard:=false.
 twist_mux:
   ros__parameters:
     use_sim_time: false

@@ -14,7 +14,8 @@ Useful variations:
                             host RealSense node is not started.
     nvblox:=true            with cuvslam: also build a 3D map of what the camera
                             sees, for Nav2's local costmap (navigation.launch.py
-                            nvblox:=true). Odometry drops from 89 to ~43 Hz.
+                            nvblox:=true) and for the collision guard. Odometry
+                            drops from 89 to ~43 Hz.
     use_camera:=false       skip the RealSense (and any visual odometry)
     use_teleop:=true        run the joystick node HERE instead of on the PC
     use_web_teleop:=false   no driving web page (http://<robot>:8081/)
@@ -94,6 +95,9 @@ def generate_launch_description():
             'simulate': simulate,
             'i2c_bus': i2c_bus,
             'use_sim_time': use_sim_time,
+            # The collision guard also reads the camera's map when nvblox runs.
+            'nvblox': PythonExpression(["'", vo_source, "' == 'cuvslam' and '",
+                                        LaunchConfiguration('nvblox'), "' == 'true'"]),
         }.items()),
 
         _include('sensors.launch.py', arguments={
