@@ -90,6 +90,12 @@ def generate_launch_description():
             output='screen',
             respawn=True,
             respawn_delay=10.0,
+            # The wrapper needs up to ~15 s to stop the launch in the container
+            # cleanly (or kill it); the defaults (5 + 5) SIGKILLed it half-way
+            # on 2026-09-23 and left an orphaned launch blocking every respawn.
+            # 20 + 10 still fits inside jetnano-robot.service's TimeoutStopSec=40.
+            sigterm_timeout='20',
+            sigkill_timeout='10',
             condition=wants('cuvslam'),
         ),
 

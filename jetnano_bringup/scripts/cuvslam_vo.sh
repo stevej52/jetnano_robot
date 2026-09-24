@@ -83,26 +83,52 @@ for pid in $(pgrep -x realsense2_came 2>/dev/null); do
     fi
 done
 
+# Everything a launch in the container can leave behind. SIGKILL is fine for
+# these: nothing in there has state worth saving, the camera is hardware-reset
+# on the next start (initial_reset), and the container's PID namespace keeps
+# it away from the host. (The container's PID 1 is `sleep`, which does not
+# reap, so a killed process stays as a zombie in `docker exec ps`; harmless.)
+LEFTOVERS="${LAUNCH}|component_container|realsense2_camera_node|web_video_server"
+
+launch_running() { docker exec "${CONTAINER}" pgrep -f "${LAUNCH}" >/dev/null 2>&1; }
+
 # A previous launch may still be shutting down (this script is respawned by
-# odometry.launch.py when the container's nodes die): give it 30 s to go away
-# before refusing, so one extra respawn cycle is not wasted.
-for _ in $(seq 1 30); do
-    docker exec "${CONTAINER}" pgrep -f "${LAUNCH}" >/dev/null 2>&1 || break
-    sleep 1
-done
-if docker exec "${CONTAINER}" pgrep -f "${LAUNCH}" >/dev/null 2>&1; then
-    say "cuVSLAM is already running in ${CONTAINER}; not starting a second one"
-    exit 1
+# odometry.launch.py when the container's nodes die): give it 20 s. One that
+# is still there after that has lost its wrapper - on 2026-09-23 a service
+# restart SIGKILLed the wrapper mid-stop and the orphaned launch then blocked
+# every respawn with "already running" - so it is killed, not deferred to.
+if launch_running; then
+    say "a previous launch is still shutting down in ${CONTAINER}; waiting"
+    for _ in $(seq 1 20); do
+        launch_running || break
+        sleep 1
+    done
+    if launch_running; then
+        say "the previous launch is stuck; killing what is left of it"
+        docker exec "${CONTAINER}" pkill -KILL -f "${LEFTOVERS}" 2>/dev/null
+        sleep 2
+    fi
 fi
 
+# Called once, on the first INT or TERM. The launch on the host escalates to
+# SIGKILL 30 s after its first signal (odometry.launch.py) and systemd stops
+# the whole robot 40 s in, so this must be done well inside that: 10 s of
+# grace for a clean shutdown, then SIGKILL for whatever is left.
 stop() {
+    trap '' INT TERM
     say "stopping cuVSLAM in ${CONTAINER}"
     docker exec "${CONTAINER}" pkill -INT -f "${LAUNCH}" 2>/dev/null
-    for _ in $(seq 1 30); do
-        docker exec "${CONTAINER}" pgrep -f "${LAUNCH}" >/dev/null 2>&1 || break
+    for _ in $(seq 1 20); do
+        launch_running || break
         sleep 0.5
     done
-    docker exec "${CONTAINER}" pkill -TERM -f 'component_container|realsense2_camera_node' 2>/dev/null
+    if launch_running; then
+        say "the launch did not stop in 10 s; killing what is left of it"
+    fi
+    docker exec "${CONTAINER}" pkill -KILL -f "${LEFTOVERS}" 2>/dev/null
+    # the docker exec client below exits with the launch; do not leave it for
+    # systemd to kill
+    wait "${CHILD}" 2>/dev/null
 }
 trap 'stop; exit 0' INT TERM
 

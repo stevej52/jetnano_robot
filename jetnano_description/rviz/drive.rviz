@@ -3,13 +3,10 @@ Panels:
     Name: Displays
     Property Tree Widget:
       Expanded:
-        - /RobotModel1
+        - /Camera1
         - /LaserScan1
-        - /Map1
       Splitter Ratio: 0.5
-    Tree Height: 560
-  - Class: nav2_rviz_plugins/Navigation 2
-    Name: Navigation 2
+    Tree Height: 420
 Visualization Manager:
   Class: ""
   Displays:
@@ -42,7 +39,7 @@ Visualization Manager:
       Name: RobotModel
       Visual Enabled: true
     - Class: rviz_default_plugins/TF
-      Enabled: true
+      Enabled: false
       Frame Timeout: 15
       Marker Scale: 0.4
       Name: TF
@@ -50,7 +47,7 @@ Visualization Manager:
       Show Axes: true
       Show Names: true
       Update Interval: 0
-      Value: true
+      Value: false
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Class: rviz_default_plugins/LaserScan
@@ -106,80 +103,21 @@ Visualization Manager:
         Value: /nvblox_node/static_occupancy_grid_updates
       Use Timestamp: false
       Value: true
-    - Alpha: 0.7
-      Class: rviz_default_plugins/Map
-      Color Scheme: map
-      Draw Behind: true
-      Enabled: true
-      Name: Map
-      Topic:
-        Depth: 1
-        Durability Policy: Transient Local
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /map
-      Update Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /map_updates
-      Use Timestamp: false
-      Value: true
-    - Alpha: 0.4
-      Class: rviz_default_plugins/Map
-      Color Scheme: costmap
-      Draw Behind: false
-      Enabled: false
-      Name: Global Costmap
-      Topic:
-        Depth: 1
-        Durability Policy: Transient Local
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /global_costmap/costmap
-      Value: false
-    - Alpha: 0.5
-      Class: rviz_default_plugins/Map
-      Color Scheme: costmap
-      Draw Behind: false
-      Enabled: false
-      Name: Local Costmap
-      Topic:
-        Depth: 1
-        Durability Policy: Transient Local
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /local_costmap/costmap
-      Value: false
-    - Alpha: 1
-      Buffer Length: 1
-      Class: rviz_default_plugins/Path
-      Color: 0; 255; 127
-      Enabled: true
-      Line Style: Lines
-      Name: Plan
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /plan
-      Value: true
     - Class: rviz_default_plugins/Odometry
       Covariance:
         Value: false
-      Enabled: false
-      Keep: 100
+      Enabled: true
+      Keep: 300
       Name: Odometry
-      Position Tolerance: 0.1
+      Position Tolerance: 0.05
+      Angle Tolerance: 0.1
       Shape:
         Alpha: 1
         Color: 255; 25; 0
-        Head Length: 0.05
-        Head Radius: 0.03
-        Shaft Length: 0.1
-        Shaft Radius: 0.015
+        Head Length: 0.03
+        Head Radius: 0.02
+        Shaft Length: 0.06
+        Shaft Radius: 0.01
         Value: Arrow
       Topic:
         Depth: 5
@@ -187,33 +125,16 @@ Visualization Manager:
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /odometry/filtered
-      Value: false
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
-    Fixed Frame: map
+    Fixed Frame: odom
     Frame Rate: 30
   Name: root
   Tools:
     - Class: rviz_default_plugins/MoveCamera
     - Class: rviz_default_plugins/Select
-    - Class: rviz_default_plugins/SetInitialPose
-      Covariance x: 0.25
-      Covariance y: 0.25
-      Covariance yaw: 0.06853891909122467
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /initialpose
-    - Class: rviz_default_plugins/SetGoal
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /goal_pose
     - Class: rviz_default_plugins/Measure
       Line color: 128; 128; 0
   Transformation:
@@ -222,22 +143,20 @@ Visualization Manager:
   Value: true
   Views:
     Current:
-      Class: rviz_default_plugins/Orbit
-      Distance: 8
+      Class: rviz_default_plugins/ThirdPersonFollower
+      Distance: 3
       Focal Point: {X: 0, Y: 0, Z: 0}
       Name: Current View
       Near Clip Distance: 0.01
-      Pitch: 1.1
-      Target Frame: <Fixed Frame>
-      Value: Orbit (rviz)
-      Yaw: 3.9
+      Pitch: 0.6
+      Target Frame: base_link
+      Value: ThirdPersonFollower (rviz_default_plugins)
+      Yaw: 3.14
     Saved: ~
 Window Geometry:
   Camera:
     collapsed: false
   Displays:
-    collapsed: false
-  Navigation 2:
     collapsed: false
   Height: 1000
   Width: 1600

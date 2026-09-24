@@ -113,9 +113,23 @@ ros2 launch jetnano_bringup robot.launch.py
 On a machine with a screen (`ROS_DOMAIN_ID=7` on both):
 
 ```bash
-ros2 launch jetnano_bringup rviz.launch.py
+ros2 launch jetnano_bringup rviz.launch.py view:=drive     # or view:=nav, with the Nav2 panel
 ros2 launch jetnano_bringup teleop.launch.py
 ```
+
+### Watching it
+
+The camera's colour stream is on whenever the GPU odometry runs (it comes from the
+same container; `ros2_gpu_robot/cuvslam_d435/README.md`, "Watching the camera"):
+
+- **Any browser, phone included, no ROS needed**:
+  `http://192.168.1.7:8080/stream?topic=/camera/color/image_raw`
+  (the root page lists the topics; `/snapshot?topic=...` for one JPEG).
+- **RViz**: the `drive` view shows the camera large, with the laser scan, nvblox's
+  obstacle grid and the EKF's trail in the `odom` frame, following the robot; the `nav`
+  view is the same in the `map` frame with the Nav2 panel. Both read the JPEG topic
+  (`/camera/color/image_raw/compressed`, 2.3 MB/s at 30 Hz over Wi-Fi); the raw image
+  topics are ~10x that and are not for another machine.
 
 Mapping, in three modes:
 
@@ -150,7 +164,9 @@ odometry (waiting for the GPU driver first), and `jetnano-robot.service` runs
 
 ```bash
 sudo cp jetnano_bringup/systemd/*.service /etc/systemd/system/
+sudo cp jetnano_bringup/systemd/logind-removeipc.conf /etc/systemd/logind.conf.d/
 sudo systemctl daemon-reload
+sudo systemctl restart systemd-logind
 sudo systemctl enable --now isaac-vo.service jetnano-robot.service wifi-watchdog.service
 ```
 
@@ -158,12 +174,29 @@ sudo systemctl enable --now isaac-vo.service jetnano-robot.service wifi-watchdog
 30 s and bounces the connection after two minutes of silence: on 2026-09-23 the
 Orin twice became unreachable while its Wi-Fi believed it was connected.
 
+`logind-removeipc.conf` is not optional. The service runs as a normal user
+outside any login session, and logind's default `RemoveIPC=yes` deletes that
+user's shared memory in `/dev/shm` the moment their last SSH session ends -
+which is Fast DDS's transport between nodes on one machine. The symptom is
+silent and total: every node on the robot stops hearing every other node (the
+tilt guard reports `imu/data has stopped` and holds the robot still) while
+`ros2 topic hz` on the host PC still shows everything arriving over the
+network, and `ls -l /proc/<pid>/fd` of any node shows its `fastrtps_*` files
+as `(deleted)`. It cost most of an evening on 2026-09-23.
+
 The service starts `robot.launch.py nvblox:=true`: the GPU visual odometry
 (cuVSLAM, ~40 Hz) plus nvblox's 3D map of what the camera sees, published as
 an occupancy grid that `navigation.launch.py nvblox:=true` puts into the local
 costmap - steps, low rocks and table edges the lidar's single plane cannot
 see. Without `nvblox:=true`, `robot.launch.py` runs the odometry alone at
 89 Hz. Both are in `ros2_gpu_robot/cuvslam_d435/README.md`.
+
+Stopping or restarting the service takes about 5 s: the odometry wrapper
+(`scripts/cuvslam_vo.sh`) gives the launch inside the container 10 s to stop on
+SIGINT and then kills whatever is left, and a launch it finds already running
+in the container at start (one that lost its wrapper) is killed after 20 s
+rather than deferred to. Before this, a restart could leave an orphaned launch
+in the container that blocked every respawn with "already running".
 
 For bench work, `sudo systemctl stop jetnano-robot` and launch things by hand.
 Every bringup launch (`robot`, `drive`, `sensors`, `odometry`) refuses to start a
