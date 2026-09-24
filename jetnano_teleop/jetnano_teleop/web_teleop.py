@@ -34,6 +34,11 @@ STOP raises the ``e_stop`` lock, which blocks everything including Nav2, and
 stays raised until GO is pressed on the page; the joystick node uses the same
 lock. Speeds are fractions of full throttle, like the joystick's.
 
+The page also shows what the collision guard (drive.launch.py) did with the
+last command and has a switch for it: off sets the guard's zones' ``enabled``
+parameters false, so commands pass through it untouched, until the switch is
+put back or the guard restarts (it is on at every boot).
+
 The whole server is Python's http.server: one small JSON API, one HTML page,
 nothing to install. It listens on every interface and has no login - it is for
 the robot's own network only.
@@ -47,9 +52,13 @@ import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import time
+
 import rclpy
 from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import Twist
+from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
+from rcl_interfaces.srv import GetParameters, SetParameters
 from rclpy.node import Node
 from std_msgs.msg import Bool
 
@@ -172,6 +181,12 @@ def make_handler(node: 'WebTeleop'):
                 state.set_e_stop(False)
                 node.get_logger().info('GO from the web page: e_stop cleared')
                 self._json(node.status())
+            elif path == '/guard':
+                ok, why = node.set_guard(bool(body.get('enabled', True)))
+                if ok:
+                    self._json(node.status())
+                else:
+                    self._json({'error': why, **node.status()}, HTTPStatus.SERVICE_UNAVAILABLE)
             else:
                 self._send(HTTPStatus.NOT_FOUND, b'not found', 'text/plain')
 
@@ -196,6 +211,12 @@ class WebTeleop(Node):
         self.declare_parameter('publish_rate', 20.0)
         # Empty: the page uses http://<the host it loaded from>:8080/stream?...
         self.declare_parameter('video_url', '')
+        # The collision guard (drive.launch.py) and its zones, for the switch on
+        # the page: switching off sets every zone's `enabled` parameter false,
+        # which makes the guard pass commands through untouched. It comes back
+        # on at every start of the guard, so a reboot never leaves it off.
+        self.declare_parameter('guard_node', 'collision_guard')
+        self.declare_parameter('guard_zones', ['stop_zone', 'slow_zone'])
 
         self.max_linear = float(self.get_parameter('max_linear').value)
         self.max_angular = float(self.get_parameter('max_angular').value)
@@ -222,6 +243,15 @@ class WebTeleop(Node):
             self.create_subscription(
                 CollisionMonitorState, 'collision_guard/state', self._on_guard, 10)
 
+        # The switch: None until the guard has answered once (or if it is not running).
+        guard_node = str(self.get_parameter('guard_node').value)
+        self._zones = [str(z) for z in self.get_parameter('guard_zones').value]
+        self._guard_enabled = None
+        self._get_params = self.create_client(GetParameters, f'/{guard_node}/get_parameters')
+        self._set_params = self.create_client(SetParameters, f'/{guard_node}/set_parameters')
+        self._poll_future = None
+        self.create_timer(3.0, self._poll_guard)
+
         port = int(self.get_parameter('port').value)
         self.server = ThreadingHTTPServer(('0.0.0.0', port), make_handler(self))
         self.server.daemon_threads = True
@@ -243,6 +273,56 @@ class WebTeleop(Node):
         else:
             self._guard = 'clear'
 
+    # ------------------------------------------------------------- the switch --
+
+    def _poll_guard(self) -> None:
+        """Ask the guard whether its zones are enabled, so the page shows the truth
+        even when someone changed it with ros2 param set."""
+        if self._poll_future is not None and not self._poll_future.done():
+            return
+        if not self._get_params.service_is_ready():
+            self._guard_enabled = None
+            return
+        request = GetParameters.Request(names=[f'{z}.enabled' for z in self._zones])
+        self._poll_future = self._get_params.call_async(request)
+        self._poll_future.add_done_callback(self._on_guard_params)
+
+    def _on_guard_params(self, future) -> None:
+        try:
+            values = future.result().values
+        except Exception as exc:  # noqa: B902 - the guard went away mid-call
+            self.get_logger().debug(f'guard parameters: {exc}')
+            self._guard_enabled = None
+            return
+        flags = [v.bool_value for v in values if v.type == ParameterType.PARAMETER_BOOL]
+        self._guard_enabled = bool(flags) and all(flags)
+
+    def set_guard(self, enabled: bool):
+        """Switch every zone on or off. Called from an HTTP thread: the request
+        goes out asynchronously and the spinning main thread completes it."""
+        if not self._set_params.service_is_ready():
+            return False, 'the collision guard is not running'
+        request = SetParameters.Request(parameters=[
+            Parameter(name=f'{z}.enabled',
+                      value=ParameterValue(type=ParameterType.PARAMETER_BOOL, bool_value=enabled))
+            for z in self._zones])
+        future = self._set_params.call_async(request)
+        deadline = time.monotonic() + 2.0
+        while not future.done() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        if not future.done():
+            return False, 'the collision guard did not answer'
+        results = future.result().results
+        if not all(r.successful for r in results):
+            return False, '; '.join(r.reason for r in results if not r.successful) or 'refused'
+        self._guard_enabled = enabled
+        if enabled:
+            self.get_logger().info('obstacle guard switched ON from the web page')
+        else:
+            self.get_logger().warning('obstacle guard switched OFF from the web page: '
+                                      'nothing stops the robot before an obstacle now')
+        return True, ''
+
     def _read_page(self, path: str) -> bytes:
         try:
             with open(path, 'rb') as handle:
@@ -262,6 +342,7 @@ class WebTeleop(Node):
                 'e_stop': self.state.e_stop,
                 'driving': self._driving,
                 'guard': self._guard if self._driving else 'clear',
+                'guard_enabled': self._guard_enabled,
                 'linear': self.state.linear if live else 0.0,
                 'angular': self.state.angular if live else 0.0,
             }

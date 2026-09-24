@@ -256,7 +256,10 @@ into points), in the direction of the commanded throttle:
 - anything within **80 cm**: the command is scaled to 30 %.
 
 The web page says "blocked: obstacle" / "slowed: obstacle near" while this is
-happening. The zones are drawn in RViz's `drive` view. If the lidar goes quiet
+happening, and has an ON/OFF switch for it: OFF sets the zones' `enabled`
+parameters false (`ros2 param set /collision_guard stop_zone.enabled false`
+does the same) and the guard passes commands through untouched; it is ON again
+whenever the guard restarts. The zones are drawn in RViz's `drive` view. If the lidar goes quiet
 for a second the guard stops the robot, like the tilt guard does without its
 IMU; it also needs the EKF's `odom → base_footprint` transform to place the
 scans, so without odometry nothing drives (the guard says "invalid source").
