@@ -56,6 +56,10 @@
   #speed { display: flex; align-items: center; gap: 10px; padding: 0 4px; }
   #speed input { flex: 1; }
   #speed output { width: 3.5em; text-align: right; font-variant-numeric: tabular-nums; }
+  #videoRow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 4px 0; }
+  #videoRow small { color: #888; }
+  #quality { min-width: 6.5em; height: 40px; border: 0; border-radius: 20px; font-weight: 700; cursor: pointer;
+             background: #2a2a2a; color: #ccc; }
   #guardRow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 4px 0; }
   #guardRow small { color: #888; }
   #guard { min-width: 6.5em; height: 40px; border: 0; border-radius: 20px; font-weight: 700; letter-spacing: 1px;
@@ -87,6 +91,11 @@
     <span>speed limit</span>
     <input id="speedSlider" type="range" min="10" max="100" step="5" value="40">
     <output id="speedOut">40%</output>
+  </div>
+
+  <div id="videoRow">
+    <span>video <small id="qualityNote">low: ~2 Mbit/s, fine for driving</small></span>
+    <button id="quality">LOW</button>
   </div>
 
   <div id="guardRow">
@@ -125,7 +134,31 @@
   var keysDown = {};        // code -> true
   var wasSending = false;
   var eStop = false;
-  var videoUrl = 'http://' + location.hostname + ':8080/stream?topic=/camera/color/image_raw';
+  var videoBase = 'http://' + location.hostname + ':8080/stream?topic=/camera/color/image_raw';
+  // Two ways to get the picture. "full" passes the camera's own JPEG frames
+  // through (640x480 at 30 fps, ~18 Mbit/s) - more than a weak Wi-Fi link
+  // carries, and when the video eats the link the driving commands starve
+  // (the kitchen, 2026-09-24). "low" has the robot re-encode small frames:
+  // ~2 Mbit/s and the picture still shows what matters for driving.
+  var QUALITY = {
+    low: '&type=mjpeg&width=320&height=240&quality=50',
+    full: '&type=ros_compressed'
+  };
+  var quality = localStorage.getItem('jetnano.video') || 'low';
+  var qualityBtn = document.getElementById('quality');
+  var qualityNote = document.getElementById('qualityNote');
+  function videoUrl() { return videoBase + QUALITY[quality]; }
+  function showQuality() {
+    qualityBtn.textContent = quality.toUpperCase();
+    qualityNote.textContent = quality === 'low' ? 'low: ~2 Mbit/s, fine for driving'
+                                                : 'full: 640x480 at 30 fps, ~18 Mbit/s - needs good Wi-Fi';
+  }
+  qualityBtn.addEventListener('click', function () {
+    quality = quality === 'low' ? 'full' : 'low';
+    localStorage.setItem('jetnano.video', quality);
+    showQuality();
+    loadVideo();
+  });
 
   function post(path, body) {
     return fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -134,7 +167,7 @@
   }
 
   function loadVideo() {
-    video.src = videoUrl + '&t=' + Date.now();      // a new query defeats a stuck cached stream
+    video.src = videoUrl() + '&t=' + Date.now();    // a new query defeats a stuck cached stream
   }
   video.addEventListener('error', function () { setTimeout(loadVideo, 2000); });
   video.addEventListener('click', loadVideo);
@@ -303,9 +336,10 @@
 
   // ------------------------------------------------------------------ start --
   place(0, 0);
+  showQuality();
   fetch('/config', { cache: 'no-store' })
     .then(function (r) { return r.json(); })
-    .then(function (cfg) { if (cfg.video_url) videoUrl = cfg.video_url; })
+    .then(function (cfg) { if (cfg.video_url) videoBase = cfg.video_url; })
     .catch(function () {})
     .then(loadVideo);
 })();
