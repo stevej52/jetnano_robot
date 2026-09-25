@@ -70,8 +70,9 @@ ENGLISH_ON = ('english',)
 
 # What she says in English when chatting (first matching subject wins, else a filler).
 ENGLISH_REPLIES = (
-    (('how are you', 'how you doing', 'how is it going', "how's it going", 'how are things', 'how do you feel',
-      'how are you feeling', 'status report', 'how is everything', "how's everything", 'you okay', 'you all right'),
+    (('how are you', 'how you doing', 'you doing', 'how is it going', "how's it going", 'how are things',
+      'how do you feel', 'how are you feeling', 'status report', 'status', 'how is everything', "how's everything",
+      'you okay', 'you all right', 'how are ya'),
      ["HEALTH"]),
     (('your name', 'who are you', 'what are you'),
      ["I'm Rosie. I'm a Jetson.", "My name is Rosie. Rosie the robot.", "Rosie. Pleased to meet you."]),
@@ -249,6 +250,8 @@ def _node_main(args):
                                      QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
             self.create_subscription(BatteryState, 'battery', self._on_battery, 10)
             self.create_subscription(Twist, 'cmd_vel', self._on_cmd, 10)
+            # Typed words count as heard: for tests, and for a page one day.
+            self.create_subscription(String, 'speech/type', lambda m: self._understand(m.data, 2.0), 10)
             self.create_timer(1.0, self._tick)
             self.health = Health(self)          # for "how are you?" in English
 
@@ -341,6 +344,9 @@ def _node_main(args):
             msg = self._String()
             msg.data = text
             self.text_pub.publish(msg)
+            self._understand(text, seconds, took)
+
+        def _understand(self, text: str, seconds: float, took: float = 0.0) -> None:
             action, mode = decide(text, self.mode)
             self.get_logger().info(f'heard "{text}" ({seconds:.1f} s, decoded in {took:.2f} s)'
                                    + (f' -> {action}' if action else ''))
