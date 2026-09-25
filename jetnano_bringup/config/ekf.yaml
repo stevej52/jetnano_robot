@@ -35,11 +35,20 @@ ekf_filter_node:
                                       # tree with two parents silently stops resolving.
     world_frame: odom             # this EKF produces odom -> base_footprint only
 
-    # Visual odometry from the RealSense D435, via rtabmap_odom.
+    # Visual odometry (cuVSLAM in the container, or rtabmap on the CPU).
     # Order: x y z, roll pitch yaw, vx vy vz, vroll vpitch vyaw, ax ay az
+    #
+    # VELOCITIES ONLY, not the pose. Every restart of the camera pipeline
+    # (the watchdog does that when VO stalls) starts cuVSLAM's odometry from
+    # zero at wherever the robot is; fused as an absolute pose, that snapped
+    # the filter back to the origin at every restart - 7 jumps on the first
+    # lap of 2026-09-24, and SLAM drew the house three times, rotated. Fed
+    # velocities, the filter integrates straight through a restart. Heading
+    # then rests on the two rate gyros (VO's and the BNO055's); SLAM's
+    # map -> odom correction absorbs the slow drift, as it is meant to.
     odom0: vo
-    odom0_config: [true,  true,  false,
-                   false, false, true,
+    odom0_config: [false, false, false,
+                   false, false, false,
                    true,  true,  false,
                    false, false, true,
                    false, false, false]
