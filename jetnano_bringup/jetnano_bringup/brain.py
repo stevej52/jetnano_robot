@@ -324,8 +324,7 @@ class Brain(Node):
         if self.level is not None:
             f.append('the room is loud' if self.level > -30 else
                      'the room is a bit noisy' if self.level > -40 else 'the room is quiet')
-        f.append('you are speaking English for a few minutes at someone\'s request; '
-                 'usually you talk in beeps and boops')
+        f.append('you talk with people in English; your little system sounds are beeps and boops')
         return '; '.join(f) + '.'
 
     # ------------------------------------------------------------- spend --

@@ -42,9 +42,15 @@ silence:
     "what's the news / weather / stock market / going on in the world?"
                                  a short briefing (news.py), in about
                                  thirty-second pieces with "Want to hear more?"
-    "Rosie, speak English"       five minutes of words for everything, a boop
-                                 when she reverts; "speak robot" ends it early
+    "Rosie, speak robot"         five minutes of beeps for her replies too;
+                                 "speak English" ends it early
+    "beep boop bleep"            beeping at her gets beeps back, that once
     "Rosie, in English"          the last thing she said, again, in words
+
+Language (Steve, 2026-09-25, once Opus was her brain): a conversation is in
+English by default - she answers in words, through the brain - and her system
+sounds (hello at start-up, errors, the e-stop, "huh?" at a clap) stay robot.
+Beeping at her, or "speak robot", gets her own voice back.
 
 Anything else said to her in English goes to her brain (brain.py, Claude)
 when it is awake; she starts with a lead-in chosen here - the topic echoed
@@ -87,7 +93,7 @@ YES = ('yes', 'yeah', 'yep', 'yup', 'sure', 'more', 'go on', 'please', 'continue
 NO = ('no', 'nope', 'no thanks', 'no thank you', "that's all", 'that is all')
 ENGLISH_OFF = ('speak robot', 'talk robot', 'speak rosie', 'your language', 'own language', 'robot language',
                'rosie language', 'stop speaking english', 'no more english', 'speak beeps', 'back to beeps',
-               'back to normal', 'speak droid', 'beeps', 'boops', 'beep boop')
+               'back to normal', 'speak droid')
 # Five minutes of English; the off phrases are checked first so "no more
 # english" is not an on. Any other mention of English ("Rosie, in English",
 # "say that in English") is a request to repeat the last thing in words.
@@ -235,6 +241,19 @@ def over_her_voice(text: str, own: str = ''):
                for p in phrases):
             return action
     return None
+
+
+ROBOT_SOUNDS = re.compile(r"^(beep|beeps|boop|boops|bop|bops|bleep|bleeps|bloop|bloops|blip|blips|blorp|bip|bweep|"
+                          r"beepity|boopity|bippity|boppity|doot|doo|dee|boo|bee|zzt|whirr|meep|moop|brr|ding|dong|"
+                          r"beepboop|bleepbloop|weeoo|wee|woo|bzz|zap|zip)$")
+
+
+def robot_talk(text: str) -> bool:
+    """Someone beeping at her: mostly robot noises ("beep boop", "Rosie, bleep
+    bloop blip") - she answers in kind."""
+    words = [w for w in normalize(text).split() if w != NAME]
+    hits = sum(1 for w in words if ROBOT_SOUNDS.match(w))
+    return bool(words) and hits >= 1 and hits / len(words) >= 0.6
 
 
 def english_reply(text: str, battery=None, rng=random, health=None) -> str:
@@ -426,7 +445,9 @@ def _node_main(args):
             self.create_timer(2.0, self._beat)
             self.mode = 'idle'
             self.muted = False
-            self.english = False
+            self.english = False            # the sounds node's own switch (system sounds in words); not voice-set now
+            self.robot_until = 0.0          # "speak robot": her replies in beeps until then
+            self.robot_for = 300.0
             self.battery = None
             self.last_sound = None          # what the sounds node played last (mood or file)
             self.last_question = None       # what her last chatter was an answer to
@@ -587,19 +608,20 @@ def _node_main(args):
             if action == 'quiet':
                 self._stop()
                 self._say('ok')
-                self._set_mute(True, after=2.5 if self.english else 1.4)
+                self._set_mute(True, after=1.4)
             elif action == 'stop':
                 self._stop()                              # no complaint; waiting for the next thing
             elif action == 'thanks':
-                self._speak("You're welcome!") if self.english else self._say('ok')
+                self._reply("You're welcome!", 'ok')
             elif action == 'talk':
                 self._set_mute(False)
                 self._say('happy')
             elif action == 'english':
-                self._set_param('english', True)          # five minutes; the sounds node keeps the clock
+                self.robot_until = 0.0                    # words again (they are the default)
                 self._speak('Okay.')
             elif action == 'robot':
-                self._set_param('english', False)         # the sounds node boops
+                self.robot_until = time.monotonic() + self.robot_for
+                self._say('boop')
             elif action == 'repeat':
                 # once, in words; the language stays. A news question answered
                 # with a story gets the real briefing now; an open question
@@ -618,14 +640,19 @@ def _node_main(args):
             elif action and action.startswith('brief:'):
                 # In her own language a news question gets a story (Steve,
                 # 2026-09-25), unless English is on or asked for in the question.
-                if self.english or 'english' in normalize(text):
+                if self._words() or 'english' in normalize(text):
                     self._brief(action.split(':', 1)[1])
                 else:
                     self.last_question, self.last_action = text, action
                     self._story()
-            elif action == 'chat' and self.english and self.brain_ready and _has(normalize(text), THINK_WORDS):
+            elif action == 'chat' and robot_talk(text):
+                self.last_question, self.last_action = text, action
+                n = int(min(12, max(3, round(2 + seconds * 2.2))))
+                voice.write_wav(self.chat_file, voice.chat(n, rng=random))
+                self._say(self.chat_file)
+            elif action == 'chat' and self._words() and self.brain_ready and _has(normalize(text), THINK_WORDS):
                 self._ask_brain(text, think=True)
-            elif action == 'chat' and self.english:
+            elif action == 'chat' and self._words():
                 if _has(normalize(text), HEALTH_WORDS):
                     self._speak('Okay, checking.')             # the report samples for a couple of seconds
                     self._speak(english_reply(text, self.battery, health=self.health))
@@ -646,9 +673,13 @@ def _node_main(args):
                     voice.write_wav(self.chat_file, voice.chat(n, rng=random))
                     self._say(self.chat_file)
 
+        def _words(self) -> bool:
+            """Replies in English, unless "speak robot" is in force."""
+            return time.monotonic() >= self.robot_until
+
         def _reply(self, words: str, mood: str) -> None:
-            """Words in English mode, her own sound otherwise."""
-            if self.english:
+            """Words by default, her own sound in a robot spell."""
+            if self._words():
                 self._speak(words)
             else:
                 self._say(mood)
