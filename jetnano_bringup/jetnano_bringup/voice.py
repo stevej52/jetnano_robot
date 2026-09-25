@@ -48,6 +48,11 @@ import numpy as np
 
 RATE = 22050
 BASE = 467.0        # her middle: half an octave under A5, where Steve liked it (2026-09-24)
+# The USB speaker swallows the first ~80 ms after it wakes: measured with her
+# own mic 2026-09-25, "hm" came out as 0.08 s of 0.16 s and 8 dB quieter;
+# with a lead-in of silence all of it came through. So every file starts quiet.
+LEAD_S = 0.25
+TAIL_S = 0.10
 
 
 def tone(freq_curve, seconds, vibrato_hz=6.0, vibrato_depth=0.02, rough=0.0, bright=0.5):
@@ -174,6 +179,7 @@ MOODS = {'hello': hello, 'ok': ok, 'no': no, 'alarm': alarm, 'sad': sad,
 
 def write_wav(path, samples, volume=0.6):
     y = samples / (np.max(np.abs(samples)) or 1.0) * volume
+    y = np.concatenate([np.zeros(int(RATE * LEAD_S)), y, np.zeros(int(RATE * TAIL_S))])
     data = struct.pack('<%dh' % len(y), *(int(v * 32767) for v in y))
     with wave.open(path, 'wb') as w:
         w.setnchannels(1)
