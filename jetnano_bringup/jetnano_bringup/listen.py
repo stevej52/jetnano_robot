@@ -68,12 +68,15 @@ ENGLISH_OFF = ('speak robot', 'talk robot', 'speak rosie', 'your language', 'own
 # the off phrases are checked first so "no more english" is not an on.
 ENGLISH_ON = ('english',)
 
-# What she says in English when chatting (first matching subject wins, else a filler).
+HEALTH_WORDS = ('how are you', 'how you doing', 'you doing', 'how is it going', "how's it going", 'how are things',
+                'how do you feel', 'how are you feeling', 'status report', 'status', 'how is everything',
+                "how's everything", 'you okay', 'you all right', 'how are ya')
+JOKE_WORDS = ('joke', 'funny', 'make me laugh')
+
+# What she says in English when chatting (first matching subject wins, else
+# she does not know - she is just a robot).
 ENGLISH_REPLIES = (
-    (('how are you', 'how you doing', 'you doing', 'how is it going', "how's it going", 'how are things',
-      'how do you feel', 'how are you feeling', 'status report', 'status', 'how is everything', "how's everything",
-      'you okay', 'you all right', 'how are ya'),
-     ["HEALTH"]),
+    (HEALTH_WORDS, ["HEALTH"]),
     (('your name', 'who are you', 'what are you'),
      ["I'm Rosie. I'm a Jetson.", "My name is Rosie. Rosie the robot.", "Rosie. Pleased to meet you."]),
     (('who made you', 'who built you', 'who created you'),
@@ -81,10 +84,7 @@ ENGLISH_REPLIES = (
     (('what can you do', 'can you do', 'what do you do'),
      ["I can drive around, map the house, watch for things that move, and talk a little.",
       "Driving, mapping, listening, and the occasional joke."]),
-    (('joke', 'funny'),
-     ["Why did the robot go on vacation? It needed to recharge its batteries.",
-      "What do you call a robot who takes the long way round? R2 detour.",
-      "I would tell you a UDP joke, but you might not get it."]),
+    (JOKE_WORDS, ["You're a joke. [laugh]"]),        # [laugh]: the speak node adds the sound after the words
     (('thank', 'thanks'), ["You're welcome!", "Any time.", "Happy to help."]),
     (('love you',), ["Aw. I love you too.", "That's sweet. I love you too."]),
     (('awesome', 'great', 'cool', 'amazing', 'nice', 'wonderful', 'perfect'),
@@ -95,8 +95,7 @@ ENGLISH_REPLIES = (
     (('good night',), ["Good night! Sleep tight."]),
     (('hello', 'hi', 'hey'), ["Hello!", "Hi! What's up?", "Hey there."]),
 )
-ENGLISH_FILLERS = ["Tell me more.", "Interesting.", "I see.", "Really?", "Okay!", "Go on.", "I'm listening.",
-                   "Beep boop. I mean, yes.", "Hm, let me think about that.", "You don't say."]
+ENGLISH_FILLERS = ["I don't know. I'm just a robot."]
 
 
 def normalize(text: str) -> str:
@@ -372,8 +371,16 @@ def _node_main(args):
             elif action == 'chat' and self.english:
                 self._speak(english_reply(text, self.battery, health=self.health))
             elif action == 'chat':
-                n = int(min(12, max(3, round(2 + seconds * 2.2))))
-                voice.write_wav(self.chat_file, voice.chat(n, rng=random))
+                t = normalize(text)
+                if _has(t, JOKE_WORDS):
+                    self._say('laugh')
+                    return
+                if _has(t, HEALTH_WORDS):       # "how are you?" gets the long story
+                    y = voice.story(random.randrange(3, 5), rng=random)
+                else:
+                    n = int(min(12, max(3, round(2 + seconds * 2.2))))
+                    y = voice.chat(n, rng=random)
+                voice.write_wav(self.chat_file, y)
                 self._say(self.chat_file)
 
         def _tick(self) -> None:
@@ -392,7 +399,7 @@ def _node_main(args):
                 self.get_logger().warning('no speak node: cannot say it in English')
                 self._say('hm')
                 return
-            self.get_logger().info(f'says "{words}"')
+            self.get_logger().info(f'says "{words.replace(chr(10), " | ")}"')
             msg = self._String()
             msg.data = words
             self.speak_pub.publish(msg)

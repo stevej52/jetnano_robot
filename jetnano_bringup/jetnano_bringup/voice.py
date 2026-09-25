@@ -34,6 +34,8 @@ different. The moods and where the sounds node uses them:
     bye       three notes down with a little wave        "I have to go" ends a chat (listen)
     chat      a run of quick notes, a question or a      her side of a conversation; listen makes
               statement at the end                       one fresh each time, as long as yours
+    laugh     six rough "heh"s bouncing down, a slide    "tell me a joke" (after "you're a joke")
+    story     several runs of chatter with breaths       "how are you?" in her own language
 
 Each mood is written with three slightly different takes (pitch and timing
 jitter), so she does not say exactly the same thing twice in a row.
@@ -188,10 +190,11 @@ def bye(j):
 CHAT_SCALE = (0.75, 0.84, 1.0, 1.12, 1.26, 1.5, 1.68, 2.0)
 
 
-def chat(n=6, j=0.0, rng=random):
+def chat(n=6, j=0.0, rng=random, end=None):
     """Chatter: n quick notes wandering over a happy scale, some sliding, an
     uneven rhythm, and a last note that goes up (a question) or down (a
-    statement). Every call is different; listen makes one per reply."""
+    statement; end='up'/'down' to choose). Every call is different; listen
+    makes one per reply."""
     k = 2 ** (j / 12)
     parts = []
     i = rng.randrange(2, 6)
@@ -205,14 +208,43 @@ def chat(n=6, j=0.0, rng=random):
             parts.append(tone(flat(f), d, vibrato_depth=0.0, bright=0.5))
         parts.append(rest(rng.choice([0.015, 0.025, 0.04, 0.08])))
     f = BASE * k * CHAT_SCALE[i]
-    up = rng.random() < 0.5
+    up = (rng.random() < 0.5) if end is None else end == 'up'
     parts.append(tone(glide(f, f * (1.5 if up else 0.67), 0.7), 0.18, vibrato_depth=0.03))
+    return np.concatenate(parts)
+
+
+def story(phrases=3, j=0.0, rng=random):
+    """A long answer - "how are you?" in her own language (Steve, 2026-09-25:
+    "like she's telling you a story"): several runs of chatter with a breath
+    between, questions along the way, a statement at the end."""
+    parts = []
+    for i in range(phrases):
+        last = i == phrases - 1
+        parts.append(chat(rng.randrange(5, 10), j, rng, end='down' if last else None))
+        if not last:
+            parts.append(rest(rng.choice([0.12, 0.18, 0.25])))
+    return np.concatenate(parts)
+
+
+def laugh(j):
+    """A robot laugh: six short rough "heh"s bouncing between two pitches and
+    drifting down, then a slide away, still chuckling."""
+    k = 2 ** (j / 12)
+    parts = []
+    f = BASE * k * 1.45
+    for i in range(6):
+        g = f * (1.0 if i % 2 == 0 else 0.84)
+        parts.append(tone(glide(g * 1.06, g * 0.94, 0.7), 0.085, vibrato_depth=0.0, rough=0.4, bright=0.6))
+        parts.append(rest(0.045))
+        f *= 0.96
+    parts.append(tone(glide(f, f * 0.65, 0.8), 0.28, vibrato_hz=8.0, vibrato_depth=0.05, bright=0.4))
     return np.concatenate(parts)
 
 
 MOODS = {'hello': hello, 'ok': ok, 'no': no, 'alarm': alarm, 'sad': sad,
          'happy': happy, 'curious': curious, 'sleepy': sleepy, 'hm': hm, 'huh': huh,
-         'bye': bye, 'chat': lambda j: chat(random.randrange(4, 9), j)}
+         'bye': bye, 'chat': lambda j: chat(random.randrange(4, 9), j), 'laugh': laugh,
+         'story': lambda j: story(3, j)}
 
 
 def write_wav(path, samples, volume=0.6):

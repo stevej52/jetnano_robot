@@ -23,11 +23,16 @@ about half a second per sentence) and goes to the sounds node as
 apply. Every phrase is kept in ``~/voice/tts_cache`` and synthesised once.
 The sounds node uses this for its English mode ("Rosie, speak English");
 listen uses it for English replies in a chat.
+
+A newline in the text is a small pause (``pause_s``; the status report puts
+one between systems). A ``[mood]`` tag, e.g. "You're a joke. [laugh]", plays
+that sound right after the words.
 """
 
 import hashlib
 import os
 import queue
+import re
 import threading
 import time
 import wave
@@ -75,9 +80,11 @@ class Speak(Node):
         self.declare_parameter('speed', 1.0)
         self.declare_parameter('threads', 2)
         self.declare_parameter('cache_dir', os.path.expanduser('~/voice/tts_cache'))
+        self.declare_parameter('pause_s', 0.45)          # at each newline in the text
         p = lambda n: self.get_parameter(n).value  # noqa: E731
         self.voice = str(p('voice'))
         self.speed = float(p('speed'))
+        self.pause = float(p('pause_s'))
         self.cache = os.path.expanduser(str(p('cache_dir')))
         os.makedirs(self.cache, exist_ok=True)
         t0 = time.monotonic()
@@ -90,23 +97,37 @@ class Speak(Node):
 
     def _work(self) -> None:
         while rclpy.ok():
-            text = self.queue.get().strip()
-            if not text:
-                continue
-            key = hashlib.md5(f'{self.voice}|{self.speed}|{text}'.encode()).hexdigest()[:16]
-            # long one-offs (a status report) are not worth keeping
-            path = os.path.join(self.cache if len(text) <= 100 else '/tmp', f'rosie_{key}.wav')
-            if not os.path.isfile(path):
-                t0 = time.monotonic()
-                audio = self.tts.generate(text, sid=0, speed=self.speed)
-                if len(audio.samples) == 0:
-                    self.get_logger().warning(f'nothing to say for "{text}"')
-                    continue
-                write_wav(path, audio.samples, audio.sample_rate)
-                self.get_logger().info(f'"{text}" in {time.monotonic() - t0:.2f} s')
-            msg = String()
-            msg.data = path
-            self.say_pub.publish(msg)
+            raw = self.queue.get()
+            tags = re.findall(r'\[(\w+)\]', raw)
+            text = re.sub(r'\s*\[\w+\]', '', raw).strip()
+            if text:
+                key = hashlib.md5(f'{self.voice}|{self.speed}|{self.pause}|{text}'.encode()).hexdigest()[:16]
+                # long one-offs (a status report) are not worth keeping
+                path = os.path.join(self.cache if len(text) <= 100 else '/tmp', f'rosie_{key}.wav')
+                if not os.path.isfile(path):
+                    t0 = time.monotonic()
+                    pieces, rate = [], 22050
+                    for line in [ln.strip() for ln in text.split('\n') if ln.strip()]:
+                        audio = self.tts.generate(line, sid=0, speed=self.speed)
+                        if len(audio.samples) == 0:
+                            continue
+                        rate = audio.sample_rate
+                        if pieces:
+                            pieces.append(np.zeros(int(rate * self.pause), np.float32))
+                        pieces.append(np.asarray(audio.samples, np.float32))
+                    if not pieces:
+                        self.get_logger().warning(f'nothing to say for "{text}"')
+                        continue
+                    write_wav(path, np.concatenate(pieces), rate)
+                    self.get_logger().info(f'"{text.replace(chr(10), " | ")}" in {time.monotonic() - t0:.2f} s')
+                self._say(path)
+            for mood in tags:           # after the words: the sounds queue is in order
+                self._say(mood)
+
+    def _say(self, what: str) -> None:
+        msg = String()
+        msg.data = what
+        self.say_pub.publish(msg)
 
 
 def main(args=None):

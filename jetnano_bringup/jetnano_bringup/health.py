@@ -205,4 +205,5 @@ class Health:
         if self.level is not None:
             parts.append("It's loud in here." if self.level > -30 else
                          "It's a bit noisy in here." if self.level > -40 else "It's nice and quiet.")
-        return ' '.join(parts)
+        # one line per system: the speak node puts a small pause at each newline
+        return '\n'.join(parts)
