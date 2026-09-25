@@ -46,7 +46,7 @@ import wave
 import numpy as np
 
 RATE = 22050
-BASE = 660.0        # her middle: an A5-ish, small robot, not a big one
+BASE = 467.0        # her middle: half an octave under A5, where Steve liked it (2026-09-24)
 
 
 def tone(freq_curve, seconds, vibrato_hz=6.0, vibrato_depth=0.02, rough=0.0, bright=0.5):
