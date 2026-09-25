@@ -308,7 +308,11 @@ def _node_main(args):
             self.declare_parameter('model_dir', MODEL_DIR)
             self.declare_parameter('asr', 'moonshine-tiny')          # or whisper-tiny
             self.declare_parameter('threads', 2)
-            self.declare_parameter('vad_threshold', 0.5)
+            # The mic is tiny and inside the robot: a person a few feet away
+            # reaches it far quieter than her own speaker does (2026-09-25,
+            # Steve spoke and nothing triggered). Boost before the detector.
+            self.declare_parameter('gain_db', 15.0)
+            self.declare_parameter('vad_threshold', 0.4)
             self.declare_parameter('min_silence_s', 0.5)            # a pause this long ends what you said
             self.declare_parameter('min_speech_s', 0.3)
             self.declare_parameter('max_speech_s', 10.0)
@@ -323,6 +327,7 @@ def _node_main(args):
             t0 = time.monotonic()
             self.recognizer = make_recognizer(model_dir, str(p('asr')), int(p('threads')))
             self.min_silence = float(p('min_silence_s'))
+            self.gain = 10.0 ** (float(p('gain_db')) / 20.0)
             self.vad, self.window = make_vad(model_dir, float(p('vad_threshold')), self.min_silence,
                                              float(p('min_speech_s')), float(p('max_speech_s')))
             self.chat_timeout = float(p('chat_timeout_s'))
@@ -388,8 +393,9 @@ def _node_main(args):
         # ------------------------------------------------------------ input --
 
         def _on_audio(self, msg) -> None:
+            x = np.frombuffer(msg.data, dtype=np.int16).astype(np.float32) / 32768.0
             try:
-                self.queue.put_nowait(np.frombuffer(msg.data, dtype=np.int16).astype(np.float32) / 32768.0)
+                self.queue.put_nowait(np.clip(x * self.gain, -1.0, 1.0))
             except queue.Full:
                 pass
 
@@ -463,13 +469,19 @@ def _node_main(args):
 
         def _utterance(self, samples: np.ndarray, overlapped: bool) -> None:
             seconds = len(samples) / 16000.0
+            # level as it came off the mic, before the boost
+            rms = float(np.sqrt(np.mean(samples * samples))) / self.gain if len(samples) else 0.0
+            db = 20.0 * np.log10(max(rms, 1e-6))
             t0 = time.monotonic()
             text = transcribe(self.recognizer, samples)
             took = time.monotonic() - t0
             if not text:
+                self.get_logger().info(f'speech with no words ({seconds:.1f} s at {db:.0f} dBFS)')
                 return
             if overlapped:
                 action = over_her_voice(text, ' '.join(self.own_text))
+                if action is None:
+                    self.get_logger().info(f'ignored over her own voice: "{text[:80]}" ({db:.0f} dBFS)')
                 if action == 'stop':
                     self.get_logger().info(f'heard "{text}" over her own voice -> stop')
                     self._stop()
@@ -483,9 +495,9 @@ def _node_main(args):
             msg = self._String()
             msg.data = text
             self.text_pub.publish(msg)
-            self._understand(text, seconds, took)
+            self._understand(text, seconds, took, db)
 
-        def _understand(self, text: str, seconds: float, took: float = 0.0) -> None:
+        def _understand(self, text: str, seconds: float, took: float = 0.0, db: float = None) -> None:
             now = time.monotonic()
             if self.pending and now < self.pending_until:       # "want to hear more?"
                 t = normalize(text)
@@ -501,7 +513,8 @@ def _node_main(args):
                     self.last_heard = now
                     return
             action, mode = decide(text, self.mode)
-            self.get_logger().info(f'heard "{text}" ({seconds:.1f} s, decoded in {took:.2f} s)'
+            level = f', {db:.0f} dBFS' if db is not None else ', typed'
+            self.get_logger().info(f'heard "{text}" ({seconds:.1f} s{level}, decoded in {took:.2f} s)'
                                    + (f' -> {action}' if action else ''))
             if mode != self.mode:
                 self.mode = mode
