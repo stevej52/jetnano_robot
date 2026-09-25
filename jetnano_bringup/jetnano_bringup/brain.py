@@ -119,6 +119,10 @@ natural remark. Do not repeat those words and do not start with the same word: a
 something like "They" or "I", after "Well," just carry on."""
 
 
+def _plain(text: str) -> str:
+    return re.sub(r'[^a-z]', '', text.lower())
+
+
 def sentences(buf: str):
     """Split off complete sentences; returns (list of sentences, remainder)."""
     out = []
@@ -398,7 +402,7 @@ class Brain(Node):
             system = (PERSONA.format(place=self.place) + HEALTH_BANTER.format(report=report)
                       + (LEAD_IN.format(lead_in=lead_in) if lead_in else ''))
             try:
-                full, _first, _ = self._run('local', system, [{'role': 'user', 'content': text}], False)
+                full, _first, _ = self._run('local', system, [{'role': 'user', 'content': text}], False, said=lead_in)
             except Exception as exc:      # noqa: BLE001
                 self.get_logger().warning(f'banter: {type(exc).__name__}: {str(exc)[:120]}')
                 full = ''
@@ -416,7 +420,7 @@ class Brain(Node):
     def _claude_ok(self) -> bool:
         return self.client is not None and self.backend in ('auto', 'claude') and self._spent() < self.budget
 
-    def _run(self, backend: str, system: str, messages: list, check: bool, think: bool = False):
+    def _run(self, backend: str, system: str, messages: list, check: bool, think: bool = False, said: str = ''):
         """Stream one answer, speaking sentence by sentence. With check, the
         first sentence is held back until it is known not to be a hand-over
         word (PASS, THINK) or an admission ("I'm not sure").
@@ -438,6 +442,8 @@ class Brain(Node):
             for sent in done:
                 if check and not spoke and UNSURE.search(sent):
                     return full, first, 'unsure'
+                if not spoke and said and _plain(sent) == _plain(said.split()[-1] if said.endswith(',') else said):
+                    continue                 # it repeated what she already said out loud ("Me?" "Me?")
                 self._say(sent)
                 spoke = True
         rest = buf.strip()
@@ -473,7 +479,7 @@ class Brain(Node):
             system = persona + FACTS.format(facts=self._facts()) + (LEAD_IN.format(lead_in=said) if said else '')
             if heavy:
                 system += THINK_CARE
-            return self._run('claude', system, messages, False, think=heavy)
+            return self._run('claude', system, messages, False, think=heavy, said=said)
 
         try:
             if think and self._claude_ok():            # "Rosie, think hard about ..."
@@ -484,7 +490,8 @@ class Brain(Node):
             elif backend == 'local':
                 check = self.hand_over
                 facts = FACTS.format(facts=self._facts()) + (LEAD_IN.format(lead_in=lead_in) if lead_in else '')
-                full, first, reason = self._run('local', persona + (HAND_OVER if check else '') + facts, messages, check)
+                full, first, reason = self._run('local', persona + (HAND_OVER if check else '') + facts, messages, check,
+                                                said=lead_in)
                 if reason:
                     if self._claude_ok():
                         handed, backend = True, 'claude'
