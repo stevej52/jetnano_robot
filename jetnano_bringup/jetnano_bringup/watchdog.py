@@ -515,7 +515,11 @@ class Watchdog(Node):
             with open('/proc/uptime') as f:
                 up = float(f.read().split()[0])
             tick = os.sysconf('SC_CLK_TCK')
-            for pid in self._pids(pattern):
+            pids = self._pids(pattern)
+            if not pids:
+                return True          # between death and respawn: the launch brings it back
+                                     # (and the node check reports it if that never happens)
+            for pid in pids:
                 with open(f'/proc/{pid}/stat') as f:
                     start = int(f.read().rsplit(')', 1)[1].split()[19]) / tick
                 if up - start < self.young_s:
