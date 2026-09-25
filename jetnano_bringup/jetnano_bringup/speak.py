@@ -94,7 +94,8 @@ class Speak(Node):
             if not text:
                 continue
             key = hashlib.md5(f'{self.voice}|{self.speed}|{text}'.encode()).hexdigest()[:16]
-            path = os.path.join(self.cache, f'{key}.wav')
+            # long one-offs (a status report) are not worth keeping
+            path = os.path.join(self.cache if len(text) <= 100 else '/tmp', f'rosie_{key}.wav')
             if not os.path.isfile(path):
                 t0 = time.monotonic()
                 audio = self.tts.generate(text, sid=0, speed=self.speed)

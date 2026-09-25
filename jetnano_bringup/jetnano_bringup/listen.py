@@ -70,9 +70,9 @@ ENGLISH_ON = ('english',)
 
 # What she says in English when chatting (first matching subject wins, else a filler).
 ENGLISH_REPLIES = (
-    (('how are you', 'how you doing', 'how is it going', "how's it going", 'how are things', 'how do you feel'),
-     ["I'm doing great, thanks for asking!", "Never better. My wheels are ready and my map is fresh.",
-      "Pretty good! How are you?"]),
+    (('how are you', 'how you doing', 'how is it going', "how's it going", 'how are things', 'how do you feel',
+      'how are you feeling', 'status report', 'how is everything', "how's everything", 'you okay', 'you all right'),
+     ["HEALTH"]),
     (('your name', 'who are you', 'what are you'),
      ["I'm Rosie. I'm a Jetson.", "My name is Rosie. Rosie the robot.", "Rosie. Pleased to meet you."]),
     (('who made you', 'who built you', 'who created you'),
@@ -135,12 +135,17 @@ def decide(text: str, mode: str):
     return 'chat', 'chat'
 
 
-def english_reply(text: str, battery=None, rng=random) -> str:
-    """Her side of a chat, in words. battery: (percent, present) or None."""
+def english_reply(text: str, battery=None, rng=random, health=None) -> str:
+    """Her side of a chat, in words. battery: (percent, present) or None;
+    health: a jetnano_bringup.health.Health for "how are you?" (else a short answer)."""
     t = normalize(text)
     for subjects, replies in ENGLISH_REPLIES:
         if _has(t, subjects):
             reply = rng.choice(replies)
+            if reply == 'HEALTH':
+                if health is not None:
+                    return health.report(rng)
+                return rng.choice(["I'm doing great, thanks for asking!", "Pretty good! How are you?"])
             if reply == 'TIME':
                 return time.strftime("It's %I:%M.").replace("'s 0", "'s ")
             if reply == 'BATTERY':
@@ -203,6 +208,7 @@ def _node_main(args):
     from std_msgs.msg import Bool, Int16MultiArray, String
 
     from jetnano_bringup import voice
+    from jetnano_bringup.health import Health
 
     class Listen(Node):
 
@@ -244,6 +250,7 @@ def _node_main(args):
             self.create_subscription(BatteryState, 'battery', self._on_battery, 10)
             self.create_subscription(Twist, 'cmd_vel', self._on_cmd, 10)
             self.create_timer(1.0, self._tick)
+            self.health = Health(self)          # for "how are you?" in English
 
             self.queue = queue.Queue(maxsize=200)
             self.mode = 'idle'
@@ -357,7 +364,7 @@ def _node_main(args):
             elif action == 'bye':
                 self._say('bye')
             elif action == 'chat' and self.english:
-                self._speak(english_reply(text, self.battery))
+                self._speak(english_reply(text, self.battery, health=self.health))
             elif action == 'chat':
                 n = int(min(12, max(3, round(2 + seconds * 2.2))))
                 voice.write_wav(self.chat_file, voice.chat(n, rng=random))
