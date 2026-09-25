@@ -63,6 +63,7 @@ import os
 import queue
 import random
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -104,6 +105,15 @@ NEWS = (
              "what's new", 'what is new')),
 )
 
+# Mapping on request (Steve, 2026-09-25): not at boot any more. Put her down at
+# the parking spot, "Rosie, start mapping"; before picking her up, "Rosie,
+# stop mapping" (saves the map). "napping" is what the recognizer often hears.
+MAP_START = ('start mapping', 'begin mapping', 'start your map', 'start the map', 'start a map', 'start making a map',
+             'turn on mapping', 'turn mapping on', 'mapping on', 'map the house', 'start napping', 'start map')
+MAP_STOP = ('stop mapping', 'end mapping', 'finish mapping', 'done mapping', 'stop the map', 'stop your map',
+            'turn off mapping', 'turn mapping off', 'mapping off', 'save the map', 'save your map', 'stop napping',
+            'stop map')
+
 HEALTH_WORDS = ('how are you', 'how you doing', 'you doing', 'how is it going', "how's it going", 'how are things',
                 'how do you feel', 'how are you feeling', 'status report', 'status', 'how is everything',
                 "how's everything", 'you okay', 'you all right', 'how are ya')
@@ -124,6 +134,7 @@ ENGLISH_REPLIES = (
     (('love you',), ["Aw. I love you too.", "That's sweet. I love you too."]),
     (('awesome', 'great', 'cool', 'amazing', 'nice', 'wonderful', 'perfect'),
      ["I know, right?", "Thanks! I think so too.", "Awesome!"]),
+    (('are you mapping', 'you mapping', 'are you napping', 'is mapping on', 'mapping status'), ["MAPPING"]),
     (('what time', 'the time'), ["TIME"]),
     (('battery', 'charge', 'power'), ["BATTERY"]),
     (('good morning',), ["Good morning! Did you sleep well?"]),
@@ -190,6 +201,10 @@ def decide(text: str, mode: str):
         return 'english', 'chat'         # asking for English opens the conversation too
     if not (addressed or mode == 'chat'):
         return None, mode
+    if _has(t, MAP_STOP):               # before STOP: "stop mapping" is not "stop"
+        return 'map_stop', mode
+    if _has(t, MAP_START):
+        return 'map_start', mode
     if _has(t, QUIET):
         return 'quiet', 'idle'
     if _has(t, STOP):
@@ -218,7 +233,7 @@ def over_her_voice(text: str, own: str = ''):
     the word is in what she is saying herself ("It's nice and quiet",
     a headline with "stop" in it): that is her, not you."""
     t = normalize(text)
-    for action, phrases in (('quiet', QUIET), ('stop', STOP)):
+    for action, phrases in (('map_stop', MAP_STOP), ('quiet', QUIET), ('stop', STOP)):
         if any(re.search(r'\b' + re.escape(p) + r'\b', t) and not re.search(r'\b' + re.escape(p) + r'\b', own)
                for p in phrases):
             return action
@@ -236,6 +251,13 @@ def english_reply(text: str, battery=None, rng=random, health=None) -> str:
                 if health is not None:
                     return health.report(rng)
                 return rng.choice(["I'm doing great, thanks for asking!", "Pretty good! How are you?"])
+            if reply == 'MAPPING':
+                try:
+                    on = subprocess.run(['systemctl', 'is-active', 'jetnano-slam'], capture_output=True, text=True,
+                                        timeout=5).stdout.strip() in ('active', 'activating')
+                except (OSError, subprocess.TimeoutExpired):
+                    on = False
+                return "Yes, I'm mapping." if on else "No, I'm not mapping right now."
             if reply == 'TIME':
                 return time.strftime("It's %I:%M.").replace("'s 0", "'s ")
             if reply == 'BATTERY':
@@ -505,7 +527,11 @@ def _node_main(args):
                 action = over_her_voice(text, ' '.join(self.own_text))
                 if action is None:
                     self.get_logger().info(f'ignored over her own voice: "{text[:80]}" ({db:.0f} dBFS)')
-                if action == 'stop':
+                if action == 'map_stop':
+                    self.get_logger().info(f'heard "{text}" over her own voice -> stop mapping')
+                    self._stop()
+                    self._understand(text, seconds, took, db)
+                elif action == 'stop':
                     self.get_logger().info(f'heard "{text}" over her own voice -> stop')
                     self._stop()
                 elif action == 'quiet':
@@ -571,6 +597,8 @@ def _node_main(args):
                     self._ask_brain(self.last_question)
                 else:
                     self._speak(self._last_in_english())
+            elif action in ('map_start', 'map_stop'):
+                self._mapping(action == 'map_start')
             elif action == 'bye':
                 self._say('bye')
             elif action and action.startswith('brief:'):
@@ -601,6 +629,53 @@ def _node_main(args):
                     n = int(min(12, max(3, round(2 + seconds * 2.2))))
                     voice.write_wav(self.chat_file, voice.chat(n, rng=random))
                     self._say(self.chat_file)
+
+        def _reply(self, words: str, mood: str) -> None:
+            """Words in English mode, her own sound otherwise."""
+            if self.english:
+                self._speak(words)
+            else:
+                self._say(mood)
+
+        def _mapping(self, start: bool) -> None:
+            """Start or stop jetnano-slam. Stopping saves the map (slam_boot.sh
+            saves before slam_toolbox quits); this checks the file really changed."""
+            def run():
+                def active():
+                    return subprocess.run(['systemctl', 'is-active', 'jetnano-slam'], capture_output=True,
+                                          text=True, timeout=10).stdout.strip() in ('active', 'activating')
+                graph = os.path.expanduser('~/maps/home.posegraph')
+                try:
+                    if start and active():
+                        self._reply("I'm already mapping.", 'ok')
+                        return
+                    if not start and not active():
+                        self._reply("I'm not mapping right now.", 'ok')
+                        return
+                    if start:
+                        self._reply("Okay, starting my map. I'm counting on being at my parking spot.", 'ok')
+                    else:
+                        self._reply('Okay, saving my map and stopping.', 'ok')
+                    before = os.path.getmtime(graph) if os.path.exists(graph) else 0.0
+                    r = subprocess.run(['sudo', '-n', 'systemctl', 'start' if start else 'stop', 'jetnano-slam'],
+                                       capture_output=True, text=True, timeout=150)
+                    if r.returncode != 0:
+                        self.get_logger().warning(f'jetnano-slam {"start" if start else "stop"}: {r.stderr.strip()[:160]}')
+                        self._reply(f"I couldn't {'start' if start else 'stop'} my map.", 'no')
+                        return
+                    if start:
+                        self.get_logger().info('mapping started')
+                        self._reply("I'm mapping now.", 'happy')
+                    else:
+                        after = os.path.getmtime(graph) if os.path.exists(graph) else 0.0
+                        saved = after > before
+                        self.get_logger().info(f'mapping stopped, map {"saved" if saved else "NOT saved"}')
+                        self._reply('Map saved. You can pick me up now.' if saved else
+                                    "I stopped, but the map didn't save.", 'ok' if saved else 'sad')
+                except (OSError, subprocess.TimeoutExpired) as exc:
+                    self.get_logger().warning(f'mapping: {exc}')
+                    self._reply("Something went wrong with my map.", 'no')
+            threading.Thread(target=run, daemon=True, name='listen-mapping').start()
 
         def _story(self) -> None:
             voice.write_wav(self.chat_file, voice.story(random.randrange(4, 6), rng=random))

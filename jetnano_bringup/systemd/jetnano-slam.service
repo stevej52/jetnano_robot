@@ -1,5 +1,9 @@
 [Unit]
 Description=jetnano robot: persistent lidar map (slam_toolbox, continued from ~/maps/home)
+# NOT started at boot any more (Steve, 2026-09-25): she is often on the bench.
+# Started and stopped on request - "Rosie, start mapping" / "stop mapping"
+# (listen runs sudo -n systemctl start|stop jetnano-slam) - with her at the
+# parking spot, the map's origin.
 Documentation=https://github.com/stevej52/jetnano_robot
 # Needs /scan and the EKF's odom -> base_footprint from the robot stack.
 After=jetnano-robot.service
@@ -19,8 +23,11 @@ ExecStartPre=/bin/sleep 20
 # map; autosaves every 5 min and on stop (before slam_toolbox quits).
 # (bash <script>: colcon installs data files without the executable bit.)
 ExecStart=/bin/bash -lc 'source /opt/ros/jazzy/setup.bash && source /home/jeston/ros2_ws/install/setup.bash && exec bash /home/jeston/ros2_ws/install/jetnano_navigation/lib/jetnano_navigation/slam_boot.sh'
-# SIGINT reaches the wrapper, which saves and then stops the launch; saving a
-# big graph can take a while.
+# SIGINT goes to the wrapper ONLY (KillMode=mixed), which saves and then stops
+# the launch. With the default control-group kill, slam_toolbox got SIGINT at
+# the same moment, the save call hung on a node already shutting down, and
+# after 90 s everything was SIGKILLed unsaved (found 2026-09-25).
+KillMode=mixed
 KillSignal=SIGINT
 TimeoutStopSec=90
 Restart=on-failure
