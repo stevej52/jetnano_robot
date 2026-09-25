@@ -56,22 +56,31 @@ WATCHES = (
 
 
 class Watch:
-    """Message count of one topic over the sample."""
+    """Messages of one topic over the sample: count, first and last time."""
 
     def __init__(self, label: str):
         self.label = label
         self.count = 0
+        self.first = self.last = 0.0
 
     def tick(self, _msg=None) -> None:
+        now = time.monotonic()
+        if not self.count:
+            self.first = now
+        self.last = now
         self.count += 1
 
     def alive(self) -> bool:
         return self.count > 0
 
+    def hz(self) -> float:
+        # between the first and the last message: discovery eats the start of the sample
+        return (self.count - 1) / (self.last - self.first) if self.count > 1 and self.last > self.first else 0.0
+
 
 class Health:
 
-    def __init__(self, node, sample_s: float = 2.0):
+    def __init__(self, node, sample_s: float = 2.5):
         self.node = node
         self.sample_s = sample_s
         self.watch = {}
@@ -119,7 +128,7 @@ class Health:
             self.node.destroy_subscription(sub)
 
     def hz(self, key: str) -> float:
-        return self.watch[key].count / self.sample_s if key in self.watch else 0.0
+        return self.watch[key].hz() if key in self.watch else 0.0
 
     # ---------------------------------------------------------------- facts --
 

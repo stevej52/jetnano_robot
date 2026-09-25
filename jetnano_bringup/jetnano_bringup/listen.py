@@ -310,7 +310,11 @@ def _node_main(args):
             self.own_text = collections.deque(maxlen=8)
             self.create_subscription(Twist, 'cmd_vel', self._on_cmd, 10)
             # Typed words count as heard: for tests, and for a page one day.
-            self.create_subscription(String, 'speech/type', lambda m: self._understand(m.data, 2.0), 10)
+            # On their own thread, like spoken words: understanding can take
+            # seconds (a status report samples topics) and must not hold the executor.
+            self.create_subscription(
+                String, 'speech/type',
+                lambda m: threading.Thread(target=self._understand, args=(m.data, 2.0), daemon=True).start(), 10)
             self.create_timer(1.0, self._tick)
             self.health = Health(self)          # for "how are you?" in English
 
