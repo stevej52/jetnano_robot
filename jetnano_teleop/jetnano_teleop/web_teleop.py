@@ -206,9 +206,12 @@ class WebTeleop(Node):
         # Fractions of full throttle / full steering lock, like joysticks.yaml.
         self.declare_parameter('max_linear', 0.5)
         self.declare_parameter('max_angular', 2.4)      # rad/s; 44 deg of lock / 18.33
-        # A held button posts every 0.1 s; anything older than this is a
-        # released button, a closed page or a dead link.
-        self.declare_parameter('command_timeout', 0.4)
+        # A held knob posts every 0.1 s; anything older than this is a released
+        # knob, a closed page or a dead link. 0.8 rather than 0.4: a phone on a
+        # weak Wi-Fi spot showed 300-700 ms round trips (2026-09-24), and at
+        # 0.4 the robot stopped on every other command. The collision guard
+        # is what protects the robot during the coast.
+        self.declare_parameter('command_timeout', 0.8)
         self.declare_parameter('publish_rate', 20.0)
         # Empty: the page uses http://<the host it loaded from>:8080/stream?...
         self.declare_parameter('video_url', '')
