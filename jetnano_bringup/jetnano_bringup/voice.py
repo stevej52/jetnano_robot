@@ -156,18 +156,16 @@ def huh(j):
     over the first half, fading out as the pitch rises; the end steps up a
     fourth and stops short, like a raised eyebrow."""
     k = 2 ** (j / 12)
-    # Tuned with Steve on 2026-09-24: doubled, then 25 % faster; purr prominent;
-    # the question at the end a gentle step, not a jump.
-    seconds = 0.53
-    y = tone(glide(BASE * k * 0.85, BASE * k * 1.45, 0.7), seconds, vibrato_hz=5.0, vibrato_depth=0.015, bright=0.35)
+    # Tuned with Steve, 2026-09-24/25: one continuous rise - no separate note at
+    # the end (that read as "boop, boop") - the pitch just accelerates upward
+    # over the last third; a deep purr through most of it.
+    seconds = 0.75
+    y = tone(glide(BASE * k * 0.85, BASE * k * 1.6, 1.6), seconds, vibrato_hz=5.0, vibrato_depth=0.012, bright=0.35)
     n = len(y)
     t = np.arange(n) / RATE
     u = t / seconds
-    # the purr: deep flutter, lasting most of the way up before it smooths out
-    flutter = 1.0 - 0.75 * np.clip(1.0 - u * 1.25, 0.0, 1.0) * (0.5 + 0.5 * np.sin(2 * math.pi * 24.0 * t))
-    y = y * flutter
-    tail = tone(glide(BASE * k * 1.45, BASE * k * 1.6, 0.5), 0.13, vibrato_depth=0.0, bright=0.4)
-    return np.concatenate([y, rest(0.02), tail])
+    flutter = 1.0 - 0.9 * np.clip(1.0 - u * 1.15, 0.0, 1.0) * (0.5 + 0.5 * np.sin(2 * math.pi * 24.0 * t))
+    return y * flutter
 
 
 MOODS = {'hello': hello, 'ok': ok, 'no': no, 'alarm': alarm, 'sad': sad,
