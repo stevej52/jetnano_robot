@@ -79,6 +79,8 @@ class Sounds(Node):
         self.queue = queue.Queue()
         self.last_said = {}
         self._warned = False
+        # True while a sound plays: the ears must not take her own voice for a noise.
+        self.speaking_pub = self.create_publisher(Bool, 'sound/speaking', 10)
         threading.Thread(target=self._player, daemon=True, name='sounds-player').start()
 
         self._e_stop = None
@@ -116,6 +118,7 @@ class Sounds(Node):
                 self.get_logger().warning(f'no sound for "{mood}"')
                 continue
             cmd = ['aplay', '-q'] + (['-D', self.device] if self.device else []) + [random.choice(takes)]
+            self._speaking(True)
             try:
                 result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
                 if result.returncode != 0 and not self._warned:
@@ -127,6 +130,13 @@ class Sounds(Node):
                 if not self._warned:
                     self.get_logger().warning(f'cannot play sounds: {exc}')
                     self._warned = True
+            finally:
+                self._speaking(False)
+
+    def _speaking(self, on: bool) -> None:
+        msg = Bool()
+        msg.data = on
+        self.speaking_pub.publish(msg)
 
     # ---------------------------------------------------------------- events --
 

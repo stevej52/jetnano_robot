@@ -22,9 +22,10 @@ publishes the level in dBFS on ``sound/level``. A sharp noise - a clap, a
 dropped pan, a door - is a jump of ``loud_above_db`` over the room's rolling
 background that is also louder than ``loud_min_dbfs``; then ``sound/loud``
 goes true for a moment and, if the robot is parked, she says "hm". Nothing
-is said while driving (the motor is the loudest thing she hears), and she
-never listens to *words* here: this is a level meter, not a microphone feed
-to anything.
+is said while driving (the motor is the loudest thing she hears), nothing
+while she herself speaks (``sound/speaking`` from the sounds node; the
+speaker is right next to the mic), and she never listens to *words* here:
+this is a level meter, not a microphone feed to anything.
 
 The mic is named by ALSA card (``arecord -l``); a C-Media "USB PnP Sound
 Device" appears as card "Device". Its Auto Gain Control is switched on for
@@ -57,6 +58,7 @@ class Ears(Node):
         self.declare_parameter('loud_min_dbfs', -28.0)
         self.declare_parameter('still_after_s', 2.0)
         self.declare_parameter('say_min_gap_s', 6.0)
+        self.declare_parameter('deaf_after_speaking_s', 0.6)   # the speaker is an inch from the mic
 
         self.card = str(self.get_parameter('card').value)
         self.rate = int(self.get_parameter('rate').value)
@@ -66,6 +68,7 @@ class Ears(Node):
         self.loud_min = float(self.get_parameter('loud_min_dbfs').value)
         self.still_after = float(self.get_parameter('still_after_s').value)
         self.say_gap = float(self.get_parameter('say_min_gap_s').value)
+        self.deaf_after = float(self.get_parameter('deaf_after_speaking_s').value)
 
         gain = int(self.get_parameter('gain_percent').value)
         for control in ('Mic', 'Capture'):
@@ -77,6 +80,8 @@ class Ears(Node):
         self.loud_pub = self.create_publisher(Bool, 'sound/loud', 10)
         self.say_pub = self.create_publisher(String, 'say', 10)
         self.create_subscription(Twist, 'cmd_vel', self._on_cmd, 10)
+        self.create_subscription(Bool, 'sound/speaking', self._on_speaking, 10)
+        self.speaking_until = 0.0
         self.last_cmd = 0.0
         self.last_said = 0.0
         self.background = None
@@ -87,6 +92,13 @@ class Ears(Node):
     def _on_cmd(self, msg: Twist) -> None:
         if msg.linear.x != 0.0 or msg.angular.z != 0.0:
             self.last_cmd = time.monotonic()
+
+    def _on_speaking(self, msg: Bool) -> None:
+        # Her own voice is not a noise (and must not lift the room's level, or
+        # she would answer herself for ever). Deaf while she speaks and a moment
+        # after; capped, so a sounds node that dies mid-word cannot deafen her.
+        now = time.monotonic()
+        self.speaking_until = now + 15.0 if msg.data else now + self.deaf_after
 
     def _listen(self) -> None:
         frames = int(self.rate * self.chunk)
@@ -122,6 +134,8 @@ class Ears(Node):
         msg.data = level
         self.level_pub.publish(msg)
 
+        if time.monotonic() < self.speaking_until:
+            return
         if self.background is None:
             self.background = level
             return
