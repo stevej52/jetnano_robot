@@ -91,6 +91,9 @@ def generate_launch_description():
             'use_motion_watch', default_value='true',
             description='lidar movement -> pan-tilt camera looks at it, while standing still'),
         DeclareLaunchArgument(
+            'use_ears', default_value='true',
+            description='the USB microphone as a sound-level sense (sound/level); "hm" at a bang while parked'),
+        DeclareLaunchArgument(
             'use_web_teleop', default_value='true',
             description='serve the driving web page (camera + arrows) on port 8081'),
 
@@ -154,6 +157,16 @@ def generate_launch_description():
             respawn=True,
             respawn_delay=10.0,
             condition=IfCondition(LaunchConfiguration('use_motion_watch')),
+        ),
+
+        Node(
+            package='jetnano_bringup',
+            executable='ears',
+            name='ears',
+            output='screen',
+            respawn=True,
+            respawn_delay=10.0,
+            condition=IfCondition(LaunchConfiguration('use_ears')),
         ),
 
         ]),
