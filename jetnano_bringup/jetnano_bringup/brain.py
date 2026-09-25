@@ -35,6 +35,15 @@ Two backends, ``backend`` = auto | local | claude:
           running the balance down; the day's spend is in ``~/voice/brain_spend.json``.
 ``brain/ready`` (latched) is true while either can answer; otherwise listen
 keeps to its own words. She remembers the last few turns for ten minutes.
+
+Hand-over (``hand_over``, on): the local model answers small talk itself and
+replies PASS to anything that needs real knowledge (facts, numbers, science,
+history, how things work, sports, news, advice). Her first sentence is held
+back until it is known not to be PASS or an "I'm not sure"; if it is either,
+the question goes to Claude, which continues after the lead-in she already
+said. Without Claude (no key, or the day's budget spent) a PASS becomes "I
+don't know. I'm just a robot." Calibrated 2026-09-25: 16 of 16 questions
+routed as intended, the PASS in 0.2 s.
 """
 
 import collections
