@@ -176,6 +176,21 @@ def generate_launch_description():
             condition=IfCondition(LaunchConfiguration('use_ears')),
         ),
 
+        # Her English voice (text on /speak), for the sounds node's English
+        # mode and listen's English replies. Same venv as listen.
+        Node(
+            package='jetnano_bringup',
+            executable='speak',
+            name='speak',
+            output='screen',
+            respawn=True,
+            respawn_delay=10.0,
+            prefix=[LaunchConfiguration('listen_python'), ' '],
+            condition=IfCondition(PythonExpression([
+                "'", LaunchConfiguration('use_listen'), "' == 'true' and __import__('os').path.exists('",
+                LaunchConfiguration('listen_python'), "')"])),
+        ),
+
         # Words, from the ears' audio stream; needs the ears.
         Node(
             package='jetnano_bringup',

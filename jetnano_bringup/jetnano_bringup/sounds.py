@@ -33,6 +33,11 @@ One sound at a time; a mood is not repeated within ``min_gap_s``; ``mute``
 is a parameter (ros2 param set /sounds mute true) so a droid that chirps at
 night can be told to stop without stopping it. With no speaker present it
 logs once and keeps trying quietly.
+
+English mode ("Rosie, speak English", or ros2 param set /sounds english true):
+for ``english_for_s`` (three minutes) every mood is said in words instead,
+through the ``speak`` node (text -> her Piper voice); then she goes back to
+her own language by herself. ``sound/english`` (latched) says which it is.
 """
 
 import glob
@@ -44,7 +49,10 @@ import threading
 import time
 
 import rclpy
+from rcl_interfaces.msg import SetParametersResult
 from rclpy.node import Node
+from rclpy.parameter import Parameter
+from rclpy.qos import DurabilityPolicy, QoSProfile
 from sensor_msgs.msg import BatteryState
 from std_msgs.msg import Bool, String
 
@@ -52,6 +60,21 @@ try:
     from nav2_msgs.msg import CollisionMonitorState
 except ImportError:  # pragma: no cover
     CollisionMonitorState = None
+
+# What each mood says when she speaks English (one is picked at random).
+ENGLISH = {
+    'hello': ["Hello!", "Hi there!", "Rosie is up and running."],
+    'ok': ["Okay.", "Got it.", "Sure."],
+    'no': ["Nope.", "I can't go that way.", "Something is in the way."],
+    'alarm': ["Emergency stop!", "Stopping!"],
+    'sad': ["My battery is getting low.", "I could use a charge soon."],
+    'happy': ["Yay!", "I made it!", "Woo hoo!"],
+    'curious': ["Who's there?", "Hello? Is somebody there?"],
+    'sleepy': ["I'm so sleepy. Going to sleep now.", "Time for a nap."],
+    'hm': ["Hm?"],
+    'huh': ["What was that?", "Huh? Did you hear that?", "What was that noise?"],
+    'bye': ["Bye bye! Come back soon.", "See you later!", "Bye! It was nice talking to you."],
+}
 
 
 class Sounds(Node):
@@ -67,6 +90,8 @@ class Sounds(Node):
         self.declare_parameter('mute', False)
         self.declare_parameter('min_gap_s', 2.5)
         self.declare_parameter('hello_after_s', 4.0)
+        self.declare_parameter('english', False)         # speak English (for english_for_s, then back)
+        self.declare_parameter('english_for_s', 180.0)
 
         self.dir = os.path.expanduser(str(self.get_parameter('sound_dir').value))
         card = str(self.get_parameter('card').value)
@@ -82,6 +107,14 @@ class Sounds(Node):
         self._warned = False
         # True while a sound plays: the ears must not take her own voice for a noise.
         self.speaking_pub = self.create_publisher(Bool, 'sound/speaking', 10)
+        # English mode: words go to the speak node; the state is latched for listen.
+        self.speak_pub = self.create_publisher(String, 'speak', 10)
+        self.english_pub = self.create_publisher(
+            Bool, 'sound/english', QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+        self.english_until = 0.0
+        self.add_on_set_parameters_callback(self._on_params)
+        self.create_timer(1.0, self._tick)
+        self._publish_english()
         threading.Thread(target=self._player, daemon=True, name='sounds-player').start()
 
         self._e_stop = None
@@ -109,6 +142,33 @@ class Sounds(Node):
         self.last_said[mood] = now
         self.queue.put(mood)
 
+    # --------------------------------------------------------------- english --
+
+    @property
+    def english(self) -> bool:
+        return time.monotonic() < self.english_until
+
+    def _on_params(self, params):
+        for prm in params:
+            if prm.name == 'english':
+                self.english_until = (time.monotonic() + float(self.get_parameter('english_for_s').value)
+                                      if prm.value else 0.0)
+                self._publish_english(prm.value)
+        return SetParametersResult(successful=True)
+
+    def _tick(self) -> None:
+        if self.english_until and not self.english:
+            self.english_until = 0.0
+            self.set_parameters([Parameter('english', Parameter.Type.BOOL, False)])
+            self.get_logger().info('back to her own language')
+
+    def _publish_english(self, on=None) -> None:
+        msg = Bool()
+        msg.data = bool(self.english if on is None else on)
+        self.english_pub.publish(msg)
+
+    # ---------------------------------------------------------------- player --
+
     def _player(self) -> None:
         while True:
             mood = self.queue.get()
@@ -116,6 +176,11 @@ class Sounds(Node):
                 continue
             if mood.endswith('.wav') and os.path.isfile(mood):
                 takes = [mood]
+            elif self.english and mood in ENGLISH and self.speak_pub.get_subscription_count() > 0:
+                words = String()
+                words.data = random.choice(ENGLISH[mood])
+                self.speak_pub.publish(words)      # comes back as /say <path>
+                continue
             else:
                 takes = glob.glob(os.path.join(self.dir, f'{mood}[0-9]*.wav'))
             if not takes:

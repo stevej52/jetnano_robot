@@ -30,10 +30,14 @@ robot). Then:
                                  whatever you say next gets an answer, no name
                                  needed, until "I have to go" / "bye" (a wave)
                                  or ``chat_timeout_s`` of silence
+    "Rosie, speak English"       for three minutes she says everything in words
+                                 (the sounds node's English mode, through the
+                                 speak node) and answers a chat in English;
+                                 "Rosie, speak robot" ends it early
 
 Her chatter is made fresh for every reply in her own voice, about as long as
-what you said. Anyone may talk to her - no voice check, Steve's choice for
-now (2026-09-25). Deaf while she speaks and while the motors run.
+what you said. Anyone may talk to her - no voice check, Steve's choice
+(2026-09-25). Deaf while she speaks and while the motors run.
 """
 
 import os
@@ -57,6 +61,40 @@ TALK = ('you can talk', 'talk now', 'you can speak', 'speak now', 'unmute', 'tal
 BYE = ('i have to go', 'i got to go', 'gotta go', 'got to go', 'bye', 'goodbye', 'good bye', 'see you', 'see ya',
        'talk to you later', 'great talking', 'nice talking', 'good talking', 'good night', 'catch you later',
        'i am leaving', "i'm leaving", 'i am going')
+ENGLISH_ON = ('speak english', 'talk english', 'in english', 'english please', 'english for now', 'use english',
+              'say it in english', 'english now')
+ENGLISH_OFF = ('speak robot', 'talk robot', 'speak rosie', 'your language', 'own language', 'robot language',
+               'rosie language', 'stop speaking english', 'no more english', 'speak beeps', 'back to beeps',
+               'back to normal', 'speak droid')
+
+# What she says in English when chatting (first matching subject wins, else a filler).
+ENGLISH_REPLIES = (
+    (('how are you', 'how you doing', 'how is it going', "how's it going", 'how are things', 'how do you feel'),
+     ["I'm doing great, thanks for asking!", "Never better. My wheels are ready and my map is fresh.",
+      "Pretty good! How are you?"]),
+    (('your name', 'who are you', 'what are you'),
+     ["I'm Rosie. I'm a Jetson.", "My name is Rosie. Rosie the robot.", "Rosie. Pleased to meet you."]),
+    (('who made you', 'who built you', 'who created you'),
+     ["Steve built me. With a little help from a friend.", "Steve did. It took a lot of evenings."]),
+    (('what can you do', 'can you do', 'what do you do'),
+     ["I can drive around, map the house, watch for things that move, and talk a little.",
+      "Driving, mapping, listening, and the occasional joke."]),
+    (('joke', 'funny'),
+     ["Why did the robot go on vacation? It needed to recharge its batteries.",
+      "What do you call a robot who takes the long way round? R2 detour.",
+      "I would tell you a UDP joke, but you might not get it."]),
+    (('thank', 'thanks'), ["You're welcome!", "Any time.", "Happy to help."]),
+    (('love you',), ["Aw. I love you too.", "That's sweet. I love you too."]),
+    (('awesome', 'great', 'cool', 'amazing', 'nice', 'wonderful', 'perfect'),
+     ["I know, right?", "Thanks! I think so too.", "Awesome!"]),
+    (('what time', 'the time'), ["TIME"]),
+    (('battery', 'charge', 'power'), ["BATTERY"]),
+    (('good morning',), ["Good morning! Did you sleep well?"]),
+    (('good night',), ["Good night! Sleep tight."]),
+    (('hello', 'hi', 'hey'), ["Hello!", "Hi! What's up?", "Hey there."]),
+)
+ENGLISH_FILLERS = ["Tell me more.", "Interesting.", "I see.", "Really?", "Okay!", "Go on.", "I'm listening.",
+                   "Beep boop. I mean, yes.", "Hm, let me think about that.", "You don't say."]
 
 
 def normalize(text: str) -> str:
@@ -72,18 +110,38 @@ def _has(t: str, phrases) -> bool:
 
 def decide(text: str, mode: str):
     """What she does with what she heard -> (action, new mode).
-    action: 'quiet' | 'talk' | 'bye' | 'chat' | None; mode: 'idle' | 'chat'."""
+    action: 'quiet' | 'talk' | 'english' | 'robot' | 'bye' | 'chat' | None; mode: 'idle' | 'chat'."""
     t = normalize(text)
     addressed = re.search(rf'\b{NAME}\b', t) is not None
     if not (addressed or mode == 'chat'):
         return None, mode
     if _has(t, QUIET):
         return 'quiet', 'idle'
+    if _has(t, ENGLISH_ON):
+        return 'english', mode
+    if _has(t, ENGLISH_OFF):
+        return 'robot', mode
     if _has(t, TALK):
         return 'talk', mode
     if _has(t, BYE):
         return 'bye', 'idle'
     return 'chat', 'chat'
+
+
+def english_reply(text: str, battery=None, rng=random) -> str:
+    """Her side of a chat, in words. battery: (percent, present) or None."""
+    t = normalize(text)
+    for subjects, replies in ENGLISH_REPLIES:
+        if _has(t, subjects):
+            reply = rng.choice(replies)
+            if reply == 'TIME':
+                return time.strftime("It's %I:%M.").replace("'s 0", "'s ")
+            if reply == 'BATTERY':
+                if battery and battery[1] and battery[0] == battery[0]:
+                    return f'My battery is at {int(round(battery[0] * 100))} percent.'
+                return "I'm on wall power right now, so I'm fine."
+            return reply
+    return rng.choice(ENGLISH_FILLERS)
 
 
 # ------------------------------------------------------------------ models --
@@ -133,6 +191,8 @@ def _node_main(args):
     from rcl_interfaces.srv import SetParameters
     from rclpy.executors import ExternalShutdownException
     from rclpy.node import Node
+    from rclpy.qos import DurabilityPolicy, QoSProfile
+    from sensor_msgs.msg import BatteryState
     from std_msgs.msg import Bool, Int16MultiArray, String
 
     from jetnano_bringup import voice
@@ -168,15 +228,21 @@ def _node_main(args):
             self.active_pub = self.create_publisher(Bool, 'speech/active', 10)
             self.state_pub = self.create_publisher(String, 'speech/state', 10)
             self.say_pub = self.create_publisher(String, 'say', 10)
+            self.speak_pub = self.create_publisher(String, 'speak', 10)
             self.mute_client = self.create_client(SetParameters, '/sounds/set_parameters')
             self.create_subscription(Int16MultiArray, 'sound/audio', self._on_audio, 10)
             self.create_subscription(Bool, 'sound/speaking', self._on_speaking, 10)
+            self.create_subscription(Bool, 'sound/english', self._on_english,
+                                     QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+            self.create_subscription(BatteryState, 'battery', self._on_battery, 10)
             self.create_subscription(Twist, 'cmd_vel', self._on_cmd, 10)
             self.create_timer(1.0, self._tick)
 
             self.queue = queue.Queue(maxsize=200)
             self.mode = 'idle'
             self.muted = False
+            self.english = False
+            self.battery = None
             self.active = False
             self.last_heard = 0.0
             self.last_cmd = 0.0
@@ -199,6 +265,14 @@ def _node_main(args):
         def _on_speaking(self, msg) -> None:
             now = time.monotonic()
             self.speaking_until = now + 15.0 if msg.data else now + self.deaf_after
+
+        def _on_english(self, msg) -> None:
+            if msg.data != self.english:
+                self.english = msg.data
+                self.get_logger().info('speaking English' if msg.data else 'speaking Rosie')
+
+        def _on_battery(self, msg) -> None:
+            self.battery = (msg.percentage, msg.present)
 
         def _on_cmd(self, msg) -> None:
             if msg.linear.x != 0.0 or msg.angular.z != 0.0:
@@ -252,12 +326,20 @@ def _node_main(args):
                 self.last_heard = time.monotonic()
             if action == 'quiet':
                 self._say('ok')
-                self._set_mute(True, after=1.4)
+                self._set_mute(True, after=2.5 if self.english else 1.4)
             elif action == 'talk':
                 self._set_mute(False)
                 self._say('happy')
+            elif action == 'english':
+                self._set_param('english', True)
+                self._speak("Okay! I'll speak English for the next three minutes.")
+            elif action == 'robot':
+                self._set_param('english', False)
+                self._say('ok')
             elif action == 'bye':
                 self._say('bye')
+            elif action == 'chat' and self.english:
+                self._speak(english_reply(text, self.battery))
             elif action == 'chat':
                 n = int(min(12, max(3, round(2 + seconds * 2.2))))
                 voice.write_wav(self.chat_file, voice.chat(n, rng=random))
@@ -274,19 +356,32 @@ def _node_main(args):
             msg.data = what
             self.say_pub.publish(msg)
 
+        def _speak(self, words: str) -> None:
+            if self.speak_pub.get_subscription_count() == 0:
+                self.get_logger().warning('no speak node: cannot say it in English')
+                self._say('hm')
+                return
+            self.get_logger().info(f'says "{words}"')
+            msg = self._String()
+            msg.data = words
+            self.speak_pub.publish(msg)
+
+        def _set_param(self, name: str, on: bool) -> None:
+            if not self.mute_client.service_is_ready():
+                self.get_logger().warning(f'sounds node not there: cannot set {name}')
+                return
+            req = self._SetParameters.Request()
+            prm = self._Parameter()
+            prm.name = name
+            prm.value = self._ParameterValue(type=self._ParameterType.PARAMETER_BOOL, bool_value=on)
+            req.parameters = [prm]
+            self.mute_client.call_async(req)
+
         def _set_mute(self, on: bool, after: float = 0.0) -> None:
             def do():
                 self.muted = on
                 self._publish_state()
-                if not self.mute_client.service_is_ready():
-                    self.get_logger().warning('sounds node not there: cannot change mute')
-                    return
-                req = self._SetParameters.Request()
-                prm = self._Parameter()
-                prm.name = 'mute'
-                prm.value = self._ParameterValue(type=self._ParameterType.PARAMETER_BOOL, bool_value=on)
-                req.parameters = [prm]
-                self.mute_client.call_async(req)
+                self._set_param('mute', on)
             if after > 0:
                 t = threading.Timer(after, do)
                 t.daemon = True
@@ -328,7 +423,8 @@ def _files_main(argv):
         took = time.monotonic() - t0
         idle, chat = decide(text, 'idle'), decide(text, 'chat')
         print(f'{os.path.basename(path):16s} {len(x) / 16000:4.1f} s  {took:5.2f} s  "{text}"'
-              f'  idle->{idle[0]}  chat->{chat[0]}')
+              f'  idle->{idle[0]}  chat->{chat[0]}'
+              + (f'  english: "{english_reply(text)}"' if chat[0] == 'chat' else ''))
     return 0
 
 

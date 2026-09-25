@@ -62,8 +62,11 @@ class Ears(Node):
         self.declare_parameter('auto_gain', False)
         self.declare_parameter('chunk_s', 0.1)
         self.declare_parameter('background_s', 3.0)      # how slowly the room's level is followed
-        self.declare_parameter('loud_above_db', 15.0)
-        self.declare_parameter('loud_min_dbfs', -34.0)
+        # Backed off 2026-09-25 (Steve: footsteps upstairs set it off). Today's
+        # log: his claps -19..-21 dBFS, the thumps -28..-32, +15..+17 over the
+        # room. The next notch, if it is still too keen: -27 and +20.
+        self.declare_parameter('loud_above_db', 18.0)
+        self.declare_parameter('loud_min_dbfs', -31.0)
         self.declare_parameter('still_after_s', 2.0)
         self.declare_parameter('say_min_gap_s', 6.0)
         # Steve, 2026-09-25: an instant reply is too fast - "a clap, then a
