@@ -58,13 +58,23 @@ class Sounds(Node):
     def __init__(self):
         super().__init__('sounds')
         self.declare_parameter('sound_dir', os.path.expanduser('~/sounds'))
-        self.declare_parameter('device', '')          # aplay -D ...; empty = default
+        # The USB speaker by ALSA card NAME, not number: numbers shuffle when a
+        # microphone is plugged in. 'aplay -l' shows the name in brackets.
+        self.declare_parameter('card', 'UACDemoV10')
+        self.declare_parameter('device', '')          # aplay -D ...; empty = plughw:<card>
+        self.declare_parameter('volume_percent', 80)  # set on the card's PCM control at start
         self.declare_parameter('mute', False)
         self.declare_parameter('min_gap_s', 2.5)
         self.declare_parameter('hello_after_s', 4.0)
 
         self.dir = os.path.expanduser(str(self.get_parameter('sound_dir').value))
-        self.device = str(self.get_parameter('device').value)
+        card = str(self.get_parameter('card').value)
+        self.device = str(self.get_parameter('device').value) or (f'plughw:{card}' if card else '')
+        volume = int(self.get_parameter('volume_percent').value)
+        if card:
+            for control in ('PCM', 'Speaker', 'Master'):
+                subprocess.run(['amixer', '-q', '-c', card, 'sset', control, f'{volume}%'],
+                               capture_output=True, timeout=5)
         self.min_gap = float(self.get_parameter('min_gap_s').value)
         self.queue = queue.Queue()
         self.last_said = {}
@@ -83,8 +93,9 @@ class Sounds(Node):
             self.create_subscription(CollisionMonitorState, 'collision_guard/state', self._on_guard, 10)
         self._hello_timer = self.create_timer(float(self.get_parameter('hello_after_s').value), self._hello)
         moods = sorted({os.path.basename(p).rstrip('0123456789.wav') for p in glob.glob(os.path.join(self.dir, '*.wav'))})
-        self.get_logger().info(f'{len(moods)} moods in {self.dir}: {", ".join(moods)}' if moods
-                               else f'no sounds in {self.dir} (ros2 run jetnano_bringup make_voice {self.dir})')
+        self.get_logger().info((f'{len(moods)} moods in {self.dir}: {", ".join(moods)}' if moods
+                                else f'no sounds in {self.dir} (ros2 run jetnano_bringup make_voice {self.dir})')
+                               + f' -> {self.device or "default device"} at {volume} %')
 
     # ----------------------------------------------------------------- speak --
 
