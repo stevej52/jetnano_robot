@@ -18,6 +18,8 @@
   #battery.low { color: #fb6; }
   #battery.flat { color: #f66; font-weight: 700; }
   #battery:empty { display: none; }
+  #health { font-size: 13px; color: #fb6; background: #3a2a10; border-radius: 6px; padding: 4px 8px; margin: 0 0 6px; }
+  #health:empty { display: none; }
   #status { font-size: 14px; padding: 3px 10px; border-radius: 12px; background: #333; }
   #status.ok { background: #1d4d2a; }
   #status.driving { background: #1a4a7a; }
@@ -76,6 +78,7 @@
     <h1>jetnano</h1>
     <span class="right"><span id="battery"></span><span id="status">connecting</span></span>
   </header>
+  <div id="health"></div>
 
   <img id="video" alt="camera" draggable="false">
 
@@ -116,6 +119,7 @@
   'use strict';
   var status = document.getElementById('status');
   var battery = document.getElementById('battery');
+  var health = document.getElementById('health');
   var video = document.getElementById('video');
   var stick = document.getElementById('stick');
   var knob = document.getElementById('knob');
@@ -314,6 +318,8 @@
     stopBtn.classList.toggle('go', eStop);
     stick.classList.toggle('off', eStop);
     showGuard(st.guard_enabled);
+    // the watchdog's list of problems; nothing shown when all is well
+    health.textContent = (st.health && st.health.length) ? '⚠ ' + st.health.join(' · ') : '';
     if (st.battery) {
       var pct = st.battery[1] === null ? '' : ' · ' + st.battery[1] + ' %';
       battery.textContent = (st.battery[2] === 'flat' ? 'BATTERY FLAT ' : '') + st.battery[0].toFixed(1) + ' V' + pct;

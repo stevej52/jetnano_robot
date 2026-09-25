@@ -60,8 +60,9 @@ from geometry_msgs.msg import Twist
 from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
 from rcl_interfaces.srv import GetParameters, SetParameters
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile
 from sensor_msgs.msg import BatteryState
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, String
 
 try:
     from nav2_msgs.msg import CollisionMonitorState
@@ -252,6 +253,13 @@ class WebTeleop(Node):
         self._battery_stamp = 0.0
         self.create_subscription(BatteryState, 'battery', self._on_battery, 10)
 
+        # What the watchdog thinks is wrong (jetnano_bringup watchdog): shown
+        # under the header so a flaky part is noticed while driving.
+        self._health = None         # list of problems, [] when all is well
+        self._health_stamp = 0.0
+        self.create_subscription(String, 'watchdog/status', self._on_health,
+                                 QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+
         # The switch: None until the guard has answered once (or if it is not running).
         guard_node = str(self.get_parameter('guard_node').value)
         self._zones = [str(z) for z in self.get_parameter('guard_zones').value]
@@ -295,6 +303,13 @@ class WebTeleop(Node):
                 state = 'ok'
             self._battery = (round(msg.voltage, 2), pct, state)
         self._battery_stamp = self.monotonic()
+
+    def _on_health(self, msg) -> None:
+        try:
+            self._health = list(json.loads(msg.data).get('problems', []))
+        except (ValueError, AttributeError):
+            return
+        self._health_stamp = self.monotonic()
 
     # ------------------------------------------------------------- the switch --
 
@@ -367,6 +382,7 @@ class WebTeleop(Node):
                 'guard': self._guard if self._driving else 'clear',
                 'guard_enabled': self._guard_enabled,
                 'battery': (self._battery if self.monotonic() - self._battery_stamp < 5.0 else None),
+                'health': (self._health if self.monotonic() - self._health_stamp < 20.0 else None),
                 'linear': self.state.linear if live else 0.0,
                 'angular': self.state.angular if live else 0.0,
             }

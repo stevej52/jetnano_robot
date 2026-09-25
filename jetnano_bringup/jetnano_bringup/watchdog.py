@@ -97,7 +97,7 @@ TOPICS = {
         ('signal', proc('laser_filters/scan_to_scan_filter_chain'), 10.0),
         ('signal', proc('laser_filters/scan_to_scan_filter_chain'), 20.0)]),
     'imu': ('I M U', '/imu/data', 1.5, 25.0, 'always', None, [
-        ('signal', proc('bno055/bno055'), 15.0),
+        ('signal', proc('bno055/bno055'), 12.0),
         ('signal', proc('bno055/bno055'), 30.0)]),
     'odometry': ('odometry', '/odometry/filtered', 1.5, 10.0, 'always', None, [
         ('signal', proc('robot_localization/ekf_node'), 10.0),
@@ -166,7 +166,7 @@ class Watchdog(Node):
         self.declare_parameter('system_check_s', 30.0)
         self.declare_parameter('max_actions_per_hour', 5)
         self.declare_parameter('retry_after_give_up_s', 600.0)
-        self.declare_parameter('node_missing_s', 20.0)
+        self.declare_parameter('node_missing_s', 40.0)
         self.declare_parameter('announce', 'failures')         # failures | all | none
         self.declare_parameter('act', True)                    # false: watch and report only
         self.declare_parameter('log_file', os.path.expanduser('~/watchdog/events.jsonl'))
@@ -438,7 +438,8 @@ class Watchdog(Node):
             self._event('act', item.label, self._describe(action, arg))
             if self.announce == 'all':
                 self._announce(f'My {item.label} stopped. Restarting it.', 'hm')
-            threading.Thread(target=self._do, args=(action, arg), daemon=True).start()
+            item.next_at = float('inf')               # set when the action has finished
+            threading.Thread(target=self._do, args=(action, arg, item, settle), daemon=True).start()
 
     def _good(self, item, note: str) -> None:
         with self.lock:
@@ -475,7 +476,7 @@ class Watchdog(Node):
         except (OSError, subprocess.TimeoutExpired):
             return ''
 
-    def _do(self, action: str, arg) -> None:
+    def _do(self, action: str, arg, item=None, settle: float = 0.0) -> None:
         try:
             if action == 'signal':
                 self._restart_process(arg)
@@ -489,10 +490,22 @@ class Watchdog(Node):
                 self._run(['docker', 'exec', CONTAINER, 'pkill', '-INT', '-f', arg])
         except Exception as exc:      # noqa: BLE001 - never let an action kill the watchdog
             self.get_logger().warning(f'{action} {arg}: {exc}')
+        finally:
+            if item is not None:
+                with self.lock:
+                    item.next_at = time.monotonic() + settle
 
     def _pids(self, pattern: str):
         out = self._run(['pgrep', '-f', pattern])
         return [int(x) for x in out.split() if x.isdigit() and int(x) != os.getpid()]
+
+    @staticmethod
+    def _state(pid: int) -> str:
+        try:
+            with open(f'/proc/{pid}/stat') as f:
+                return f.read().rsplit(')', 1)[1].split()[0]
+        except (OSError, IndexError):
+            return ''
 
     def _restart_process(self, pattern: str) -> None:
         """SIGINT, then TERM, then KILL; the launch file respawns it."""
@@ -500,7 +513,9 @@ class Watchdog(Node):
         if not pids:
             self.get_logger().info(f'{pattern}: not running, its respawn is due')
             return
-        for sig, wait in ((signal.SIGINT, 5.0), (signal.SIGTERM, 5.0), (signal.SIGKILL, 0.0)):
+        frozen = all(self._state(p) == 'T' for p in pids)
+        ladder = ((signal.SIGKILL, 0.0),) if frozen else ((signal.SIGINT, 3.0), (signal.SIGTERM, 3.0), (signal.SIGKILL, 0.0))
+        for sig, wait in ladder:
             for pid in pids:
                 try:
                     os.kill(pid, sig)
