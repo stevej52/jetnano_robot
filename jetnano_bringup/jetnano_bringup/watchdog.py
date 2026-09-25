@@ -182,6 +182,7 @@ class Watchdog(Node):
         os.makedirs(os.path.dirname(self.log_file), exist_ok=True)
 
         self.t_start = time.monotonic()
+        self.grace_until = self._grace_end()
         self.topics = {}                 # topic -> (hz, age) from topic_watch
         self.topics_at = 0.0
         self.items = {k: Item(k, v[0], v[6], v[4], v[5]) for k, v in TOPICS.items()}
@@ -226,7 +227,21 @@ class Watchdog(Node):
     # --------------------------------------------------------------- checks --
 
     def _in_grace(self) -> bool:
-        return time.monotonic() - self.t_start < self.grace
+        # The long grace is for the robot starting up; if only the watchdog
+        # restarted, a short one is enough.
+        return time.monotonic() < self.grace_until
+
+    def _grace_end(self) -> float:
+        now = time.monotonic()
+        try:
+            out = subprocess.run(['systemctl', 'show', '-p', 'ActiveEnterTimestampMonotonic', '--value',
+                                  'jetnano-robot'], capture_output=True, text=True, timeout=5).stdout.strip()
+            stack_started = int(out) / 1e6
+            if stack_started > 0:
+                return max(now + 15.0, stack_started + self.grace)
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            pass
+        return now + self.grace
 
     def _check(self) -> None:
         now = time.monotonic()
@@ -527,7 +542,11 @@ class Watchdog(Node):
     def _event(self, kind: str, what: str, detail: str) -> None:
         rec = {'t': time.strftime('%Y-%m-%d %H:%M:%S'), 'kind': kind, 'what': what, 'detail': detail}
         text = f'{kind}: {what} - {detail}'
-        (self.get_logger().warning if kind in ('down', 'gave_up', 'system') else self.get_logger().info)(text)
+        # separate call sites: rclpy refuses one line that logs at two severities
+        if kind in ('down', 'gave_up', 'system', 'still_down'):
+            self.get_logger().warning(text)
+        else:
+            self.get_logger().info(text)
         msg = String()
         msg.data = json.dumps(rec)
         self.events_pub.publish(msg)
