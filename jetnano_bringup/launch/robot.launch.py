@@ -88,6 +88,9 @@ def generate_launch_description():
             'use_sounds', default_value='true',
             description='her voice on the USB speaker (jetnano_bringup sounds); quiet without one'),
         DeclareLaunchArgument(
+            'use_motion_watch', default_value='true',
+            description='lidar movement -> pan-tilt camera looks at it, while standing still'),
+        DeclareLaunchArgument(
             'use_web_teleop', default_value='true',
             description='serve the driving web page (camera + arrows) on port 8081'),
 
@@ -139,6 +142,18 @@ def generate_launch_description():
             respawn=True,
             respawn_delay=10.0,
             condition=IfCondition(LaunchConfiguration('use_sounds')),
+        ),
+
+        # While she stands still, watch the lidar for something moving and
+        # turn the pan-tilt camera to it (chirps even before the camera exists).
+        Node(
+            package='jetnano_bringup',
+            executable='motion_watch',
+            name='motion_watch',
+            output='screen',
+            respawn=True,
+            respawn_delay=10.0,
+            condition=IfCondition(LaunchConfiguration('use_motion_watch')),
         ),
 
         ]),

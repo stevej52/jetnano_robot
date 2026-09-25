@@ -35,6 +35,7 @@ setup(
             'cliff_guard = jetnano_bringup.cliff_guard:main',
             'make_voice = jetnano_bringup.voice:main',
             'sounds = jetnano_bringup.sounds:main',
+            'motion_watch = jetnano_bringup.motion_watch:main',
         ],
     },
 )
