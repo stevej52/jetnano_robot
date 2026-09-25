@@ -9,7 +9,7 @@
 # Two zones in front of and behind the robot, chosen by the direction of the
 # commanded throttle (velocity polygons; the chassis steers, so left/right is
 # not a direction of travel). Anything the lidar or the camera's 3D map puts
-# inside the near zone stops the robot; inside the far zone slows it to 30 %.
+# inside the near zone stops the robot; inside the far zone slows it to 90 %.
 # Nothing is filtered by who asked: the tilt guard's reverse goes through only
 # if the way behind is clear, which is what you want.
 #
@@ -19,9 +19,11 @@
 # so nothing legitimate is there.
 #
 # Speeds are throttle fractions, not m/s (see pca9685.yaml), so the zone
-# lengths are guesses until the robot has been measured on the floor: 30 cm of
-# stopping room and 80 cm of warning at half throttle. Tune with the robot
-# moving, not on the bench.
+# lengths are guesses until the robot has been measured on the floor. Steve,
+# 2026-09-25, after driving it: 30 cm of stopping room kept him off every
+# wall and 30 % in the far zone was as good as stopped (40 % throttle does
+# not move her at all) - now 15 cm to stop and 90 % within 80 cm. Tune with
+# the robot moving, not on the bench.
 #
 # If a source goes quiet for longer than source_timeout, the guard stops the
 # robot: a dead lidar means driving blind, and stopping is the right answer
@@ -58,13 +60,13 @@ collision_guard:
       # Checked in order; the first whose velocity range matches is used.
       velocity_polygons: ["forward", "backward", "any"]
       forward:
-        points: "[[0.52, 0.16], [0.52, -0.16], [0.20, -0.16], [0.20, 0.16]]"
+        points: "[[0.37, 0.16], [0.37, -0.16], [0.20, -0.16], [0.20, 0.16]]"      # 15 cm past the bumper
         linear_min: 0.0
         linear_max: 3.0
         theta_min: -3.0
         theta_max: 3.0
       backward:
-        points: "[[-0.20, 0.16], [-0.20, -0.16], [-0.52, -0.16], [-0.52, 0.16]]"
+        points: "[[-0.20, 0.16], [-0.20, -0.16], [-0.37, -0.16], [-0.37, 0.16]]"
         linear_min: -3.0
         linear_max: 0.0
         theta_min: -3.0
@@ -81,7 +83,7 @@ collision_guard:
     slow_zone:
       type: "velocity_polygon"
       action_type: "slowdown"
-      slowdown_ratio: 0.3
+      slowdown_ratio: 0.9
       min_points: 3
       visualize: true
       polygon_pub_topic: "collision_guard/slow_zone"
