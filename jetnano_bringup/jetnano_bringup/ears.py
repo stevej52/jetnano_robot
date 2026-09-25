@@ -21,7 +21,8 @@ Reads the USB microphone continuously through arecord (16 kHz mono) and
 publishes the level in dBFS on ``sound/level``. A sharp noise - a clap, a
 dropped pan, a door - is a jump of ``loud_above_db`` over the room's rolling
 background that is also louder than ``loud_min_dbfs``; then ``sound/loud``
-goes true for a moment and, if the robot is parked, she says "hm". Nothing
+goes true for a moment and, if the robot is parked, she takes a beat
+(``react_delay_s``) and says "huh?" (``react_mood``). Nothing
 is said while driving (the motor is the loudest thing she hears), nothing
 while she herself speaks (``sound/speaking`` from the sounds node; the
 speaker is right next to the mic), and she never listens to *words* here:
@@ -62,6 +63,10 @@ class Ears(Node):
         self.declare_parameter('loud_min_dbfs', -34.0)
         self.declare_parameter('still_after_s', 2.0)
         self.declare_parameter('say_min_gap_s', 6.0)
+        # Steve, 2026-09-25: an instant reply is too fast - "a clap, then a
+        # recognition, then a huh?". A beat of noticing before she answers.
+        self.declare_parameter('react_mood', 'huh')
+        self.declare_parameter('react_delay_s', 0.6)
         self.declare_parameter('deaf_after_speaking_s', 0.6)   # the speaker is an inch from the mic
 
         self.card = str(self.get_parameter('card').value)
@@ -73,6 +78,8 @@ class Ears(Node):
         self.still_after = float(self.get_parameter('still_after_s').value)
         self.say_gap = float(self.get_parameter('say_min_gap_s').value)
         self.deaf_after = float(self.get_parameter('deaf_after_speaking_s').value)
+        self.react_mood = str(self.get_parameter('react_mood').value)
+        self.react_delay = float(self.get_parameter('react_delay_s').value)
 
         gain = int(self.get_parameter('gain_percent').value)
         for control in ('Mic', 'Capture'):
@@ -157,9 +164,14 @@ class Ears(Node):
             if parked and now - self.last_said > self.say_gap:
                 self.last_said = now
                 self.get_logger().info(f'loud noise: {level:.0f} dBFS over a room at {self.background:.0f}')
-                s = String()
-                s.data = 'hm'
-                self.say_pub.publish(s)
+                t = threading.Timer(self.react_delay, self._say, [self.react_mood])
+                t.daemon = True
+                t.start()
+
+    def _say(self, mood: str) -> None:
+        s = String()
+        s.data = mood
+        self.say_pub.publish(s)
 
 
 def main(args=None):
