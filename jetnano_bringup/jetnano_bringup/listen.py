@@ -50,6 +50,7 @@ Anyone may talk to her - no voice check, Steve's choice (2026-09-25). Deaf
 while the motors run.
 """
 
+import collections
 import os
 import queue
 import random
@@ -171,14 +172,16 @@ def decide(text: str, mode: str):
     return 'chat', 'chat'
 
 
-def over_her_voice(text: str):
+def over_her_voice(text: str, own: str = ''):
     """The only things she takes from words spoken while she herself is
-    talking (most of that is her own voice): a stop, or quiet."""
+    talking (most of that is her own voice): a stop, or quiet - and not when
+    the word is in what she is saying herself ("It's nice and quiet",
+    a headline with "stop" in it): that is her, not you."""
     t = normalize(text)
-    if _has(t, QUIET):
-        return 'quiet'
-    if _has(t, STOP):
-        return 'stop'
+    for action, phrases in (('quiet', QUIET), ('stop', STOP)):
+        if any(re.search(r'\b' + re.escape(p) + r'\b', t) and not re.search(r'\b' + re.escape(p) + r'\b', own)
+               for p in phrases):
+            return action
     return None
 
 
@@ -301,6 +304,10 @@ def _node_main(args):
                                      QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
             self.create_subscription(BatteryState, 'battery', self._on_battery, 10)
             self.create_subscription(String, 'sound/last', self._on_last, 10)
+            # Everything she says in words passes over /speak (hers and the
+            # sounds node's): kept, so her own words are never taken as yours.
+            self.create_subscription(String, 'speak', self._on_speak, 10)
+            self.own_text = collections.deque(maxlen=8)
             self.create_subscription(Twist, 'cmd_vel', self._on_cmd, 10)
             # Typed words count as heard: for tests, and for a page one day.
             self.create_subscription(String, 'speech/type', lambda m: self._understand(m.data, 2.0), 10)
@@ -354,6 +361,9 @@ def _node_main(args):
         def _on_last(self, msg) -> None:
             self.last_sound = msg.data
 
+        def _on_speak(self, msg) -> None:
+            self.own_text.append(normalize(re.sub(r'\[\w+\]', '', msg.data)))
+
         def _on_cmd(self, msg) -> None:
             if msg.linear.x != 0.0 or msg.angular.z != 0.0:
                 self.last_cmd = time.monotonic()
@@ -404,7 +414,7 @@ def _node_main(args):
             if not text:
                 return
             if overlapped:
-                action = over_her_voice(text)
+                action = over_her_voice(text, ' '.join(self.own_text))
                 if action == 'stop':
                     self.get_logger().info(f'heard "{text}" over her own voice -> stop')
                     self._stop()
