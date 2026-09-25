@@ -68,8 +68,9 @@ Steve drives you from the web page for now."""
 # The persona above never changes, so the local server keeps it cached and
 # only the lines below get processed each time: keep them last and short.
 FACTS = "\n\nRight now: {facts}"
-LEAD_IN = """\n\nYou have already said out loud: "{lead_in}" Continue from there so it reads as one natural \
-thought. Do not repeat it."""
+LEAD_IN = """\n\nYou have already said out loud: "{lead_in}" Pick up mid-thought from there so it reads as one \
+natural remark. Do not repeat those words and do not start with the same word: after "Dodgers." begin with \
+something like "They" or "I", after "Well," just carry on."""
 
 
 def sentences(buf: str):
