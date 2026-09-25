@@ -158,11 +158,12 @@ class Sounds(Node):
 
 
 def main(args=None):
+    from rclpy.executors import ExternalShutdownException
     rclpy.init(args=args)
     node = Sounds()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.destroy_node()
