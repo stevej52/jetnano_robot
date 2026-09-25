@@ -28,7 +28,7 @@ Two backends, ``backend`` = auto | local | claude:
   local   llama.cpp's server on the PC upstairs (``local_url``; Qwen 2.5 14B
           on the Radeon, robot-environment ``scripts/jedipc_brain.md``): free,
           private, fastest. Used whenever it answers ``/health``.
-  claude  ``claude-sonnet-5`` with ``ANTHROPIC_API_KEY`` from the environment
+  claude  ``claude-opus-5-5`` with ``ANTHROPIC_API_KEY`` from the environment
           (``/etc/default/jetnano-robot``, root-only, never in the repo) -
           the smarter one, and the fallback when that PC is off. A daily
           budget in cents (``daily_budget_cents``) stops a chatty day from
@@ -36,14 +36,20 @@ Two backends, ``backend`` = auto | local | claude:
 ``brain/ready`` (latched) is true while either can answer; otherwise listen
 keeps to its own words. She remembers the last few turns for ten minutes.
 
-Hand-over (``hand_over``, on): the local model answers small talk itself and
-replies PASS to anything that needs real knowledge (facts, numbers, science,
-history, how things work, sports, news, advice). Her first sentence is held
-back until it is known not to be PASS or an "I'm not sure"; if it is either,
-the question goes to Claude, which continues after the lead-in she already
-said. Without Claude (no key, or the day's budget spent) a PASS becomes "I
-don't know. I'm just a robot." Calibrated 2026-09-25: 16 of 16 questions
-routed as intended, the PASS in 0.2 s.
+Hand-over (``hand_over``, on; Steve's plan, 2026-09-25: the home model does
+the small talk, the real work goes to Opus, heavy lifting gets thinking): the
+local model answers small talk itself and replies with one word otherwise -
+THINK for anything to be worked out (arithmetic, plans, troubleshooting,
+weighing options), PASS for anything needing knowledge, and PASS whenever in
+doubt. Her first sentence is held back until it is known not to be one of
+those or an "I'm not sure". PASS goes to Claude at ``effort_quick`` (low);
+THINK, or "Rosie, think hard about ..." (listen sends think: true), goes at
+``effort_think`` (high) with "Give me a moment..." said at once. Opus 5.5
+always thinks a little (it cannot be switched off); if it thinks for longer
+than ``bridge_after_s`` on a quick question she says the same, rather than
+sitting silent. Without Claude (no key, or the day's budget spent) a PASS or
+THINK becomes "I don't know. I'm just a robot." Calibrated 2026-09-25: 19 of
+20 routed as intended (the miss, advice, went PASS instead of THINK).
 """
 
 import collections
@@ -80,11 +86,18 @@ Steve drives you from the web page for now."""
 HAND_OVER = """
 
 You are the quick small brain; a much bigger one stands behind you. Answer small talk, feelings, opinions, \
-greetings, jokes, and anything about yourself, Steve, Beans or the house yourself. If a good answer needs facts \
-you are not certain of (names, dates, numbers, events, science, history, how things work, sports, current \
-affairs), arithmetic, or a careful explanation, do not guess: reply with exactly PASS and nothing else."""
-PASS_WORD = re.compile(r'\s*pass\W', re.I)        # "PASS" and then something that is not a letter
-PASS_END = re.compile(r'\s*pass\W*$', re.I)       # or "PASS" and nothing else
+greetings, jokes, and anything about yourself, Steve, Beans or the house yourself. Otherwise reply with a \
+single word and nothing else:
+THINK if it needs working out step by step: arithmetic, times and dates to calculate, a plan, a puzzle, \
+troubleshooting, or advice that weighs options.
+PASS if it needs facts you are not certain of: names, dates, numbers, events, science, history, how things \
+work, sports, current affairs.
+If in any doubt, PASS. Never guess."""
+WORD = re.compile(r'\s*(pass|think)\W', re.I)     # the word, then something that is not a letter
+WORD_END = re.compile(r'\s*(pass|think)\W*$', re.I)   # or the word and nothing else
+BRIDGES = ("Give me a moment to think about that.", "Hang on, I'm working that out.",
+           "One moment, I'm thinking it through.")
+THINK_CARE = """\n\nThis one deserves care: think it through, then answer in at most four short spoken sentences."""
 UNSURE = re.compile(r"\b(i don'?t know|i'?m not sure|i am not sure|not sure|no idea|i can'?t say|not certain|"
                     r"i don'?t have (that|any|enough) (information|info|details))\b", re.I)
 
@@ -116,12 +129,18 @@ class Brain(Node):
         self.declare_parameter('local_url', 'http://192.168.1.137:8090')
         self.declare_parameter('local_model', 'rosie')
         self.declare_parameter('local_timeout_s', 30.0)
-        self.declare_parameter('model', 'claude-sonnet-5')
-        self.declare_parameter('max_tokens', 160)
-        self.declare_parameter('timeout_s', 20.0)
-        self.declare_parameter('daily_budget_cents', 100.0)
-        self.declare_parameter('price_in_per_million', 2.0)      # USD, Sonnet 5 (permanent since 2026-08-10)
-        self.declare_parameter('price_out_per_million', 10.0)     # Opus 5.5 would be 4 / 20
+        self.declare_parameter('model', 'claude-opus-5-5')          # Steve's choice, 2026-09-25
+        self.declare_parameter('max_tokens', 160)                     # the local model's reply
+        self.declare_parameter('effort_quick', 'low')                 # Opus 5.5 cannot turn thinking off
+        self.declare_parameter('effort_think', 'high')
+        self.declare_parameter('max_tokens_quick', 2000)              # thinking counts towards these
+        self.declare_parameter('max_tokens_think', 12000)
+        self.declare_parameter('timeout_s', 40.0)
+        self.declare_parameter('timeout_think_s', 150.0)
+        self.declare_parameter('bridge_after_s', 1.5)                 # quiet thinking this long -> "Give me a moment"
+        self.declare_parameter('daily_budget_cents', 200.0)
+        self.declare_parameter('price_in_per_million', 4.0)          # USD, Opus 5.5 (Sonnet 5: 2 / 10)
+        self.declare_parameter('price_out_per_million', 20.0)
         self.declare_parameter('memory_turns', 6)
         self.declare_parameter('memory_timeout_s', 600.0)
         self.declare_parameter('location', '')
@@ -134,7 +153,14 @@ class Brain(Node):
         self.local_timeout = float(p('local_timeout_s'))
         self.model = str(p('model'))
         self.max_tokens = int(p('max_tokens'))
+        self.effort_quick = str(p('effort_quick'))
+        self.effort_think = str(p('effort_think'))
+        self.max_tokens_quick = int(p('max_tokens_quick'))
+        self.max_tokens_think = int(p('max_tokens_think'))
         self.timeout = float(p('timeout_s'))
+        self.timeout_think = float(p('timeout_think_s'))
+        self.bridge_after = float(p('bridge_after_s'))
+        self._bridge_n = 0
         self.budget = float(p('daily_budget_cents'))
         self.price_in = float(p('price_in_per_million'))
         self.price_out = float(p('price_out_per_million'))
@@ -161,7 +187,7 @@ class Brain(Node):
         self.client = None
         if key and self.backend in ('auto', 'claude'):
             import anthropic
-            self.client = anthropic.Anthropic(api_key=key, timeout=self.timeout, max_retries=1)
+            self.client = anthropic.Anthropic(api_key=key, timeout=self.timeout_think, max_retries=1)
             self.get_logger().info(f'{self.model}, budget {self.budget:.0f} cents a day, '
                                    f'spent today {self._spent():.1f}')
         elif self.backend in ('auto', 'claude'):
@@ -207,15 +233,46 @@ class Brain(Node):
             return 'claude'
         return None
 
-    def _stream_claude(self, system: str, messages: list):
-        with self.client.messages.stream(model=self.model, max_tokens=self.max_tokens,
-                                         system=system, messages=messages) as stream:
-            for piece in stream.text_stream:
+    def _stream_claude(self, system: str, messages: list, think: bool = False):
+        """Opus 5.5: thinking is always on, effort sets how much. Text is
+        yielded as it comes; a thinking block that runs longer than
+        bridge_after_s with no words yet gets "Give me a moment" said."""
+        self._thought = False
+        bridged = [think]                    # the think path said it already
+        timer = None
+
+        def bridge():
+            if not bridged[0] and not self._stopped:
+                bridged[0] = True
+                self._say(self._bridge())
+
+        with self.client.messages.stream(
+                model=self.model, system=system, messages=messages,
+                max_tokens=self.max_tokens_think if think else self.max_tokens_quick,
+                output_config={'effort': self.effort_think if think else self.effort_quick},
+                timeout=self.timeout_think if think else self.timeout) as stream:
+            for event in stream:
                 if self._stopped:
                     break
-                yield piece
-            final = stream.get_final_message()
-        self._usage = (final.usage.input_tokens, final.usage.output_tokens)
+                if event.type == 'content_block_start' and event.content_block.type == 'thinking':
+                    self._thought = True
+                    if timer is None and not bridged[0]:
+                        timer = threading.Timer(self.bridge_after, bridge)
+                        timer.daemon = True
+                        timer.start()
+                elif event.type == 'content_block_delta' and event.delta.type == 'text_delta':
+                    bridged[0] = True        # words are coming: no bridge needed
+                    yield event.delta.text
+            if timer is not None:
+                timer.cancel()
+            final = stream.get_final_message() if not self._stopped else None
+        if final is not None:
+            self._usage = (final.usage.input_tokens, final.usage.output_tokens)
+            self._stop_reason = final.stop_reason
+
+    def _bridge(self) -> str:
+        self._bridge_n += 1
+        return BRIDGES[self._bridge_n % len(BRIDGES)]
 
     def _stream_local(self, system: str, messages: list):
         body = json.dumps({'model': self.local_model, 'stream': True, 'max_tokens': self.max_tokens,
@@ -317,25 +374,29 @@ class Brain(Node):
                 ask = {'text': raw}
             text = str(ask.get('text', '')).strip()
             if text:
-                self._answer(text, str(ask.get('lead_in', '')).strip())
+                self._answer(text, str(ask.get('lead_in', '')).strip(), bool(ask.get('think', False)))
 
     def _claude_ok(self) -> bool:
         return self.client is not None and self.backend in ('auto', 'claude') and self._spent() < self.budget
 
-    def _run(self, backend: str, system: str, messages: list, check: bool):
+    def _run(self, backend: str, system: str, messages: list, check: bool, think: bool = False):
         """Stream one answer, speaking sentence by sentence. With check, the
         first sentence is held back until it is known not to be a hand-over
-        (PASS) or an admission ("I'm not sure"). -> (text, first_s, reason)."""
-        self._usage, self._timings = (0, 0), None
+        word (PASS, THINK) or an admission ("I'm not sure").
+        -> (text, first_s, reason: None | 'passed' | 'think' | 'unsure')."""
+        self._usage, self._timings, self._stop_reason, self._thought = (0, 0), None, None, False
         buf, full, t0, first, spoke = '', '', time.monotonic(), None, False
-        pieces = self._stream_local(system, messages) if backend == 'local' else self._stream_claude(system, messages)
+        pieces = (self._stream_local(system, messages) if backend == 'local'
+                  else self._stream_claude(system, messages, think))
         for piece in pieces:
             if first is None:
                 first = time.monotonic() - t0
             buf += piece
             full += piece
-            if check and not spoke and PASS_WORD.match(full):
-                return full, first, 'passed'
+            if check and not spoke:
+                m = WORD.match(full)
+                if m:
+                    return full, first, 'think' if m.group(1).lower() == 'think' else 'passed'
             done, buf = sentences(buf)
             for sent in done:
                 if check and not spoke and UNSURE.search(sent):
@@ -344,15 +405,16 @@ class Brain(Node):
                 spoke = True
         rest = buf.strip()
         if check and not spoke:
-            if PASS_END.match(full):
-                return full, first, 'passed'
+            m = WORD_END.match(full)
+            if m:
+                return full, first, 'think' if m.group(1).lower() == 'think' else 'passed'
             if UNSURE.search(rest):
                 return full, first, 'unsure'
         if not self._stopped and rest:
             self._say(rest)
         return full, first, None
 
-    def _answer(self, text: str, lead_in: str) -> None:
+    def _answer(self, text: str, lead_in: str, think: bool = False) -> None:
         backend = self._pick()
         if backend is None:
             self._say("I can't think right now. My brain is asleep.")
@@ -363,30 +425,52 @@ class Brain(Node):
             return
         if time.monotonic() - self.last_exchange > self.memory_timeout:
             self.memory.clear()
-        facts = FACTS.format(facts=self._facts()) + (LEAD_IN.format(lead_in=lead_in) if lead_in else '')
         persona = PERSONA.format(place=self.place)
         messages = list(self.memory) + [{'role': 'user', 'content': text}]
         self._stopped = False
         t0 = time.monotonic()
         handed, reason = False, None
+
+        def claude(heavy: bool, said: str):
+            """Opus, told what she has already said out loud."""
+            system = persona + FACTS.format(facts=self._facts()) + (LEAD_IN.format(lead_in=said) if said else '')
+            if heavy:
+                system += THINK_CARE
+            return self._run('claude', system, messages, False, think=heavy)
+
         try:
-            if backend == 'local':
+            if think and self._claude_ok():            # "Rosie, think hard about ..."
+                bridge = self._bridge()
+                self._say(bridge)
+                backend = 'claude'
+                full, first, _ = claude(True, (lead_in + ' ' + bridge).strip())
+            elif backend == 'local':
                 check = self.hand_over
+                facts = FACTS.format(facts=self._facts()) + (LEAD_IN.format(lead_in=lead_in) if lead_in else '')
                 full, first, reason = self._run('local', persona + (HAND_OVER if check else '') + facts, messages, check)
                 if reason:
                     if self._claude_ok():
                         handed, backend = True, 'claude'
-                        full, first, _ = self._run('claude', persona + facts, messages, False)
+                        heavy = reason == 'think'
+                        said = lead_in
+                        if heavy:
+                            bridge = self._bridge()
+                            self._say(bridge)
+                            said = (lead_in + ' ' + bridge).strip()
+                        full, first, _ = claude(heavy, said)
                         first = time.monotonic() - t0 if first is None else first
-                    elif reason == 'passed':
+                    elif reason in ('passed', 'think'):
                         full = "I don't know. I'm just a robot."
                         self._say(full)
                     else:
-                        said = sentences(full.strip() + ' ')[0] or [full.strip()]
-                        for sent in said:
+                        said_now = sentences(full.strip() + ' ')[0] or [full.strip()]
+                        for sent in said_now:
                             self._say(sent)
             else:
-                full, first, _ = self._run('claude', persona + facts, messages, False)
+                full, first, _ = claude(think, lead_in)
+            if backend == 'claude' and self._stop_reason == 'refusal':
+                full = "I'd rather not answer that one."
+                self._say(full)
         except Exception as exc:      # noqa: BLE001 - any trouble: say so, stay up
             self.get_logger().warning(f'{backend}: {type(exc).__name__}: {str(exc)[:160]}')
             if backend == 'local':
@@ -405,8 +489,10 @@ class Brain(Node):
         speed = ''
         if self._timings and self._timings.get('predicted_per_second'):
             speed = f', {self._timings["predicted_per_second"]:.0f} tokens/s'
-        if handed:
-            route = f'claude (local {reason}, handed over)'
+        if backend == 'claude':
+            route = ('claude (' + (f'local {reason}, handed over, ' if handed else '')
+                     + ('thinking hard' if think or reason == 'think' else 'quick')
+                     + (', it thought' if self._thought else '') + ')')
         elif reason:
             route = f'local ({reason}, no Claude to hand to)'
         else:

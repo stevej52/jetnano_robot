@@ -118,28 +118,25 @@ HEALTH_WORDS = ('how are you', 'how you doing', 'you doing', 'how is it going', 
                 'how do you feel', 'how are you feeling', 'status report', 'status', 'how is everything',
                 "how's everything", 'you okay', 'you all right', 'how are ya')
 JOKE_WORDS = ('joke', 'funny', 'make me laugh')
+# "Rosie, think hard about ...": straight to Claude with full thinking (brain.py).
+THINK_WORDS = ('think hard', 'think about it', 'think about this', 'think about that', 'think it over',
+               'think it through', 'think this through', 'think that through', 'think carefully', 'really think',
+               'take your time', 'think deeply', 'give it some thought', 'mull it over', 'think real hard',
+               'use your brain', 'put your thinking cap on', 'thinking cap')
+SPEND_WORDS = ('how much have you spent', 'spent today', 'how much money', 'what did that cost', 'your spending',
+               'cost today', 'how much did you spend', 'how much are you costing')
 
 # What she says in English when chatting (first matching subject wins, else
 # she does not know - she is just a robot).
 ENGLISH_REPLIES = (
+    # Only what needs her own live data, plus Steve's joke: everything else
+    # goes to the brain (small talk upstairs, real questions on to Opus).
     (HEALTH_WORDS, ["HEALTH"]),
-    (('your name', 'who are you', 'what are you'),
-     ["I'm Rosie. I'm a Jetson.", "My name is Rosie. Rosie the robot.", "Rosie. Pleased to meet you."]),
-    (('who made you', 'who built you', 'who created you'),
-     ["Steve built me. With a little help from a friend.", "Steve did. It took a lot of evenings."]),
-    (('what can you do', 'can you do', 'what do you do'),
-     ["I can drive around, map the house, watch for things that move, and talk a little.",
-      "Driving, mapping, listening, and the occasional joke."]),
-    (JOKE_WORDS, ["You're a joke. [laugh]"]),        # [laugh]: the speak node adds the sound after the words
-    (('love you',), ["Aw. I love you too.", "That's sweet. I love you too."]),
-    (('awesome', 'great', 'cool', 'amazing', 'nice', 'wonderful', 'perfect'),
-     ["I know, right?", "Thanks! I think so too.", "Awesome!"]),
+    (SPEND_WORDS, ["SPEND"]),
     (('are you mapping', 'you mapping', 'are you napping', 'is mapping on', 'mapping status'), ["MAPPING"]),
-    (('what time', 'the time'), ["TIME"]),
-    (('battery', 'charge', 'power'), ["BATTERY"]),
-    (('good morning',), ["Good morning! Did you sleep well?"]),
-    (('good night',), ["Good night! Sleep tight."]),
-    (('hello', 'hi', 'hey'), ["Hello!", "Hi! What's up?", "Hey there."]),
+    (JOKE_WORDS, ["You're a joke. [laugh]"]),        # [laugh]: the speak node adds the sound after the words
+    (('what time is it', 'the time', "what's the time"), ["TIME"]),
+    (('your battery', 'battery level', 'how much charge', 'battery at'), ["BATTERY"]),
 )
 ENGLISH_FILLERS = ["I don't know. I'm just a robot."]
 
@@ -251,6 +248,18 @@ def english_reply(text: str, battery=None, rng=random, health=None) -> str:
                 if health is not None:
                     return health.report(rng)
                 return rng.choice(["I'm doing great, thanks for asking!", "Pretty good! How are you?"])
+            if reply == 'SPEND':
+                try:
+                    with open(os.path.expanduser('~/voice/brain_spend.json')) as f:
+                        d = json.load(f)
+                    if d.get('date') != time.strftime('%Y-%m-%d') or not d.get('exchanges'):
+                        return "Nothing yet today. The brain upstairs is free."
+                    cents = float(d.get('cents', 0.0))
+                    money = f'{cents:.1f} cents' if cents < 100 else f'{cents / 100:.2f} dollars'
+                    n = int(d.get('exchanges', 0))
+                    return f"{money} today, over {n} question{'s' if n != 1 else ''} to my big brain."
+                except (OSError, ValueError):
+                    return "Nothing yet today. The brain upstairs is free."
             if reply == 'MAPPING':
                 try:
                     on = subprocess.run(['systemctl', 'is-active', 'jetnano-slam'], capture_output=True, text=True,
@@ -609,6 +618,8 @@ def _node_main(args):
                 else:
                     self.last_question, self.last_action = text, action
                     self._story()
+            elif action == 'chat' and self.english and self.brain_ready and _has(normalize(text), THINK_WORDS):
+                self._ask_brain(text, think=True)
             elif action == 'chat' and self.english:
                 if _has(normalize(text), HEALTH_WORDS):
                     self._speak('Okay, checking.')             # the report samples for a couple of seconds
@@ -697,14 +708,16 @@ def _node_main(args):
 
         # --------------------------------------------------------- briefing --
 
-        def _ask_brain(self, text: str) -> None:
-            lead = lead_in(text, self.last_opener)
+        def _ask_brain(self, text: str, think: bool = False) -> None:
+            # "think hard": the brain says "Give me a moment..." itself, no lead-in
+            lead = '' if think else lead_in(text, self.last_opener)
             if lead:
                 self._speak(lead)
                 self.last_opener = lead if lead in LEAD_OPENERS else self.last_opener
-            self.get_logger().info(f'asks the brain "{text[:80]}"' + (f' after "{lead}"' if lead else ''))
+            self.get_logger().info(f'asks the brain "{text[:80]}"' + (f' after "{lead}"' if lead else '')
+                                   + (' to think hard' if think else ''))
             msg = self._String()
-            msg.data = json.dumps({'text': text, 'lead_in': lead})
+            msg.data = json.dumps({'text': text, 'lead_in': lead, 'think': think})
             self.ask_pub.publish(msg)
 
         def _brief(self, kind: str) -> None:
