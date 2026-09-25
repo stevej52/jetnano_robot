@@ -39,7 +39,8 @@ for ``english_for_s`` (five minutes) every mood is said in words instead
 (voice.ENGLISH, through the ``speak`` node); then she goes back to her own
 language by herself, with a boopity boop. ``sound/english`` (latched) says
 which it is. ``sound/last`` is whatever she played last (a mood or a file),
-for "Rosie, in English".
+for "Rosie, in English". ``sound/stop`` (Empty) cuts the current sound and
+drops the queue: "stop" / "that's enough".
 """
 
 import glob
@@ -57,7 +58,7 @@ from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rclpy.qos import DurabilityPolicy, QoSProfile
 from sensor_msgs.msg import BatteryState
-from std_msgs.msg import Bool, String
+from std_msgs.msg import Bool, Empty, String
 
 from jetnano_bringup.voice import ENGLISH
 
@@ -110,6 +111,9 @@ class Sounds(Node):
         self.english_pub = self.create_publisher(
             Bool, 'sound/english', QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
         self.last_pub = self.create_publisher(String, 'sound/last', 10)
+        self.proc = None
+        self._stopped = False
+        self.create_subscription(Empty, 'sound/stop', lambda m: self.stop(), 10)
         self.english_until = 0.0
         self.add_on_set_parameters_callback(self._on_params)
         self.create_timer(1.0, self._tick)
@@ -140,6 +144,15 @@ class Sounds(Node):
             return
         self.last_said[mood] = now
         self.queue.put(mood)
+
+    def stop(self) -> None:
+        """Cut whatever is playing and forget whatever is waiting."""
+        with self.queue.mutex:
+            self.queue.queue.clear()
+        proc = self.proc
+        if proc is not None and proc.poll() is None:
+            self._stopped = True
+            proc.terminate()
 
     # --------------------------------------------------------------- english --
 
@@ -192,25 +205,38 @@ class Sounds(Node):
             self._speaking(True)
             try:
                 for attempt in range(5):
-                    # a status report runs half a minute: give a file its length plus a margin
-                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=_duration(path) + 8.0)
+                    self._stopped = False
+                    self.proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+                    try:
+                        # a status report runs half a minute: give a file its length plus a margin
+                        _, err = self.proc.communicate(timeout=_duration(path) + 8.0)
+                    except subprocess.TimeoutExpired:
+                        self.proc.kill()
+                        _, err = self.proc.communicate()
+                    rc = self.proc.returncode
+                    self.proc = None
+                    if self._stopped:
+                        rc, err = 0, ''            # cut on purpose: not an error, not "said"
+                        break
                     # someone else (a test, a tune) has the speaker: wait for them
-                    if result.returncode == 0 or 'busy' not in result.stderr or attempt == 4:
+                    if rc == 0 or 'busy' not in err or attempt == 4:
                         break
                     time.sleep(0.4)
-                if result.returncode != 0 and not self._warned:
-                    self.get_logger().warning(f'cannot play sounds: {result.stderr.strip()[:120]} (is the speaker plugged in?)')
+                if rc != 0 and not self._warned:
+                    self.get_logger().warning(f'cannot play sounds: {err.strip()[:120]} (is the speaker plugged in?)')
                     self._warned = True
-                elif result.returncode == 0:
+                elif rc == 0:
                     self._warned = False
-                    last = String()
-                    last.data = mood
-                    self.last_pub.publish(last)
-            except (OSError, subprocess.TimeoutExpired) as exc:
+                    if not self._stopped:
+                        last = String()
+                        last.data = mood
+                        self.last_pub.publish(last)
+            except OSError as exc:
                 if not self._warned:
                     self.get_logger().warning(f'cannot play sounds: {exc}')
                     self._warned = True
             finally:
+                self.proc = None
                 self._speaking(False)
 
     def _speaking(self, on: bool) -> None:

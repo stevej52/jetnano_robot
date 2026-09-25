@@ -24,9 +24,11 @@ apply. Every phrase is kept in ``~/voice/tts_cache`` and synthesised once.
 The sounds node uses this for its English mode ("Rosie, speak English");
 listen uses it for English replies in a chat.
 
-A newline in the text is a small pause (``pause_s``; the status report puts
-one between systems). A ``[mood]`` tag, e.g. "You're a joke. [laugh]", plays
-that sound right after the words.
+Each line of a multi-line text (a status report, a news briefing) is its own
+sound, sent as soon as it is made, with ``pause_s`` of quiet on its tail: she
+starts talking after the first line, there is a breath between systems, and
+"stop" (``sound/stop``) can cut in between lines. A ``[mood]`` tag, e.g.
+"You're a joke. [laugh]", plays that sound right after the words.
 """
 
 import hashlib
@@ -40,16 +42,16 @@ import wave
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import Empty, String
 
 MODEL_DIR = os.path.expanduser('~/voice/models')
 LEAD_S, TAIL_S = 0.25, 0.10      # the USB speaker swallows its first 80 ms (voice.py)
 
 
-def write_wav(path: str, samples, rate: int, volume: float = 0.8) -> None:
+def write_wav(path: str, samples, rate: int, volume: float = 0.8, tail_s: float = TAIL_S) -> None:
     y = np.asarray(samples, dtype=np.float32)
     y = y / (float(np.max(np.abs(y))) or 1.0) * volume
-    y = np.concatenate([np.zeros(int(rate * LEAD_S), np.float32), y, np.zeros(int(rate * TAIL_S), np.float32)])
+    y = np.concatenate([np.zeros(int(rate * LEAD_S), np.float32), y, np.zeros(int(rate * tail_s), np.float32)])
     with wave.open(path, 'wb') as w:
         w.setnchannels(1)
         w.setsampwidth(2)
@@ -91,38 +93,44 @@ class Speak(Node):
         self.tts = make_tts(os.path.expanduser(str(p('model_dir'))), self.voice, int(p('threads')))
         self.say_pub = self.create_publisher(String, 'say', 10)
         self.create_subscription(String, 'speak', lambda m: self.queue.put(m.data), 10)
+        self.create_subscription(Empty, 'sound/stop', lambda m: self._stop(), 10)
         self.queue = queue.Queue()
+        self._stopped = False
         threading.Thread(target=self._work, daemon=True, name='speak-tts').start()
         self.get_logger().info(f'{self.voice} ready in {time.monotonic() - t0:.1f} s')
+
+    def _stop(self) -> None:
+        self._stopped = True
+        with self.queue.mutex:
+            self.queue.queue.clear()
 
     def _work(self) -> None:
         while rclpy.ok():
             raw = self.queue.get()
+            self._stopped = False
             tags = re.findall(r'\[(\w+)\]', raw)
             text = re.sub(r'\s*\[\w+\]', '', raw).strip()
-            if text:
-                key = hashlib.md5(f'{self.voice}|{self.speed}|{self.pause}|{text}'.encode()).hexdigest()[:16]
-                # long one-offs (a status report) are not worth keeping
-                path = os.path.join(self.cache if len(text) <= 100 else '/tmp', f'rosie_{key}.wav')
+            lines = [ln.strip() for ln in text.split('\n') if ln.strip()]
+            t0 = time.monotonic()
+            for i, line in enumerate(lines):
+                if self._stopped:
+                    break
+                tail = self.pause if i < len(lines) - 1 else TAIL_S
+                key = hashlib.md5(f'{self.voice}|{self.speed}|{tail}|{line}'.encode()).hexdigest()[:16]
+                # long one-offs (a headline, a report line) are not worth keeping
+                path = os.path.join(self.cache if len(line) <= 60 else '/tmp', f'rosie_{key}.wav')
                 if not os.path.isfile(path):
-                    t0 = time.monotonic()
-                    pieces, rate = [], 22050
-                    for line in [ln.strip() for ln in text.split('\n') if ln.strip()]:
-                        audio = self.tts.generate(line, sid=0, speed=self.speed)
-                        if len(audio.samples) == 0:
-                            continue
-                        rate = audio.sample_rate
-                        if pieces:
-                            pieces.append(np.zeros(int(rate * self.pause), np.float32))
-                        pieces.append(np.asarray(audio.samples, np.float32))
-                    if not pieces:
-                        self.get_logger().warning(f'nothing to say for "{text}"')
+                    audio = self.tts.generate(line, sid=0, speed=self.speed)
+                    if len(audio.samples) == 0:
                         continue
-                    write_wav(path, np.concatenate(pieces), rate)
-                    self.get_logger().info(f'"{text.replace(chr(10), " | ")}" in {time.monotonic() - t0:.2f} s')
+                    write_wav(path, audio.samples, audio.sample_rate, tail_s=tail)
                 self._say(path)
+            if lines:
+                self.get_logger().info(f'"{" | ".join(lines)[:160]}" ({len(lines)} line{"s" if len(lines) != 1 else ""}'
+                                       f' in {time.monotonic() - t0:.2f} s{", cut" if self._stopped else ""})')
             for mood in tags:           # after the words: the sounds queue is in order
-                self._say(mood)
+                if not self._stopped:
+                    self._say(mood)
 
     def _say(self, what: str) -> None:
         msg = String()

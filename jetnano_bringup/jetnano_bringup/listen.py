@@ -17,30 +17,37 @@
     ros2 run jetnano_bringup listen                  (in ~/venv-voice: see
                                                       robot-environment/scripts/install_voice.sh)
     ros2 topic echo /speech/text                     what she made of what she heard
+    ros2 topic pub --once /speech/type std_msgs/msg/String "{data: 'Rosie, what is the weather?'}"
     ros2 run jetnano_bringup listen --file a.wav ... try the recognizer on recordings
+    ros2 run jetnano_bringup listen --news all       print a briefing (world|us|local|weather|markets)
 
 Takes the microphone stream the ears publish (``sound/audio``, 16 kHz), cuts
 it into utterances with a voice activity detector and turns each into text
 with a small speech-to-text model on the CPU (sherpa-onnx; nothing leaves the
-robot). Then:
+robot). Her name wakes her; once she is being talked to (a "conversation")
+you can talk normally without it, until an ending or ``chat_timeout_s`` of
+silence:
 
-    "Rosie, be quiet"            "ok", then every sound is muted
+    "Rosie, ..."                 anything with her name gets a reply and opens
+                                 the conversation
+    "Rosie, be quiet"            "ok", then every sound is muted (an ending)
     "Rosie, you can talk now"    unmuted, a happy trill
-    "How you doing, Rosie?"      she chatters back and a conversation is open:
-                                 whatever you say next gets an answer, no name
-                                 needed, until "I have to go" / "bye" (a wave)
-                                 or ``chat_timeout_s`` of silence
-    "Rosie, speak English"       for five minutes she says everything in words
-                                 (the sounds node's English mode, through the
-                                 speak node) and answers a chat in English;
-                                 "Rosie, speak robot" ends it early, and the
-                                 end gets a boopity boop
-    "Rosie, in English"          she says the last thing she said again, in
-                                 words, and stays in her own language
+    "thank you, Rosie" / "I have to go" / "bye" / "that's enough"
+                                 endings: a word, and her name is needed again
+    "stop" / "that's enough"     cuts her off mid-sentence, no complaint; she
+                                 hears these even over her own voice (only these)
+    "how are you?"               a story in her language; a spoken status
+                                 report in English (health.py)
+    "tell me a joke"             a laugh; "You're a joke" plus a laugh in English
+    "what's the news / weather / stock market / going on in the world?"
+                                 a short briefing (news.py), in about
+                                 thirty-second pieces with "Want to hear more?"
+    "Rosie, speak English"       five minutes of words for everything, a boop
+                                 when she reverts; "speak robot" ends it early
+    "Rosie, in English"          the last thing she said, again, in words
 
-Her chatter is made fresh for every reply in her own voice, about as long as
-what you said. Anyone may talk to her - no voice check, Steve's choice
-(2026-09-25). Deaf while she speaks and while the motors run.
+Anyone may talk to her - no voice check, Steve's choice (2026-09-25). Deaf
+while the motors run.
 """
 
 import os
@@ -64,6 +71,10 @@ TALK = ('you can talk', 'talk now', 'you can speak', 'speak now', 'unmute', 'tal
 BYE = ('i have to go', 'i got to go', 'gotta go', 'got to go', 'bye', 'goodbye', 'good bye', 'see you', 'see ya',
        'talk to you later', 'great talking', 'nice talking', 'good talking', 'good night', 'catch you later',
        'i am leaving', "i'm leaving", 'i am going')
+STOP = ("that's enough", 'that is enough', 'enough', 'stop', 'stop it', 'okay stop', 'stop please')
+THANKS = ('thank you', 'thanks', 'thank you very much')
+YES = ('yes', 'yeah', 'yep', 'yup', 'sure', 'more', 'go on', 'please', 'continue', 'keep going', 'okay', 'ok')
+NO = ('no', 'nope', 'no thanks', 'no thank you', "that's all", 'that is all')
 ENGLISH_OFF = ('speak robot', 'talk robot', 'speak rosie', 'your language', 'own language', 'robot language',
                'rosie language', 'stop speaking english', 'no more english', 'speak beeps', 'back to beeps',
                'back to normal', 'speak droid', 'beeps', 'boops', 'beep boop')
@@ -73,6 +84,16 @@ ENGLISH_OFF = ('speak robot', 'talk robot', 'speak rosie', 'your language', 'own
 ENGLISH_ON = ('speak english', 'talk english', 'switch to english', 'use english', 'english please',
               'english for now', 'english mode', 'go english', 'english now', 'english for a while')
 ENGLISH_REPEAT = ('english',)
+# Briefings (news.py); the specific kinds are checked before the general one.
+NEWS = (
+    ('world', ('world news', 'in the world', 'international news', 'global news', 'around the world')),
+    ('us', ('u s news', 'us news', 'national news', 'american news', 'in america', 'in the country', 'in the states')),
+    ('local', ('local news', 'around here', 'in town', 'local')),
+    ('weather', ('weather', 'forecast', 'temperature', 'going to rain', 'raining', 'how hot', 'how cold', 'outside')),
+    ('markets', ('stock market', 'stocks', 'the market', 'markets', 'the dow', 'nasdaq', 's and p', 'wall street')),
+    ('all', ('news', 'headlines', "what's going on", 'what is going on', "what's happening", 'what is happening',
+             "what's new", 'what is new')),
+)
 
 HEALTH_WORDS = ('how are you', 'how you doing', 'you doing', 'how is it going', "how's it going", 'how are things',
                 'how do you feel', 'how are you feeling', 'status report', 'status', 'how is everything',
@@ -91,7 +112,6 @@ ENGLISH_REPLIES = (
      ["I can drive around, map the house, watch for things that move, and talk a little.",
       "Driving, mapping, listening, and the occasional joke."]),
     (JOKE_WORDS, ["You're a joke. [laugh]"]),        # [laugh]: the speak node adds the sound after the words
-    (('thank', 'thanks'), ["You're welcome!", "Any time.", "Happy to help."]),
     (('love you',), ["Aw. I love you too.", "That's sweet. I love you too."]),
     (('awesome', 'great', 'cool', 'amazing', 'nice', 'wonderful', 'perfect'),
      ["I know, right?", "Thanks! I think so too.", "Awesome!"]),
@@ -117,7 +137,7 @@ def _has(t: str, phrases) -> bool:
 
 def decide(text: str, mode: str):
     """What she does with what she heard -> (action, new mode).
-    action: 'quiet' | 'talk' | 'english' | 'robot' | 'repeat' | 'bye' | 'chat' | None;
+    action: quiet | stop | thanks | talk | english | robot | repeat | bye | brief:<kind> | chat | None;
     mode: 'idle' | 'chat'."""
     t = normalize(text)
     addressed = re.search(rf'\b{NAME}\b', t) is not None
@@ -131,6 +151,10 @@ def decide(text: str, mode: str):
         return None, mode
     if _has(t, QUIET):
         return 'quiet', 'idle'
+    if _has(t, STOP):
+        return 'stop', 'idle' if 'enough' in t else mode
+    if _has(t, THANKS):
+        return 'thanks', 'idle'
     if _has(t, ENGLISH_OFF):
         return 'robot', mode
     if _has(t, ENGLISH_ON):
@@ -141,7 +165,21 @@ def decide(text: str, mode: str):
         return 'talk', mode
     if _has(t, BYE):
         return 'bye', 'idle'
+    for kind, words in NEWS:
+        if _has(t, words):
+            return f'brief:{kind}', 'chat'
     return 'chat', 'chat'
+
+
+def over_her_voice(text: str):
+    """The only things she takes from words spoken while she herself is
+    talking (most of that is her own voice): a stop, or quiet."""
+    t = normalize(text)
+    if _has(t, QUIET):
+        return 'quiet'
+    if _has(t, STOP):
+        return 'stop'
+    return None
 
 
 def english_reply(text: str, battery=None, rng=random, health=None) -> str:
@@ -214,9 +252,9 @@ def _node_main(args):
     from rclpy.node import Node
     from rclpy.qos import DurabilityPolicy, QoSProfile
     from sensor_msgs.msg import BatteryState
-    from std_msgs.msg import Bool, Int16MultiArray, String
+    from std_msgs.msg import Bool, Empty, Int16MultiArray, String
 
-    from jetnano_bringup import voice
+    from jetnano_bringup import news, voice
     from jetnano_bringup.health import Health
     from jetnano_bringup.voice import ENGLISH
 
@@ -231,27 +269,31 @@ def _node_main(args):
             self.declare_parameter('min_silence_s', 0.5)            # a pause this long ends what you said
             self.declare_parameter('min_speech_s', 0.3)
             self.declare_parameter('max_speech_s', 10.0)
-            self.declare_parameter('chat_timeout_s', 45.0)
+            self.declare_parameter('chat_timeout_s', 45.0)          # silence that ends a conversation
+            self.declare_parameter('more_timeout_s', 25.0)          # how long "want to hear more?" waits
             self.declare_parameter('still_after_s', 2.0)
-            self.declare_parameter('deaf_after_speaking_s', 0.6)
             self.declare_parameter('chat_file', '/tmp/rosie_chat.wav')
+            self.declare_parameter('location', '')                  # for local news and weather; '' = where the internet says
 
             p = lambda n: self.get_parameter(n).value  # noqa: E731
             model_dir = os.path.expanduser(str(p('model_dir')))
             t0 = time.monotonic()
             self.recognizer = make_recognizer(model_dir, str(p('asr')), int(p('threads')))
-            self.vad, self.window = make_vad(model_dir, float(p('vad_threshold')), float(p('min_silence_s')),
+            self.min_silence = float(p('min_silence_s'))
+            self.vad, self.window = make_vad(model_dir, float(p('vad_threshold')), self.min_silence,
                                              float(p('min_speech_s')), float(p('max_speech_s')))
             self.chat_timeout = float(p('chat_timeout_s'))
+            self.more_timeout = float(p('more_timeout_s'))
             self.still_after = float(p('still_after_s'))
-            self.deaf_after = float(p('deaf_after_speaking_s'))
             self.chat_file = str(p('chat_file'))
+            self.location = str(p('location'))
 
             self.text_pub = self.create_publisher(String, 'speech/text', 10)
             self.active_pub = self.create_publisher(Bool, 'speech/active', 10)
             self.state_pub = self.create_publisher(String, 'speech/state', 10)
             self.say_pub = self.create_publisher(String, 'say', 10)
             self.speak_pub = self.create_publisher(String, 'speak', 10)
+            self.stop_pub = self.create_publisher(Empty, 'sound/stop', 10)
             self.mute_client = self.create_client(SetParameters, '/sounds/set_parameters')
             self.create_subscription(Int16MultiArray, 'sound/audio', self._on_audio, 10)
             self.create_subscription(Bool, 'sound/speaking', self._on_speaking, 10)
@@ -272,13 +314,16 @@ def _node_main(args):
             self.battery = None
             self.last_sound = None          # what the sounds node played last (mood or file)
             self.last_question = None       # what her last chatter was an answer to
+            self.pending = []               # the rest of a briefing, after "want to hear more?"
+            self.pending_until = 0.0
             self.active = False
             self.last_heard = 0.0
             self.last_cmd = 0.0
-            self.speaking_until = 0.0
+            self.speaking = False           # the sounds node is playing something
+            self.speaking_ended = 0.0
             self._Parameter, self._ParameterType, self._ParameterValue, self._SetParameters = \
                 Parameter, ParameterType, ParameterValue, SetParameters
-            self._String, self._Bool = String, Bool
+            self._String, self._Bool, self._Empty = String, Bool, Empty
             threading.Thread(target=self._work, daemon=True, name='listen-asr').start()
             self.get_logger().info(f'{p("asr")} ready in {time.monotonic() - t0:.1f} s; say "{NAME}" to her')
             self._publish_state()
@@ -293,7 +338,10 @@ def _node_main(args):
 
         def _on_speaking(self, msg) -> None:
             now = time.monotonic()
-            self.speaking_until = now + 15.0 if msg.data else now + self.deaf_after
+            if self.speaking and not msg.data:
+                self.speaking_ended = now
+            self.speaking = msg.data
+            self.last_heard = now           # her own talking keeps the conversation open
 
         def _on_english(self, msg) -> None:
             if msg.data != self.english:
@@ -306,36 +354,19 @@ def _node_main(args):
         def _on_last(self, msg) -> None:
             self.last_sound = msg.data
 
-        def _last_in_english(self) -> str:
-            """The last thing she said, in words."""
-            last = self.last_sound
-            if last is None:
-                return "I haven't said anything yet."
-            if last in (self.chat_file, 'laugh') and self.last_question:
-                return english_reply(self.last_question, self.battery, health=self.health)
-            if last in ENGLISH:
-                return random.choice(ENGLISH[last])
-            if last.endswith('.wav'):
-                return 'That was already in English.'
-            return "I don't know how to say that in English."
-
         def _on_cmd(self, msg) -> None:
             if msg.linear.x != 0.0 or msg.angular.z != 0.0:
                 self.last_cmd = time.monotonic()
-
-        def _deaf(self) -> bool:
-            now = time.monotonic()
-            return now < self.speaking_until or now - self.last_cmd < self.still_after
 
         def _work(self) -> None:
             buf = np.zeros(0, dtype=np.float32)
             history = np.zeros(0, dtype=np.float32)      # the last 2 s fed to the VAD
             fed = 0                                       # samples fed so far (VAD segment starts count in these)
-            pre = int(0.3 * 16000)                        # the VAD trims the first consonant: "Rosie" -> "See"
+            pre = int(0.3 * 16000)                        # a little before the VAD's start, for a soft first word
             while rclpy.ok():
                 chunk = self.queue.get()
-                if self._deaf():
-                    buf = buf[:0]
+                if time.monotonic() - self.last_cmd < self.still_after:
+                    buf = buf[:0]                         # motors running: deaf
                     continue
                 buf = np.concatenate([buf, chunk])
                 while len(buf) >= self.window:
@@ -358,16 +389,31 @@ def _node_main(args):
                     i0, i1 = max(int(seg.start) - pre, first) - first, int(seg.start) - first
                     if 0 <= i0 < i1 <= len(history):
                         samples = np.concatenate([history[i0:i1], samples])
-                    self._utterance(samples)
+                    # did this start while she was talking? then it is mostly her
+                    started = time.monotonic() - len(samples) / 16000.0 - self.min_silence
+                    overlapped = self.speaking or started < self.speaking_ended
+                    self._utterance(samples, overlapped)
 
         # ------------------------------------------------------------ words --
 
-        def _utterance(self, samples: np.ndarray) -> None:
+        def _utterance(self, samples: np.ndarray, overlapped: bool) -> None:
             seconds = len(samples) / 16000.0
             t0 = time.monotonic()
             text = transcribe(self.recognizer, samples)
             took = time.monotonic() - t0
             if not text:
+                return
+            if overlapped:
+                action = over_her_voice(text)
+                if action == 'stop':
+                    self.get_logger().info(f'heard "{text}" over her own voice -> stop')
+                    self._stop()
+                elif action == 'quiet':
+                    self.get_logger().info(f'heard "{text}" over her own voice -> quiet')
+                    self._stop()
+                    self._set_mute(True)
+                    self.mode = 'idle'
+                    self._publish_state()
                 return
             msg = self._String()
             msg.data = text
@@ -375,6 +421,20 @@ def _node_main(args):
             self._understand(text, seconds, took)
 
         def _understand(self, text: str, seconds: float, took: float = 0.0) -> None:
+            now = time.monotonic()
+            if self.pending and now < self.pending_until:       # "want to hear more?"
+                t = normalize(text)
+                if _has(t, YES) and not _has(t, NO) and not _has(t, STOP):
+                    self.get_logger().info(f'heard "{text}" -> more')
+                    self.last_heard = now
+                    self._next_chunk()
+                    return
+                self.pending = []
+                if _has(t, NO):
+                    self.get_logger().info(f'heard "{text}" -> no more')
+                    self._speak('Okay.')
+                    self.last_heard = now
+                    return
             action, mode = decide(text, self.mode)
             self.get_logger().info(f'heard "{text}" ({seconds:.1f} s, decoded in {took:.2f} s)'
                                    + (f' -> {action}' if action else ''))
@@ -382,10 +442,15 @@ def _node_main(args):
                 self.mode = mode
                 self._publish_state()
             if action:
-                self.last_heard = time.monotonic()
+                self.last_heard = now
             if action == 'quiet':
+                self._stop()
                 self._say('ok')
                 self._set_mute(True, after=2.5 if self.english else 1.4)
+            elif action == 'stop':
+                self._stop()                              # no complaint; waiting for the next thing
+            elif action == 'thanks':
+                self._speak("You're welcome!") if self.english else self._say('ok')
             elif action == 'talk':
                 self._set_mute(False)
                 self._say('happy')
@@ -398,6 +463,8 @@ def _node_main(args):
                 self._speak(self._last_in_english())      # once, in words; the language stays
             elif action == 'bye':
                 self._say('bye')
+            elif action and action.startswith('brief:'):
+                self._brief(action.split(':', 1)[1])
             elif action == 'chat' and self.english:
                 self._speak(english_reply(text, self.battery, health=self.health))
             elif action == 'chat':
@@ -417,8 +484,52 @@ def _node_main(args):
         def _tick(self) -> None:
             if self.mode == 'chat' and time.monotonic() - self.last_heard > self.chat_timeout:
                 self.mode = 'idle'
+                self.pending = []
                 self.get_logger().info('the conversation went quiet')
                 self._publish_state()
+
+        # --------------------------------------------------------- briefing --
+
+        def _brief(self, kind: str) -> None:
+            self._speak('Let me check.')
+
+            def fetch():
+                try:
+                    sentences = news.briefing(kind, self.location)
+                except Exception as exc:      # noqa: BLE001
+                    self.get_logger().warning(f'briefing failed: {exc}')
+                    self._speak("I couldn't reach the news right now.")
+                    return
+                self.pending = news.chunks(sentences)
+                self.get_logger().info(f'{kind} briefing: {len(sentences)} sentences in {len(self.pending)} piece(s)')
+                self._next_chunk()
+
+            threading.Thread(target=fetch, daemon=True, name='listen-news').start()
+
+        def _next_chunk(self) -> None:
+            if not self.pending:
+                return
+            lines = self.pending.pop(0)
+            more = bool(self.pending)
+            words = sum(len(s.split()) for s in lines)
+            self._speak('\n'.join(lines) + ('\nWant to hear more?' if more else ''))
+            self.pending_until = time.monotonic() + words / 2.5 + 6.0 + self.more_timeout
+            self.last_heard = time.monotonic()
+
+        # ----------------------------------------------------------- output --
+
+        def _last_in_english(self) -> str:
+            """The last thing she said, in words."""
+            last = self.last_sound
+            if last is None:
+                return "I haven't said anything yet."
+            if last in (self.chat_file, 'laugh') and self.last_question:
+                return english_reply(self.last_question, self.battery, health=self.health)
+            if last in ENGLISH:
+                return random.choice(ENGLISH[last])
+            if last.endswith('.wav'):
+                return 'That was already in English.'
+            return "I don't know how to say that in English."
 
         def _say(self, what: str) -> None:
             msg = self._String()
@@ -430,10 +541,14 @@ def _node_main(args):
                 self.get_logger().warning('no speak node: cannot say it in English')
                 self._say('hm')
                 return
-            self.get_logger().info(f'says "{words.replace(chr(10), " | ")}"')
+            self.get_logger().info(f'says "{words.replace(chr(10), " | ")[:200]}"')
             msg = self._String()
             msg.data = words
             self.speak_pub.publish(msg)
+
+        def _stop(self) -> None:
+            self.pending = []
+            self.stop_pub.publish(self._Empty())
 
         def _set_param(self, name: str, on: bool) -> None:
             if not self.mute_client.service_is_ready():
@@ -501,6 +616,9 @@ def main(args=None):
     argv = sys.argv[1:]
     if '--file' in argv:
         sys.exit(_files_main(argv))
+    if '--news' in argv:
+        from jetnano_bringup import news
+        sys.exit(news.main(argv[argv.index('--news') + 1:]))
     _node_main(args)
 
 
