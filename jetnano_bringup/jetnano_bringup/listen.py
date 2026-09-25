@@ -119,7 +119,7 @@ def decide(text: str, mode: str):
     if _has(t, ('speak robot', 'talk robot', 'speak rosie', 'speak beeps', 'speak droid')):
         return 'robot', mode
     if _has(t, ('speak english', 'talk english', 'in english')):
-        return 'english', mode
+        return 'english', 'chat'         # asking for English opens the conversation too
     if not (addressed or mode == 'chat'):
         return None, mode
     if _has(t, QUIET):
@@ -127,7 +127,7 @@ def decide(text: str, mode: str):
     if _has(t, ENGLISH_OFF):
         return 'robot', mode
     if _has(t, ENGLISH_ON):
-        return 'english', mode
+        return 'english', 'chat'
     if _has(t, TALK):
         return 'talk', mode
     if _has(t, BYE):
