@@ -66,7 +66,7 @@ class Ears(Node):
         # Steve, 2026-09-25: an instant reply is too fast - "a clap, then a
         # recognition, then a huh?". A beat of noticing before she answers.
         self.declare_parameter('react_mood', 'huh')
-        self.declare_parameter('react_delay_s', 0.6)
+        self.declare_parameter('react_delay_s', 0.5)   # 0.6 was "almost perfect, a tenth faster"
         self.declare_parameter('deaf_after_speaking_s', 0.6)   # the speaker is an inch from the mic
 
         self.card = str(self.get_parameter('card').value)
