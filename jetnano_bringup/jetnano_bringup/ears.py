@@ -62,11 +62,13 @@ class Ears(Node):
         self.declare_parameter('auto_gain', False)
         self.declare_parameter('chunk_s', 0.1)
         self.declare_parameter('background_s', 3.0)      # how slowly the room's level is followed
-        # Backed off 2026-09-25 (Steve: footsteps upstairs set it off). Today's
-        # log: his claps -19..-21 dBFS, the thumps -28..-32, +15..+17 over the
-        # room. The next notch, if it is still too keen: -27 and +20.
-        self.declare_parameter('loud_above_db', 18.0)
-        self.declare_parameter('loud_min_dbfs', -31.0)
+        # Backed off 2026-09-25 (Steve: footsteps upstairs set it off): claps
+        # -19..-21 dBFS, thumps -28..-32 in the old spot. Then the mic moved to
+        # a foam pad six inches out and Steve found it "considerably more
+        # sensitive": one more notch, 20 dB over the room and above -27. Room
+        # floor there -43.5 dBFS (-50.5 above 100 Hz).
+        self.declare_parameter('loud_above_db', 20.0)
+        self.declare_parameter('loud_min_dbfs', -27.0)
         self.declare_parameter('still_after_s', 2.0)
         self.declare_parameter('say_min_gap_s', 6.0)
         # Steve, 2026-09-25: an instant reply is too fast - "a clap, then a
