@@ -94,8 +94,8 @@
   </div>
 
   <div id="videoRow">
-    <span>video <small id="qualityNote">low: ~2 Mbit/s, fine for driving</small></span>
-    <button id="quality">LOW</button>
+    <span>video <small id="qualityNote"></small></span>
+    <button id="quality">AUTO</button>
   </div>
 
   <div id="guardRow">
@@ -134,43 +134,98 @@
   var keysDown = {};        // code -> true
   var wasSending = false;
   var eStop = false;
-  var videoBase = 'http://' + location.hostname + ':8080/stream?topic=/camera/color/image_raw';
-  // Two ways to get the picture. "full" passes the camera's own JPEG frames
-  // through (640x480 at 30 fps, ~18 Mbit/s) - more than a weak Wi-Fi link
-  // carries, and when the video eats the link the driving commands starve
-  // (the kitchen, 2026-09-24). "low" has the robot re-encode small frames:
-  // ~2 Mbit/s and the picture still shows what matters for driving.
-  var QUALITY = {
-    low: '&type=mjpeg&width=320&height=240&quality=50',
-    full: '&type=ros_compressed'
+  // ---------------------------------------------------------------- video --
+  // The picture is the thing that eats the link, and when the link is short
+  // the driving commands come first ("divert power to propulsion"). Levels,
+  // best to worst - the robot re-encodes all but the first:
+  //   full   the camera's own JPEG frames, 640x480 at 30 fps, ~18 Mbit/s
+  //   low    320x240 at 30 fps,                                 ~2 Mbit/s
+  //   tiny   160x120 at 30 fps,                                 ~0.7 Mbit/s
+  //   min    one 160x120 snapshot a second,                     ~50 kbit/s
+  // AUTO picks from low downward by the round trip of the page's own
+  // requests (median of the last eight; a failed request counts as 2 s):
+  // it drops a level the moment the link is slow and climbs back only after
+  // five clean seconds. FULL is manual - it needs the robot to have good
+  // Wi-Fi too, which the page cannot measure from here.
+  var host = 'http://' + location.hostname + ':8080';
+  var LEVELS = {
+    full: { stream: '&type=ros_compressed', note: '640x480 at 30 fps, ~18 Mbit/s - good Wi-Fi only' },
+    low:  { stream: '&type=mjpeg&width=320&height=240&quality=50', note: '320x240, ~2 Mbit/s' },
+    tiny: { stream: '&type=mjpeg&width=160&height=120&quality=30', note: '160x120, ~0.7 Mbit/s' },
+    min:  { snapshot: '&width=160&height=120&quality=30', note: 'one small picture a second' }
   };
-  var quality = localStorage.getItem('jetnano.video') || 'low';
+  var AUTO_ORDER = ['low', 'tiny', 'min'];
+  var AUTO_MAX_RTT = { low: 250, tiny: 600 };      // ms; above the last one -> min
+  var mode = localStorage.getItem('jetnano.video') || 'auto';   // auto | full | low | tiny | min
+  var level = null;                                  // what is actually showing
+  var snapshotTimer = null;
+  var rtts = [];
+  var goodSince = 0;
   var qualityBtn = document.getElementById('quality');
   var qualityNote = document.getElementById('qualityNote');
-  function videoUrl() { return videoBase + QUALITY[quality]; }
-  function showQuality() {
-    qualityBtn.textContent = quality.toUpperCase();
-    qualityNote.textContent = quality === 'low' ? 'low: ~2 Mbit/s, fine for driving'
-                                                : 'full: 640x480 at 30 fps, ~18 Mbit/s - needs good Wi-Fi';
+
+  function medianRtt() {
+    if (!rtts.length) return 0;
+    var s = rtts.slice().sort(function (a, b) { return a - b; });
+    return s[Math.floor(s.length / 2)];
   }
-  qualityBtn.addEventListener('click', function () {
-    quality = quality === 'low' ? 'full' : 'low';
-    localStorage.setItem('jetnano.video', quality);
+  function noteRtt(ms) { rtts.push(ms); if (rtts.length > 8) rtts.shift(); }
+
+  function autoLevel() {
+    var rtt = medianRtt();
+    var want = rtt < AUTO_MAX_RTT.low ? 'low' : rtt < AUTO_MAX_RTT.tiny ? 'tiny' : 'min';
+    if (level === null || AUTO_ORDER.indexOf(want) > AUTO_ORDER.indexOf(level)) { goodSince = 0; return want; }   // worse: at once
+    if (want === level) { goodSince = 0; return level; }
+    if (!goodSince) goodSince = Date.now();                                                    // better: after 5 s
+    return Date.now() - goodSince > 5000 ? want : level;
+  }
+
+  function applyLevel(next) {
+    if (next === level) return;
+    level = next;
+    if (snapshotTimer) { clearInterval(snapshotTimer); snapshotTimer = null; }
+    if (LEVELS[next].snapshot) {
+      var snap = function () { video.src = host + '/snapshot?topic=/camera/color/image_raw' + LEVELS[next].snapshot + '&t=' + Date.now(); };
+      snap(); snapshotTimer = setInterval(snap, 1000);
+    } else {
+      video.src = host + '/stream?topic=/camera/color/image_raw' + LEVELS[next].stream + '&t=' + Date.now();
+    }
     showQuality();
-    loadVideo();
-  });
-
-  function post(path, body) {
-    return fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                         body: JSON.stringify(body || {}) })
-      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); });
   }
 
-  function loadVideo() {
-    video.src = videoUrl() + '&t=' + Date.now();    // a new query defeats a stuck cached stream
+  function showQuality() {
+    qualityBtn.textContent = mode === 'auto' ? 'AUTO · ' + (level || '…') : mode.toUpperCase();
+    var rtt = medianRtt();
+    qualityNote.textContent = (level ? LEVELS[level].note : '') + (rtt ? ' · link ' + Math.round(rtt) + ' ms' : '');
+  }
+
+  function loadVideo() {                      // a new query defeats a stuck cached stream
+    var l = level; level = null; applyLevel(l || (mode === 'auto' ? autoLevel() : mode));
   }
   video.addEventListener('error', function () { setTimeout(loadVideo, 2000); });
   video.addEventListener('click', loadVideo);
+
+  var MODES = ['auto', 'full', 'low', 'tiny', 'min'];
+  qualityBtn.addEventListener('click', function () {
+    mode = MODES[(MODES.indexOf(mode) + 1) % MODES.length];
+    localStorage.setItem('jetnano.video', mode);
+    applyLevel(mode === 'auto' ? autoLevel() : mode);
+    showQuality();
+  });
+  setInterval(function () { if (mode === 'auto') applyLevel(autoLevel()); showQuality(); }, 1000);
+
+  // Every request the page makes is a link measurement.
+  function timed(promise) {
+    var t0 = performance.now();
+    return promise.then(function (r) { noteRtt(performance.now() - t0); return r; },
+                        function (e) { noteRtt(2000); throw e; });
+  }
+
+  function post(path, body) {
+    return timed(fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                               body: JSON.stringify(body || {}) }))
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); });
+  }
 
   // ------------------------------------------------------------- the stick --
   function travel() { return stick.clientWidth / 2 - knob.offsetWidth / 2; }
@@ -306,7 +361,7 @@
   // The status pill when idle.
   setInterval(function () {
     if (current().any) return;
-    fetch('/status', { cache: 'no-store' })
+    timed(fetch('/status', { cache: 'no-store' }))
       .then(function (r) { return r.json(); }).then(show).catch(noLink);
   }, 700);
 
@@ -337,9 +392,9 @@
   // ------------------------------------------------------------------ start --
   place(0, 0);
   showQuality();
-  fetch('/config', { cache: 'no-store' })
+  timed(fetch('/config', { cache: 'no-store' }))
     .then(function (r) { return r.json(); })
-    .then(function (cfg) { if (cfg.video_url) videoBase = cfg.video_url; })
+    .then(function (cfg) { if (cfg.video_host) host = cfg.video_host; })
     .catch(function () {})
     .then(loadVideo);
 })();
