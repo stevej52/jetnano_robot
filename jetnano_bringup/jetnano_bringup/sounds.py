@@ -49,6 +49,7 @@ import random
 import subprocess
 import threading
 import time
+import wave
 
 import rclpy
 from rcl_interfaces.msg import SetParametersResult
@@ -64,6 +65,14 @@ try:
     from nav2_msgs.msg import CollisionMonitorState
 except ImportError:  # pragma: no cover
     CollisionMonitorState = None
+
+
+def _duration(path: str) -> float:
+    try:
+        with wave.open(path) as w:
+            return w.getnframes() / float(w.getframerate())
+    except (OSError, wave.Error, EOFError):
+        return 5.0
 
 
 class Sounds(Node):
@@ -178,11 +187,13 @@ class Sounds(Node):
             if not takes:
                 self.get_logger().warning(f'no sound for "{mood}"')
                 continue
-            cmd = ['aplay', '-q'] + (['-D', self.device] if self.device else []) + [random.choice(takes)]
+            path = random.choice(takes)
+            cmd = ['aplay', '-q'] + (['-D', self.device] if self.device else []) + [path]
             self._speaking(True)
             try:
                 for attempt in range(5):
-                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                    # a status report runs half a minute: give a file its length plus a margin
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=_duration(path) + 8.0)
                     # someone else (a test, a tune) has the speaker: wait for them
                     if result.returncode == 0 or 'busy' not in result.stderr or attempt == 4:
                         break
