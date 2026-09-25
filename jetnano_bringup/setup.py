@@ -33,6 +33,8 @@ setup(
             'drive_report = jetnano_bringup.drive_report:main',
             'battery_monitor = jetnano_bringup.battery_monitor:main',
             'cliff_guard = jetnano_bringup.cliff_guard:main',
+            'make_voice = jetnano_bringup.voice:main',
+            'sounds = jetnano_bringup.sounds:main',
         ],
     },
 )

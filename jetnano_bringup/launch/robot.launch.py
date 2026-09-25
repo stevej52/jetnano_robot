@@ -30,6 +30,7 @@ from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDesc
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
+from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
 from jetnano_bringup.launch_lock import only_one
@@ -84,6 +85,9 @@ def generate_launch_description():
         DeclareLaunchArgument('cliff_simulate', default_value='false'),
         DeclareLaunchArgument('cliff_simulated_drops', default_value="['']"),
         DeclareLaunchArgument(
+            'use_sounds', default_value='true',
+            description='her voice on the USB speaker (jetnano_bringup sounds); quiet without one'),
+        DeclareLaunchArgument(
             'use_web_teleop', default_value='true',
             description='serve the driving web page (camera + arrows) on port 8081'),
 
@@ -126,6 +130,16 @@ def generate_launch_description():
 
         _include('web_teleop.launch.py',
                  condition=IfCondition(LaunchConfiguration('use_web_teleop'))),
+
+        Node(
+            package='jetnano_bringup',
+            executable='sounds',
+            name='sounds',
+            output='screen',
+            respawn=True,
+            respawn_delay=10.0,
+            condition=IfCondition(LaunchConfiguration('use_sounds')),
+        ),
 
         ]),
     ])
