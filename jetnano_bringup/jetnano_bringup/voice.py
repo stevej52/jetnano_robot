@@ -61,7 +61,7 @@ BASE = 467.0        # her middle: half an octave under A5, where Steve liked it 
 # What each mood says in words (one is picked at random).
 ENGLISH = {
     'hello': ["Hello!", "Hi there!", "Rosie is up and running."],
-    'ok': ["Okay.", "Got it.", "Sure."],
+    'ok': ["Okay.", "Got it.", "Sure.", "Alright.", "You got it.", "Righto."],
     'no': ["Nope.", "I can't go that way.", "Something is in the way."],
     'alarm': ["Emergency halt!", "Halting!"],      # not "stop": she would hear her own stop word
     'sad': ["My battery is getting low.", "I could use a charge soon."],

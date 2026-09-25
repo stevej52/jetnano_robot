@@ -31,6 +31,7 @@ starts talking after the first line, there is a breath between systems, and
 "You're a joke. [laugh]", plays that sound right after the words.
 """
 
+import glob
 import hashlib
 import os
 import queue
@@ -83,6 +84,7 @@ class Speak(Node):
         self.declare_parameter('threads', 2)
         self.declare_parameter('cache_dir', os.path.expanduser('~/voice/tts_cache'))
         self.declare_parameter('pause_s', 0.45)          # at each newline in the text
+        self.declare_parameter('sound_dir', os.path.expanduser('~/sounds'))
         p = lambda n: self.get_parameter(n).value  # noqa: E731
         self.voice = str(p('voice'))
         self.speed = float(p('speed'))
@@ -98,6 +100,31 @@ class Speak(Node):
         self._stopped = False
         threading.Thread(target=self._work, daemon=True, name='speak-tts').start()
         self.get_logger().info(f'{self.voice} ready in {time.monotonic() - t0:.1f} s')
+        threading.Thread(target=self._make_alrighty, daemon=True, name='speak-alrighty').start()
+
+    def _make_alrighty(self) -> None:
+        """Ace Ventura's "Aaaalrighty then!": a drawn-out "All" said slowly,
+        joined to "righty then!" at her normal pace. Written once into her
+        sounds as the mood 'alrighty' (three takes, three stretches)."""
+        out = os.path.expanduser(str(self.get_parameter('sound_dir').value))
+        if glob.glob(os.path.join(out, 'alrighty[0-9]*.wav')):
+            return
+        os.makedirs(out, exist_ok=True)
+
+        def trimmed(audio):
+            y = np.asarray(audio.samples, np.float32)
+            loud = np.where(np.abs(y) > 0.02 * (np.max(np.abs(y)) or 1))[0]
+            return y[loud[0]:loud[-1] + 1] if len(loud) else y
+
+        for take, slow in enumerate((0.42, 0.35, 0.5), 1):
+            a = self.tts.generate('All', sid=0, speed=slow)
+            b = self.tts.generate('righty then!', sid=0, speed=self.speed)
+            ya, yb = trimmed(a), trimmed(b)
+            fade = int(0.02 * a.sample_rate)
+            ramp = np.linspace(1.0, 0.0, fade, dtype=np.float32)
+            joined = np.concatenate([ya[:-fade], ya[-fade:] * ramp + yb[:fade] * ramp[::-1], yb[fade:]])
+            write_wav(os.path.join(out, f'alrighty{take}.wav'), joined, a.sample_rate)
+        self.get_logger().info(f'made "Aaaalrighty then!" in {out}')
 
     def _stop(self) -> None:
         self._stopped = True

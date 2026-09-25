@@ -64,6 +64,7 @@ while the motors run.
 """
 
 import collections
+import glob
 import json
 import os
 import queue
@@ -157,8 +158,12 @@ LEAD_ECHO = re.compile(r"\b(?:about|of|like|love|hate|into|heard of|know about|t
                        r"\s+(?:the |a |an |my |your |our )?([a-z]+(?: [a-z]+)?)\s*$")
 LEAD_SKIP = {'it', 'that', 'this', 'you', 'me', 'them', 'him', 'her', 'us', 'there', 'here', 'now', 'today', 'rosie',
              'yourself', 'myself', 'something', 'anything', 'things', 'stuff', 'one', 'those', 'these'}
-FETCH_LEAD = {'all': "The news. Here's what's going on.", 'world': 'Okay, world news.', 'us': 'Okay, U S news.',
-              'local': 'Okay, news from {city}.', 'weather': 'The weather in {city}.', 'markets': 'The markets.'}
+FETCH_LEAD = {'all': "The news. Here's what's going on.", 'world': '{ok} World news.', 'us': '{ok} U S news.',
+              'local': '{ok} News from {city}.', 'weather': 'The weather in {city}.', 'markets': 'The markets.'}
+# Her ways of saying okay (Steve, 2026-09-25: "sprinkle in some different words
+# for okay" - and Ace Ventura's "Aaaalrighty then!", a sound made by speak.py).
+OKAYS = ('Okay.', 'Alright.', 'Got it.', 'Sure thing.', 'You got it.', 'Righto.', 'Will do.', 'Roger that.')
+ALRIGHTY_CHANCE = 0.25
 
 
 def lead_in(text: str, last: str = None, rng=random) -> str:
@@ -451,6 +456,7 @@ def _node_main(args):
             self.muted = False
             self.english = False            # the sounds node's own switch (system sounds in words); not voice-set now
             self.robot_until = 0.0          # "speak robot": her replies in beeps until then
+            self.last_okay = None
             self.robot_for = 300.0
             self.battery = None
             self.last_sound = None          # what the sounds node played last (mood or file)
@@ -600,7 +606,7 @@ def _node_main(args):
                 if _has(t, NO) or _has(t, STOP):
                     self.get_logger().info(f'heard "{text}" -> no report')
                     self.last_heard = now
-                    self._speak('Okay.')
+                    self._okay()
                     return
             if self.pending and now < self.pending_until:       # "want to hear more?"
                 t = normalize(text)
@@ -612,7 +618,7 @@ def _node_main(args):
                 self.pending = []
                 if _has(t, NO):
                     self.get_logger().info(f'heard "{text}" -> no more')
-                    self._speak('Okay.')
+                    self._okay()
                     self.last_heard = now
                     return
             action, mode = decide(text, self.mode)
@@ -637,7 +643,7 @@ def _node_main(args):
                 self._say('happy')
             elif action == 'english':
                 self.robot_until = 0.0                    # words again (they are the default)
-                self._speak('Okay.')
+                self._okay()
             elif action == 'robot':
                 self.robot_until = time.monotonic() + self.robot_for
                 self._say('boop')
@@ -673,7 +679,7 @@ def _node_main(args):
                 self._ask_brain(text, think=True)
             elif action == 'chat' and self._words():
                 if _has(normalize(text), REPORT_WORDS):
-                    self._speak('Okay, checking.')             # the report samples for a couple of seconds
+                    self._okay('Checking.')                    # the report samples for a couple of seconds
                     self._speak(english_reply('status report', self.battery, health=self.health))
                 elif _has(normalize(text), HEALTH_WORDS):
                     self._how_am_i(text)
@@ -693,6 +699,18 @@ def _node_main(args):
                     n = int(min(12, max(3, round(2 + seconds * 2.2))))
                     voice.write_wav(self.chat_file, voice.chat(n, rng=random))
                     self._say(self.chat_file)
+
+        def _okay(self, then: str = '') -> None:
+            """Okay, in one of her ways - now and then "Aaaalrighty then!" - and
+            whatever follows it."""
+            if random.random() < ALRIGHTY_CHANCE and glob.glob(os.path.expanduser('~/sounds/alrighty[0-9]*.wav')):
+                self._say('alrighty')
+                if then:
+                    self._speak(then)
+                return
+            word = random.choice([o for o in OKAYS if o != self.last_okay])
+            self.last_okay = word
+            self._speak((word + ' ' + then).strip())
 
         def _words(self) -> bool:
             """Replies in English, unless "speak robot" is in force."""
@@ -720,10 +738,12 @@ def _node_main(args):
                     if not start and not active():
                         self._reply("I'm not mapping right now.", 'ok')
                         return
-                    if start:
-                        self._reply("Okay, starting my map. I'm counting on being at my parking spot.", 'ok')
+                    if not self._words():
+                        self._say('ok')
+                    elif start:
+                        self._okay("Starting my map. I'm counting on being at my parking spot.")
                     else:
-                        self._reply('Okay, saving my map and stopping.', 'ok')
+                        self._okay('Saving my map and stopping.')
                     before = os.path.getmtime(graph) if os.path.exists(graph) else 0.0
                     r = subprocess.run(['sudo', '-n', 'systemctl', 'start' if start else 'stop', 'jetnano-slam'],
                                        capture_output=True, text=True, timeout=150)
@@ -799,7 +819,7 @@ def _node_main(args):
 
         def _brief(self, kind: str) -> None:
             city = self.location.partition(',')[0].strip()
-            lead = FETCH_LEAD[kind]
+            lead = FETCH_LEAD[kind].replace('{ok}', random.choice(OKAYS))
             if '{city}' in lead:
                 lead = (lead.format(city=city) if city
                         else lead.replace(' in {city}', ' here').replace(' from {city}', ' from around here'))
