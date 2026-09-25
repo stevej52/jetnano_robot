@@ -343,6 +343,10 @@ def _node_main(args):
             # reaches it far quieter than her own speaker does (2026-09-25,
             # Steve spoke and nothing triggered). Boost before the detector.
             self.declare_parameter('gain_db', 15.0)
+            # the tail of her own sentence (and its echo) reaches the mic after
+            # the speaking flag clears: 2026-09-25 she answered "I have lots",
+            # "Voice section", "Of muscles" - her own last words, ~1 s late, -49 dBFS
+            self.declare_parameter('echo_guard_s', 1.5)
             self.declare_parameter('highpass_hz', 100.0)
             self.declare_parameter('vad_threshold', 0.4)
             self.declare_parameter('min_silence_s', 0.5)            # a pause this long ends what you said
@@ -360,6 +364,7 @@ def _node_main(args):
             self.recognizer = make_recognizer(model_dir, str(p('asr')), int(p('threads')))
             self.min_silence = float(p('min_silence_s'))
             self.gain = 10.0 ** (float(p('gain_db')) / 20.0)
+            self.echo_guard = float(p('echo_guard_s'))
             # Three quarters of the quiet room's "noise" at this mic is an
             # 11-15 Hz rumble (vibration or electrical, from inside the robot):
             # a 100 Hz high-pass takes the floor from -46 to -52.5 dBFS.
@@ -516,7 +521,7 @@ def _node_main(args):
                         samples = np.concatenate([history[i0:i1], samples])
                     # did this start while she was talking? then it is mostly her
                     started = time.monotonic() - len(samples) / 16000.0 - self.min_silence
-                    overlapped = self.speaking or started < self.speaking_ended
+                    overlapped = self.speaking or started < self.speaking_ended + self.echo_guard
                     self._utterance(samples, overlapped)
 
         # ------------------------------------------------------------ words --
