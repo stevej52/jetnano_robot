@@ -162,7 +162,8 @@ FETCH_LEAD = {'all': "The news. Here's what's going on.", 'world': '{ok} World n
               'local': '{ok} News from {city}.', 'weather': 'The weather in {city}.', 'markets': 'The markets.'}
 # Her ways of saying okay (Steve, 2026-09-25: "sprinkle in some different words
 # for okay" - and Ace Ventura's "Aaaalrighty then!", a sound made by speak.py).
-OKAYS = ('Okay.', 'Alright.', 'Got it.', 'Sure thing.', 'You got it.', 'Righto.', 'Will do.', 'Roger that.')
+OKAYS = ('Okay.', 'Alright.', 'Got it.', 'Sure thing.', 'You got it.', 'Righto.', 'Will do.', 'Roger that.',
+         'Affirmative.')
 ALRIGHTY_CHANCE = 0.25
 
 
