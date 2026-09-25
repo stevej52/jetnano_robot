@@ -167,6 +167,10 @@ class Watchdog(Node):
         self.declare_parameter('max_actions_per_hour', 5)
         self.declare_parameter('retry_after_give_up_s', 600.0)
         self.declare_parameter('node_missing_s', 40.0)
+        # A process this young is still starting (listen loads its models for
+        # ~10 s): not silent, just new. 2026-09-25 the watchdog fought five
+        # deliberate restarts of listen in an hour and gave up on it.
+        self.declare_parameter('young_process_s', 40.0)
         self.declare_parameter('announce', 'failures')         # failures | all | none
         self.declare_parameter('act', True)                    # false: watch and report only
         self.declare_parameter('log_file', os.path.expanduser('~/watchdog/events.jsonl'))
@@ -176,6 +180,7 @@ class Watchdog(Node):
         self.retry_s = float(p('retry_after_give_up_s'))
         self.lock = threading.RLock()
         self.node_missing_s = float(p('node_missing_s'))
+        self.young_s = float(p('young_process_s'))
         self.announce = str(p('announce'))
         self.act = bool(p('act'))
         self.log_file = os.path.expanduser(str(p('log_file')))
@@ -264,7 +269,7 @@ class Watchdog(Node):
                 continue                  # its source is down: fix that first
             silent = age < 0 or age > stale
             if silent:
-                if self._in_grace():
+                if self._in_grace() or self._starting(item):
                     continue
                 why = 'never started' if age < 0 else f'silent for {age:.0f} s'
                 self._bad(item, why)
@@ -500,6 +505,24 @@ class Watchdog(Node):
             if item is not None:
                 with self.lock:
                     item.next_at = time.monotonic() + settle
+
+    def _starting(self, item) -> bool:
+        """True if the process behind this item was started moments ago."""
+        pattern = next((arg for action, arg, _ in item.ladder if action == 'signal'), None)
+        if not pattern:
+            return False
+        try:
+            with open('/proc/uptime') as f:
+                up = float(f.read().split()[0])
+            tick = os.sysconf('SC_CLK_TCK')
+            for pid in self._pids(pattern):
+                with open(f'/proc/{pid}/stat') as f:
+                    start = int(f.read().rsplit(')', 1)[1].split()[19]) / tick
+                if up - start < self.young_s:
+                    return True
+        except (OSError, ValueError, IndexError):
+            pass
+        return False
 
     def _pids(self, pattern: str):
         out = self._run(['pgrep', '-f', pattern])
