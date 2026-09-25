@@ -120,8 +120,8 @@ class Brain(Node):
         self.declare_parameter('max_tokens', 160)
         self.declare_parameter('timeout_s', 20.0)
         self.declare_parameter('daily_budget_cents', 100.0)
-        self.declare_parameter('price_in_per_million', 3.0)      # USD; check the current price list
-        self.declare_parameter('price_out_per_million', 15.0)
+        self.declare_parameter('price_in_per_million', 2.0)      # USD, Sonnet 5 (permanent since 2026-08-10)
+        self.declare_parameter('price_out_per_million', 10.0)     # Opus 5.5 would be 4 / 20
         self.declare_parameter('memory_turns', 6)
         self.declare_parameter('memory_timeout_s', 600.0)
         self.declare_parameter('location', '')
