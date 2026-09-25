@@ -105,7 +105,8 @@ class Speak(Node):
     def _make_alrighty(self) -> None:
         """Ace Ventura's "Aaaalrighty then!": a drawn-out "All" said slowly,
         joined to "righty then!" at her normal pace. Written once into her
-        sounds as the mood 'alrighty' (three takes, three stretches)."""
+        sounds as the mood 'alrighty'. Steve picked the first of three takes
+        (2026-09-25): 'All' at 0.42 of her speed."""
         out = os.path.expanduser(str(self.get_parameter('sound_dir').value))
         if glob.glob(os.path.join(out, 'alrighty[0-9]*.wav')):
             return
@@ -116,7 +117,7 @@ class Speak(Node):
             loud = np.where(np.abs(y) > 0.02 * (np.max(np.abs(y)) or 1))[0]
             return y[loud[0]:loud[-1] + 1] if len(loud) else y
 
-        for take, slow in enumerate((0.42, 0.35, 0.5), 1):
+        for take, slow in enumerate((0.42,), 1):
             a = self.tts.generate('All', sid=0, speed=slow)
             b = self.tts.generate('righty then!', sid=0, speed=self.speed)
             ya, yb = trimmed(a), trimmed(b)
