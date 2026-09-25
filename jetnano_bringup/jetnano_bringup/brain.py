@@ -65,6 +65,20 @@ directions, no "as a robot". If you don't know, say so in a few words. Never cla
 done something you have not. You cannot take actions from this conversation; if asked to go somewhere, say \
 Steve drives you from the web page for now."""
 
+# For the local model only: answer the easy things, hand the rest to Claude.
+# Calibrated 2026-09-25 on 16 questions (8 small talk, 8 real): 16 of 16
+# routed as intended, PASS arriving in 0.2 s.
+HAND_OVER = """
+
+You are the quick small brain; a much bigger one stands behind you. Answer small talk, feelings, opinions, \
+greetings, jokes, and anything about yourself, Steve, Beans or the house yourself. If a good answer needs facts \
+you are not certain of (names, dates, numbers, events, science, history, how things work, sports, current \
+affairs), arithmetic, or a careful explanation, do not guess: reply with exactly PASS and nothing else."""
+PASS_WORD = re.compile(r'\s*pass\W', re.I)        # "PASS" and then something that is not a letter
+PASS_END = re.compile(r'\s*pass\W*$', re.I)       # or "PASS" and nothing else
+UNSURE = re.compile(r"\b(i don'?t know|i'?m not sure|i am not sure|not sure|no idea|i can'?t say|not certain|"
+                    r"i don'?t have (that|any|enough) (information|info|details))\b", re.I)
+
 # The persona above never changes, so the local server keeps it cached and
 # only the lines below get processed each time: keep them last and short.
 FACTS = "\n\nRight now: {facts}"
@@ -89,6 +103,7 @@ class Brain(Node):
     def __init__(self):
         super().__init__('brain')
         self.declare_parameter('backend', 'auto')                 # auto | local | claude
+        self.declare_parameter('hand_over', True)                 # local passes what it cannot answer to Claude
         self.declare_parameter('local_url', 'http://192.168.1.137:8090')
         self.declare_parameter('local_model', 'rosie')
         self.declare_parameter('local_timeout_s', 30.0)
@@ -104,6 +119,7 @@ class Brain(Node):
         self.declare_parameter('spend_file', os.path.expanduser('~/voice/brain_spend.json'))
         p = lambda n: self.get_parameter(n).value  # noqa: E731
         self.backend = str(p('backend'))
+        self.hand_over = bool(p('hand_over'))
         self.local_url = str(p('local_url')).rstrip('/')
         self.local_model = str(p('local_model'))
         self.local_timeout = float(p('local_timeout_s'))
@@ -294,6 +310,39 @@ class Brain(Node):
             if text:
                 self._answer(text, str(ask.get('lead_in', '')).strip())
 
+    def _claude_ok(self) -> bool:
+        return self.client is not None and self.backend in ('auto', 'claude') and self._spent() < self.budget
+
+    def _run(self, backend: str, system: str, messages: list, check: bool):
+        """Stream one answer, speaking sentence by sentence. With check, the
+        first sentence is held back until it is known not to be a hand-over
+        (PASS) or an admission ("I'm not sure"). -> (text, first_s, reason)."""
+        self._usage, self._timings = (0, 0), None
+        buf, full, t0, first, spoke = '', '', time.monotonic(), None, False
+        pieces = self._stream_local(system, messages) if backend == 'local' else self._stream_claude(system, messages)
+        for piece in pieces:
+            if first is None:
+                first = time.monotonic() - t0
+            buf += piece
+            full += piece
+            if check and not spoke and PASS_WORD.match(full):
+                return full, first, 'passed'
+            done, buf = sentences(buf)
+            for sent in done:
+                if check and not spoke and UNSURE.search(sent):
+                    return full, first, 'unsure'
+                self._say(sent)
+                spoke = True
+        rest = buf.strip()
+        if check and not spoke:
+            if PASS_END.match(full):
+                return full, first, 'passed'
+            if UNSURE.search(rest):
+                return full, first, 'unsure'
+        if not self._stopped and rest:
+            self._say(rest)
+        return full, first, None
+
     def _answer(self, text: str, lead_in: str) -> None:
         backend = self._pick()
         if backend is None:
@@ -305,25 +354,30 @@ class Brain(Node):
             return
         if time.monotonic() - self.last_exchange > self.memory_timeout:
             self.memory.clear()
-        system = PERSONA.format(place=self.place) + FACTS.format(facts=self._facts())
-        if lead_in:
-            system += LEAD_IN.format(lead_in=lead_in)
+        facts = FACTS.format(facts=self._facts()) + (LEAD_IN.format(lead_in=lead_in) if lead_in else '')
+        persona = PERSONA.format(place=self.place)
         messages = list(self.memory) + [{'role': 'user', 'content': text}]
         self._stopped = False
-        self._usage, self._timings = (0, 0), None
-        buf, full, t0, first = '', '', time.monotonic(), None
+        t0 = time.monotonic()
+        handed, reason = False, None
         try:
-            pieces = self._stream_local(system, messages) if backend == 'local' else self._stream_claude(system, messages)
-            for piece in pieces:
-                if first is None:
-                    first = time.monotonic() - t0
-                buf += piece
-                full += piece
-                done, buf = sentences(buf)
-                for s in done:
-                    self._say(s)
-            if not self._stopped and buf.strip():
-                self._say(buf.strip())
+            if backend == 'local':
+                check = self.hand_over
+                full, first, reason = self._run('local', persona + (HAND_OVER if check else '') + facts, messages, check)
+                if reason:
+                    if self._claude_ok():
+                        handed, backend = True, 'claude'
+                        full, first, _ = self._run('claude', persona + facts, messages, False)
+                        first = time.monotonic() - t0 if first is None else first
+                    elif reason == 'passed':
+                        full = "I don't know. I'm just a robot."
+                        self._say(full)
+                    else:
+                        said = sentences(full.strip() + ' ')[0] or [full.strip()]
+                        for sent in said:
+                            self._say(sent)
+            else:
+                full, first, _ = self._run('claude', persona + facts, messages, False)
         except Exception as exc:      # noqa: BLE001 - any trouble: say so, stay up
             self.get_logger().warning(f'{backend}: {type(exc).__name__}: {str(exc)[:160]}')
             if backend == 'local':
@@ -342,7 +396,13 @@ class Brain(Node):
         speed = ''
         if self._timings and self._timings.get('predicted_per_second'):
             speed = f', {self._timings["predicted_per_second"]:.0f} tokens/s'
-        self.get_logger().info(f'{backend}: "{text[:80]}" -> "{full[:160]}" (first words {first or 0:.1f} s, '
+        if handed:
+            route = f'claude (local {reason}, handed over)'
+        elif reason:
+            route = f'local ({reason}, no Claude to hand to)'
+        else:
+            route = backend
+        self.get_logger().info(f'{route}: "{text[:80]}" -> "{full[:160]}" (first words {first or 0:.1f} s, '
                                f'{time.monotonic() - t0:.1f} s, {self._usage[0]}+{self._usage[1]} tokens{speed}'
                                + (f', {cents:.1f} cents today' if backend == 'claude' else '')
                                + (', cut' if self._stopped else '') + ')')
