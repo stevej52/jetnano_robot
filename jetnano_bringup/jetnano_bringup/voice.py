@@ -156,15 +156,16 @@ def huh(j):
     over the first half, fading out as the pitch rises; the end steps up a
     fourth and stops short, like a raised eyebrow."""
     k = 2 ** (j / 12)
-    seconds = 0.34
+    seconds = 0.66          # doubled from 0.34, and the purr made more prominent (Steve, 2026-09-24)
     y = tone(glide(BASE * k * 0.85, BASE * k * 1.45, 0.7), seconds, vibrato_hz=5.0, vibrato_depth=0.015, bright=0.35)
     n = len(y)
     t = np.arange(n) / RATE
     u = t / seconds
-    flutter = 1.0 - 0.55 * np.clip(1.0 - u * 1.6, 0.0, 1.0) * (0.5 + 0.5 * np.sin(2 * math.pi * 24.0 * t))
+    # the purr: deeper flutter, lasting most of the way up before it smooths out
+    flutter = 1.0 - 0.75 * np.clip(1.0 - u * 1.25, 0.0, 1.0) * (0.5 + 0.5 * np.sin(2 * math.pi * 24.0 * t))
     y = y * flutter
-    tail = tone(glide(BASE * k * 1.5, BASE * k * 1.9, 0.4), 0.09, vibrato_depth=0.0, bright=0.45)
-    return np.concatenate([y, rest(0.02), tail])
+    tail = tone(glide(BASE * k * 1.5, BASE * k * 1.9, 0.4), 0.16, vibrato_depth=0.0, bright=0.45)
+    return np.concatenate([y, rest(0.03), tail])
 
 
 MOODS = {'hello': hello, 'ok': ok, 'no': no, 'alarm': alarm, 'sad': sad,
