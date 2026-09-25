@@ -30,6 +30,7 @@ different. The moods and where the sounds node uses them:
     curious   a rising slide with a question step        person spotted
     sleepy    three notes falling, fading                shutting down / flat battery
     hm        one soft rising blip                       acknowledgement, looking
+    huh       a cat's "mrrp?" - rolled onset, rising     something moved (motion_watch)
 
 Each mood is written with three slightly different takes (pitch and timing
 jitter), so she does not say exactly the same thing twice in a row.
@@ -149,8 +150,25 @@ def hm(j):
     return tone(glide(BASE * k * 1.1, BASE * k * 1.35), 0.16, bright=0.4)
 
 
+def huh(j):
+    """A cat's "mrrp?": a rolled, purring onset that lifts into a question.
+    The roll is a fast amplitude flutter (about 24 Hz, a cat's trill rate)
+    over the first half, fading out as the pitch rises; the end steps up a
+    fourth and stops short, like a raised eyebrow."""
+    k = 2 ** (j / 12)
+    seconds = 0.34
+    y = tone(glide(BASE * k * 0.85, BASE * k * 1.45, 0.7), seconds, vibrato_hz=5.0, vibrato_depth=0.015, bright=0.35)
+    n = len(y)
+    t = np.arange(n) / RATE
+    u = t / seconds
+    flutter = 1.0 - 0.55 * np.clip(1.0 - u * 1.6, 0.0, 1.0) * (0.5 + 0.5 * np.sin(2 * math.pi * 24.0 * t))
+    y = y * flutter
+    tail = tone(glide(BASE * k * 1.5, BASE * k * 1.9, 0.4), 0.09, vibrato_depth=0.0, bright=0.45)
+    return np.concatenate([y, rest(0.02), tail])
+
+
 MOODS = {'hello': hello, 'ok': ok, 'no': no, 'alarm': alarm, 'sad': sad,
-         'happy': happy, 'curious': curious, 'sleepy': sleepy, 'hm': hm}
+         'happy': happy, 'curious': curious, 'sleepy': sleepy, 'hm': hm, 'huh': huh}
 
 
 def write_wav(path, samples, volume=0.6):

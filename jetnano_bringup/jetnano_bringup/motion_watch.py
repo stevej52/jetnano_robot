@@ -196,7 +196,7 @@ class MotionWatch(Node):
         self.mover_pub.publish(m)
         if new:
             self.get_logger().info(f'movement at {math.degrees(bearing):+.0f} deg, {rng:.1f} m: looking')
-            self._say('curious')
+            self._say('huh')
 
     def _servos(self, pan_deg: float, tilt_deg: float) -> None:
         a = Float64(); a.data = self.pan_c + self.pan_sign * pan_deg
