@@ -142,11 +142,11 @@
   //   low    320x240 at 30 fps,                                 ~2 Mbit/s
   //   tiny   160x120 at 30 fps,                                 ~0.7 Mbit/s
   //   min    one 160x120 snapshot a second,                     ~50 kbit/s
-  // AUTO picks from low downward by the round trip of the page's own
-  // requests (median of the last eight; a failed request counts as 2 s):
-  // it drops a level the moment the link is slow and climbs back only after
-  // five clean seconds. FULL is manual - it needs the robot to have good
-  // Wi-Fi too, which the page cannot measure from here.
+  // AUTO picks by the round trip of the page's own requests (median of the
+  // last eight; a failed request counts as 2 s): it drops a level the moment
+  // the link is slow and climbs back only after five clean seconds. Full is
+  // reached only on a very fast link (the house Wi-Fi); over the road AUTO
+  // tops out at low.
   var host = 'http://' + location.hostname + ':8080';
   var LEVELS = {
     full: { stream: '&type=ros_compressed', note: '640x480 at 30 fps, ~18 Mbit/s - good Wi-Fi only' },
@@ -154,8 +154,11 @@
     tiny: { stream: '&type=mjpeg&width=160&height=120&quality=30', note: '160x120, ~0.7 Mbit/s' },
     min:  { snapshot: '&width=160&height=120&quality=30', note: 'one small picture a second' }
   };
-  var AUTO_ORDER = ['low', 'tiny', 'min'];
-  var AUTO_MAX_RTT = { low: 250, tiny: 600 };      // ms; above the last one -> min
+  var AUTO_ORDER = ['full', 'low', 'tiny', 'min'];
+  // ms; above the last one -> min. Full only on a link that answers in tens of
+  // milliseconds, i.e. the house Wi-Fi via the downstairs access point
+  // (2 ms round trips, 590 Mbit/s measured 2026-09-25) - never over the road.
+  var AUTO_MAX_RTT = { full: 40, low: 250, tiny: 600 };
   var mode = localStorage.getItem('jetnano.video') || 'auto';   // auto | full | low | tiny | min
   var level = null;                                  // what is actually showing
   var snapshotTimer = null;
@@ -173,7 +176,7 @@
 
   function autoLevel() {
     var rtt = medianRtt();
-    var want = rtt < AUTO_MAX_RTT.low ? 'low' : rtt < AUTO_MAX_RTT.tiny ? 'tiny' : 'min';
+    var want = rtt < AUTO_MAX_RTT.full ? 'full' : rtt < AUTO_MAX_RTT.low ? 'low' : rtt < AUTO_MAX_RTT.tiny ? 'tiny' : 'min';
     if (level === null || AUTO_ORDER.indexOf(want) > AUTO_ORDER.indexOf(level)) { goodSince = 0; return want; }   // worse: at once
     if (want === level) { goodSince = 0; return level; }
     if (!goodSince) goodSince = Date.now();                                                    // better: after 5 s
