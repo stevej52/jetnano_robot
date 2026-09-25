@@ -190,8 +190,10 @@ def huh(j):
     # Tuned with Steve, 2026-09-24/25: one continuous rise - no separate note at
     # the end (that read as "boop, boop") - the pitch just accelerates upward
     # over the last third; a deep purr through most of it.
-    seconds = 0.65          # 0.75 was "perfect but 15 % faster" (Steve, 2026-09-25)
-    y = tone(glide(BASE * k * 0.85, BASE * k * 1.6, 1.6), seconds, vibrato_hz=5.0, vibrato_depth=0.012, bright=0.35)
+    # 0.75 was "perfect but 15 % faster"; 0.65 then "a little faster, ending higher":
+    # Steve picked 0.53 s with the top at 1.95x (version B, 2026-09-25)
+    seconds = 0.53
+    y = tone(glide(BASE * k * 0.85, BASE * k * 1.95, 1.6), seconds, vibrato_hz=5.0, vibrato_depth=0.012, bright=0.35)
     n = len(y)
     t = np.arange(n) / RATE
     u = t / seconds
