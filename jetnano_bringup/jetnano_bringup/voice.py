@@ -30,7 +30,10 @@ different. The moods and where the sounds node uses them:
     curious   a rising slide with a question step        person spotted
     sleepy    three notes falling, fading                shutting down / flat battery
     hm        one soft rising blip                       acknowledgement, looking
-    huh       a cat's "mrrp?" - rolled onset, rising     something moved (motion_watch)
+    huh       a cat's "mrrp?" - rolled onset, rising     something moved, a bang (motion_watch, ears)
+    bye       three notes down with a little wave        "I have to go" ends a chat (listen)
+    chat      a run of quick notes, a question or a      her side of a conversation; listen makes
+              statement at the end                       one fresh each time, as long as yours
 
 Each mood is written with three slightly different takes (pitch and timing
 jitter), so she does not say exactly the same thing twice in a row.
@@ -173,8 +176,43 @@ def huh(j):
     return y * flutter
 
 
+def bye(j):
+    """Bye-bye: two notes stepping down and a longer one that lifts a little
+    at the end, a small wave rather than a sad one (sleepy is the sad one)."""
+    k = 2 ** (j / 12)
+    return np.concatenate([tone(flat(BASE * k * 1.5), 0.14), rest(0.03),
+                           tone(flat(BASE * k * 1.26), 0.12), rest(0.05),
+                           tone(glide(BASE * k * 1.0, BASE * k * 1.12, 0.5), 0.35, vibrato_depth=0.03, bright=0.4)])
+
+
+CHAT_SCALE = (0.75, 0.84, 1.0, 1.12, 1.26, 1.5, 1.68, 2.0)
+
+
+def chat(n=6, j=0.0, rng=random):
+    """Chatter: n quick notes wandering over a happy scale, some sliding, an
+    uneven rhythm, and a last note that goes up (a question) or down (a
+    statement). Every call is different; listen makes one per reply."""
+    k = 2 ** (j / 12)
+    parts = []
+    i = rng.randrange(2, 6)
+    for _ in range(n):
+        i = max(0, min(len(CHAT_SCALE) - 1, i + rng.choice([-2, -1, -1, 1, 1, 2, 3])))
+        f = BASE * k * CHAT_SCALE[i]
+        d = rng.choice([0.06, 0.07, 0.09, 0.11, 0.14])
+        if rng.random() < 0.3:
+            parts.append(tone(glide(f, f * rng.choice([0.84, 1.19, 1.26]), 0.8), d + 0.05, vibrato_depth=0.0, bright=0.5))
+        else:
+            parts.append(tone(flat(f), d, vibrato_depth=0.0, bright=0.5))
+        parts.append(rest(rng.choice([0.015, 0.025, 0.04, 0.08])))
+    f = BASE * k * CHAT_SCALE[i]
+    up = rng.random() < 0.5
+    parts.append(tone(glide(f, f * (1.5 if up else 0.67), 0.7), 0.18, vibrato_depth=0.03))
+    return np.concatenate(parts)
+
+
 MOODS = {'hello': hello, 'ok': ok, 'no': no, 'alarm': alarm, 'sad': sad,
-         'happy': happy, 'curious': curious, 'sleepy': sleepy, 'hm': hm, 'huh': huh}
+         'happy': happy, 'curious': curious, 'sleepy': sleepy, 'hm': hm, 'huh': huh,
+         'bye': bye, 'chat': lambda j: chat(random.randrange(4, 9), j)}
 
 
 def write_wav(path, samples, volume=0.6):

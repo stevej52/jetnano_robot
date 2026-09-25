@@ -37,6 +37,7 @@ setup(
             'sounds = jetnano_bringup.sounds:main',
             'motion_watch = jetnano_bringup.motion_watch:main',
             'ears = jetnano_bringup.ears:main',
+            'listen = jetnano_bringup.listen:main',
         ],
     },
 )

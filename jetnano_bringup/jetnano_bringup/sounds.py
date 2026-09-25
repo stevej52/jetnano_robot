@@ -27,6 +27,7 @@ each time) through the USB speaker with aplay, on these events:
     /cliff/drop true                          no
     /battery health low / flat                sad / alarm then sleepy
     /say <mood>                               that mood (anyone: the page, a person detector)
+    /say /path/to/file.wav                    that file (listen's freshly made chatter)
 
 One sound at a time; a mood is not repeated within ``min_gap_s``; ``mute``
 is a parameter (ros2 param set /sounds mute true) so a droid that chirps at
@@ -87,7 +88,7 @@ class Sounds(Node):
         self._guard_stop = False
         self._battery_state = 'ok'
         self._drop = False
-        self.create_subscription(String, 'say', lambda m: self.say(m.data), 10)
+        self.create_subscription(String, 'say', lambda m: self.say(m.data, force=m.data.endswith('.wav')), 10)
         self.create_subscription(Bool, 'e_stop', self._on_e_stop, 10)
         self.create_subscription(Bool, 'cliff/drop', self._on_drop, 10)
         self.create_subscription(BatteryState, 'battery', self._on_battery, 10)
@@ -113,7 +114,10 @@ class Sounds(Node):
             mood = self.queue.get()
             if bool(self.get_parameter('mute').value):
                 continue
-            takes = glob.glob(os.path.join(self.dir, f'{mood}[0-9]*.wav'))
+            if mood.endswith('.wav') and os.path.isfile(mood):
+                takes = [mood]
+            else:
+                takes = glob.glob(os.path.join(self.dir, f'{mood}[0-9]*.wav'))
             if not takes:
                 self.get_logger().warning(f'no sound for "{mood}"')
                 continue

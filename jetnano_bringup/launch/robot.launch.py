@@ -92,7 +92,14 @@ def generate_launch_description():
             description='lidar movement -> pan-tilt camera looks at it, while standing still'),
         DeclareLaunchArgument(
             'use_ears', default_value='true',
-            description='the USB microphone as a sound-level sense (sound/level); "hm" at a bang while parked'),
+            description='the USB microphone as a sound-level sense (sound/level); "huh?" at a bang while parked'),
+        DeclareLaunchArgument(
+            'use_listen', default_value='true',
+            description='Rosie understands "Rosie, be quiet" / "you can talk now" / a chat; '
+                        'starts only if listen_python exists (robot-environment install_voice.sh)'),
+        DeclareLaunchArgument(
+            'listen_python', default_value='/home/jeston/venv-voice/bin/python3',
+            description='the venv python that has sherpa-onnx'),
         DeclareLaunchArgument(
             'use_web_teleop', default_value='true',
             description='serve the driving web page (camera + arrows) on port 8081'),
@@ -167,6 +174,21 @@ def generate_launch_description():
             respawn=True,
             respawn_delay=10.0,
             condition=IfCondition(LaunchConfiguration('use_ears')),
+        ),
+
+        # Words, from the ears' audio stream; needs the ears.
+        Node(
+            package='jetnano_bringup',
+            executable='listen',
+            name='listen',
+            output='screen',
+            respawn=True,
+            respawn_delay=10.0,
+            prefix=[LaunchConfiguration('listen_python'), ' '],
+            condition=IfCondition(PythonExpression([
+                "'", LaunchConfiguration('use_listen'), "' == 'true' and '",
+                LaunchConfiguration('use_ears'), "' == 'true' and __import__('os').path.exists('",
+                LaunchConfiguration('listen_python'), "')"])),
         ),
 
         ]),

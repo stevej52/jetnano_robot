@@ -17,8 +17,10 @@
     ros2 run jetnano_bringup ears
     ros2 topic echo /sound/level          # dBFS, ten times a second
 
-Reads the USB microphone continuously through arecord (16 kHz mono) and
-publishes the level in dBFS on ``sound/level``. A sharp noise - a clap, a
+Reads the USB microphone continuously through arecord (16 kHz mono), passes
+the raw audio on as ``sound/audio`` (Int16MultiArray, 100 ms a message, for
+``listen``: one process owns the mic) and publishes the level in dBFS on
+``sound/level``. A sharp noise - a clap, a
 dropped pan, a door - is a jump of ``loud_above_db`` over the room's rolling
 background that is also louder than ``loud_min_dbfs``; then ``sound/loud``
 goes true for a moment and, if the robot is parked, she takes a beat
@@ -35,6 +37,7 @@ Watch what she hears with ``ros2 topic echo /sound/level`` and tune the two
 thresholds if claps go unheard or the TV gets answered.
 """
 
+import array
 import math
 import subprocess
 import threading
@@ -44,7 +47,7 @@ import numpy as np
 import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
-from std_msgs.msg import Bool, Float32, String
+from std_msgs.msg import Bool, Float32, Int16MultiArray, String
 
 
 class Ears(Node):
@@ -88,11 +91,15 @@ class Ears(Node):
         subprocess.run(['amixer', '-q', '-c', self.card, 'sset', 'Auto Gain Control', agc], capture_output=True, timeout=5)
 
         self.level_pub = self.create_publisher(Float32, 'sound/level', 10)
+        self.audio_pub = self.create_publisher(Int16MultiArray, 'sound/audio', 10)
         self.loud_pub = self.create_publisher(Bool, 'sound/loud', 10)
         self.say_pub = self.create_publisher(String, 'say', 10)
         self.create_subscription(Twist, 'cmd_vel', self._on_cmd, 10)
         self.create_subscription(Bool, 'sound/speaking', self._on_speaking, 10)
+        self.create_subscription(Bool, 'speech/active', self._on_speech, 10)
         self.speaking_until = 0.0
+        self.speech_active = False
+        self.speech_ended = 0.0
         self.last_cmd = 0.0
         self.last_said = 0.0
         self.background = None
@@ -111,6 +118,12 @@ class Ears(Node):
         now = time.monotonic()
         self.speaking_until = now + 15.0 if msg.data else now + self.deaf_after
 
+    def _on_speech(self, msg: Bool) -> None:
+        # listen says someone is talking: a loud word is not a bang
+        if self.speech_active and not msg.data:
+            self.speech_ended = time.monotonic()
+        self.speech_active = msg.data
+
     def _listen(self) -> None:
         frames = int(self.rate * self.chunk)
         while rclpy.ok():
@@ -125,7 +138,7 @@ class Ears(Node):
                 data = proc.stdout.read(frames * 2)
                 if len(data) < frames * 2:
                     break
-                self._chunk(np.frombuffer(data, dtype=np.int16).astype(np.float32))
+                self._chunk(data)
             err = proc.stderr.read().decode(errors='replace').strip() if proc.stderr else ''
             proc.kill()
             self._warn(f'microphone stream ended: {err[:100] or "no data"} (retrying)')
@@ -137,8 +150,12 @@ class Ears(Node):
             self.get_logger().warning(text)
             self._warned = True
 
-    def _chunk(self, x: np.ndarray) -> None:
+    def _chunk(self, data: bytes) -> None:
         self._warned = False
+        audio = Int16MultiArray()
+        audio.data = array.array('h', data)
+        self.audio_pub.publish(audio)
+        x = np.frombuffer(data, dtype=np.int16).astype(np.float32)
         rms = float(np.sqrt(np.mean(x * x))) if len(x) else 0.0
         level = 20.0 * math.log10(max(rms, 1.0) / 32767.0)
         msg = Float32()
@@ -169,6 +186,8 @@ class Ears(Node):
                 t.start()
 
     def _say(self, mood: str) -> None:
+        if self.speech_active or time.monotonic() - self.speech_ended < 1.0:
+            return      # it was a loud word, and listen is handling words
         s = String()
         s.data = mood
         self.say_pub.publish(s)
