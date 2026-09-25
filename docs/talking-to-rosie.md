@@ -30,6 +30,18 @@ emergency stop, the "huh?" when she hears a clap - are her own beeps.
 | "Rosie, be quiet" | goes silent until told otherwise - her name is needed |
 | "Rosie, you can talk now" | talks again (a happy trill) |
 
+## Switching her voice off completely
+
+For when her name keeps coming up in the room. These code words work only
+when said on their own - "Over and out." - not inside a longer sentence.
+
+| Say | She does |
+|---|---|
+| "Over and out" | a sleepy sound, then silence: she ignores everything, even her name, and makes no sounds at all |
+| "Rise and shine" | her voice back on, with a hello |
+
+Off stays off through a restart or a reboot until "rise and shine".
+
 ## Thinking
 
 Small talk is answered by the model on the PC upstairs, free and quick.

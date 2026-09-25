@@ -32,6 +32,11 @@ silence:
                                  the conversation
     "Rosie, be quiet"            "ok", then every sound is muted (an ending)
     "Rosie, you can talk now"    unmuted, a happy trill
+    "over and out"               her whole voice off: silent, and deaf to everything
+                                 (her name too) but the code word to come back
+    "rise and shine"             back on, with her hello. Both code words count
+                                 only when said on their own, as the whole
+                                 sentence, and "off" survives a reboot
     "thank you, Rosie" / "I have to go" / "bye" / "that's enough"
                                  endings: a word, and her name is needed again
     "stop" / "that's enough"     cuts her off mid-sentence, no complaint; she
@@ -112,6 +117,26 @@ NEWS = (
     ('all', ('news', 'headlines', "what's going on", 'what is going on', "what's happening", 'what is happening',
              "what's new", 'what is new')),
 )
+
+# Code words that switch her whole voice off and on without her name (Steve,
+# 2026-09-25: her name kept waking her - said in the room, read out from a
+# file). They count only as the entire utterance, fillers aside.
+VOICE_OFF = ('over and out',)
+VOICE_ON = ('rise and shine',)
+FILLERS = {'um', 'uh', 'erm', 'hmm', 'okay', 'ok', 'so', 'hey', 'alright', 'now', 'please', 'rosie'}
+VOICE_OFF_FLAG = os.path.expanduser('~/voice/voice_off')
+
+
+def code_word(text: str):
+    """'off', 'on' or None - only when the code word is all that was said."""
+    words = [w for w in normalize(text).split() if w not in FILLERS]
+    said = ' '.join(words)
+    if said in VOICE_OFF:
+        return 'off'
+    if said in VOICE_ON:
+        return 'on'
+    return None
+
 
 # Mapping on request (Steve, 2026-09-25): not at boot any more. Put her down at
 # the parking spot, "Rosie, start mapping"; before picking her up, "Rosie,
@@ -484,6 +509,7 @@ def _node_main(args):
             self.mode = 'idle'
             self.muted = False
             self.english = False            # the sounds node's own switch (system sounds in words); not voice-set now
+            self.voice_off = os.path.exists(VOICE_OFF_FLAG)   # "over and out" until "rise and shine"
             self.robot_until = 0.0          # "speak robot": her replies in beeps until then
             self.last_okay = None
             self.robot_for = 300.0
@@ -592,6 +618,11 @@ def _node_main(args):
 
         def _utterance(self, samples: np.ndarray, overlapped: bool) -> None:
             seconds = len(samples) / 16000.0
+            if self.voice_off:
+                text = transcribe(self.recognizer, samples)
+                if text and code_word(text) == 'on':
+                    self._voice(True, text)
+                return
             # level as it came off the mic, before the boost
             rms = float(np.sqrt(np.mean(samples * samples))) / self.gain if len(samples) else 0.0
             db = 20.0 * np.log10(max(rms, 1e-6))
@@ -600,6 +631,9 @@ def _node_main(args):
             took = time.monotonic() - t0
             if not text:
                 self.get_logger().info(f'speech with no words ({seconds:.1f} s at {db:.0f} dBFS)')
+                return
+            if overlapped and code_word(text) == 'off':
+                self._understand(text, seconds, took, db)
                 return
             if overlapped:
                 action = over_her_voice(text, ' '.join(self.own_text))
@@ -634,6 +668,14 @@ def _node_main(args):
 
         def _understand(self, text: str, seconds: float, took: float = 0.0, db: float = None) -> None:
             now = time.monotonic()
+            word = code_word(text)
+            if self.voice_off:
+                if word == 'on':
+                    self._voice(True, text)
+                return
+            if word == 'off':
+                self._voice(False, text)
+                return
             if self.offer_until and now < self.offer_until:          # "Want a full status report?"
                 t = normalize(text)
                 self.offer_until = 0.0
@@ -738,6 +780,30 @@ def _node_main(args):
                     n = int(min(12, max(3, round(2 + seconds * 2.2))))
                     voice.write_wav(self.chat_file, voice.chat(n, rng=random))
                     self._say(self.chat_file)
+
+        def _voice(self, on: bool, text: str) -> None:
+            """The code words: her whole voice off (sleepy, then silent and deaf
+            to all but "rise and shine") or back on (hello)."""
+            self.get_logger().info(f'heard "{text}" -> voice {"ON" if on else "OFF"}')
+            if on:
+                self.voice_off = False
+                try:
+                    os.remove(VOICE_OFF_FLAG)
+                except OSError:
+                    pass
+                self._set_mute(False)
+                self._say('hello')
+            else:
+                self._stop()
+                self.pending, self.offer_until = [], 0.0
+                self.mode = 'idle'
+                self._say('sleepy')
+                self._set_mute(True, after=2.0)       # after the sleepy sound has played
+                self.voice_off = True
+                os.makedirs(os.path.dirname(VOICE_OFF_FLAG), exist_ok=True)
+                with open(VOICE_OFF_FLAG, 'w') as f:
+                    f.write(time.strftime('%Y-%m-%d %H:%M:%S') + '\n')
+            self._publish_state()
 
         def _okay(self, then: str = '') -> None:
             """Okay, in one of her ways - now and then "Aaaalrighty then!" - and
@@ -946,7 +1012,7 @@ def _node_main(args):
 
         def _publish_state(self) -> None:
             msg = self._String()
-            msg.data = 'muted' if self.muted else self.mode
+            msg.data = 'voice off' if self.voice_off else 'muted' if self.muted else self.mode
             self.state_pub.publish(msg)
 
     rclpy.init(args=args)
