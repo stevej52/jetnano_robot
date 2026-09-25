@@ -374,13 +374,15 @@ def _node_main(args):
             # The mic is tiny and inside the robot: a person a few feet away
             # reaches it far quieter than her own speaker does (2026-09-25,
             # Steve spoke and nothing triggered). Boost before the detector.
-            self.declare_parameter('gain_db', 15.0)
+            # 15 -> 21 dB (Steve, 2026-09-25: "a hard time hearing us from across
+            # the room"; his wife reached the mic at -43..-50 dBFS)
+            self.declare_parameter('gain_db', 21.0)
             # the tail of her own sentence (and its echo) reaches the mic after
             # the speaking flag clears: 2026-09-25 she answered "I have lots",
             # "Voice section", "Of muscles" - her own last words, ~1 s late, -49 dBFS
             self.declare_parameter('echo_guard_s', 1.5)
             self.declare_parameter('highpass_hz', 100.0)
-            self.declare_parameter('vad_threshold', 0.4)
+            self.declare_parameter('vad_threshold', 0.35)
             self.declare_parameter('min_silence_s', 0.5)            # a pause this long ends what you said
             self.declare_parameter('min_speech_s', 0.3)
             self.declare_parameter('max_speech_s', 10.0)
@@ -490,7 +492,9 @@ def _node_main(args):
                 x, self.hp_state = self._sosfilt(self.hp, x, zi=self.hp_state)
                 x = x.astype(np.float32)
             try:
-                self.queue.put_nowait(np.clip(x * self.gain, -1.0, 1.0))
+                # a soft limit rather than a hard clip: someone close to her is
+                # rounded off, not distorted, with this much gain
+                self.queue.put_nowait(np.tanh(x * self.gain).astype(np.float32))
             except queue.Full:
                 pass
 
