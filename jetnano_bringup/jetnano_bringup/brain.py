@@ -101,6 +101,16 @@ THINK_CARE = """\n\nThis one deserves care: think it through, then answer in at 
 UNSURE = re.compile(r"\b(i don'?t know|i'?m not sure|i am not sure|not sure|no idea|i can'?t say|not certain|"
                     r"i don'?t have (that|any|enough) (information|info|details))\b", re.I)
 
+# "How are you?": banter from her real status, written by the local model.
+HEALTH_BANTER = """
+
+Someone asked how you are. This is your real status right now, one line per system:
+{report}
+
+Answer in one or two short, playful spoken sentences based ONLY on that status: how you feel, and at most one \
+detail that stands out (something offline, the battery, heat, a busy CPU, a noisy room). Never invent a problem \
+or a number that is not there. Do not list your systems, do not ask a question, do not offer a report."""
+
 # The persona above never changes, so the local server keeps it cached and
 # only the lines below get processed each time: keep them last and short.
 FACTS = "\n\nRight now: {facts}"
@@ -372,8 +382,36 @@ class Brain(Node):
             except ValueError:
                 ask = {'text': raw}
             text = str(ask.get('text', '')).strip()
-            if text:
+            if text and ask.get('health'):
+                self._banter(text, str(ask.get('lead_in', '')).strip(), str(ask['health']),
+                             str(ask.get('then_say', '')).strip())
+            elif text:
                 self._answer(text, str(ask.get('lead_in', '')).strip(), bool(ask.get('think', False)))
+
+    def _banter(self, text: str, lead_in: str, report: str, then_say: str) -> None:
+        """How she is, in her own words, from the real report - on the local
+        model only (free). Without it: the report's own first line."""
+        t0 = time.monotonic()
+        self._stopped = False
+        full, how = '', 'local'
+        if self.local_up and self.backend in ('auto', 'local'):
+            system = (PERSONA.format(place=self.place) + HEALTH_BANTER.format(report=report)
+                      + (LEAD_IN.format(lead_in=lead_in) if lead_in else ''))
+            try:
+                full, _first, _ = self._run('local', system, [{'role': 'user', 'content': text}], False)
+            except Exception as exc:      # noqa: BLE001
+                self.get_logger().warning(f'banter: {type(exc).__name__}: {str(exc)[:120]}')
+                full = ''
+        if not full.strip():
+            how = 'plain'
+            full = report.split('\n')[0]
+            self._say(full)
+        if then_say and not self._stopped:
+            self._say(then_say)
+        self.last_exchange = time.monotonic()
+        self.memory.append({'role': 'user', 'content': text})
+        self.memory.append({'role': 'assistant', 'content': (full.strip() + ' ' + then_say).strip()})
+        self.get_logger().info(f'banter ({how}): "{full.strip()[:140]}" ({time.monotonic() - t0:.1f} s)')
 
     def _claude_ok(self) -> bool:
         return self.client is not None and self.backend in ('auto', 'claude') and self._spent() < self.budget

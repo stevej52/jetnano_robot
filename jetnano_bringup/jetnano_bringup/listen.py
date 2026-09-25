@@ -121,8 +121,12 @@ MAP_STOP = ('stop mapping', 'end mapping', 'finish mapping', 'done mapping', 'st
             'stop map')
 
 HEALTH_WORDS = ('how are you', 'how you doing', 'you doing', 'how is it going', "how's it going", 'how are things',
-                'how do you feel', 'how are you feeling', 'status report', 'status', 'how is everything',
-                "how's everything", 'you okay', 'you all right', 'how are ya')
+                'how do you feel', 'how are you feeling', 'how is everything', "how's everything", 'you okay',
+                'you all right', 'how are ya', 'how you feeling', 'feeling okay')
+# The full spoken report, straight away (the banter above offers it).
+REPORT_WORDS = ('status report', 'full status', 'full report', 'system status', 'systems report', 'diagnostics',
+                'status')
+HOW_AM_I = ('How am I?', 'Me?', 'How do I feel?')
 JOKE_WORDS = ('joke', 'funny', 'make me laugh')
 # "Rosie, think hard about ...": straight to Claude with full thinking (brain.py).
 THINK_WORDS = ('think hard', 'think about it', 'think about this', 'think about that', 'think it over',
@@ -137,7 +141,7 @@ SPEND_WORDS = ('how much have you spent', 'spent today', 'how much money', 'what
 ENGLISH_REPLIES = (
     # Only what needs her own live data, plus Steve's joke: everything else
     # goes to the brain (small talk upstairs, real questions on to Opus).
-    (HEALTH_WORDS, ["HEALTH"]),
+    (REPORT_WORDS + HEALTH_WORDS, ["HEALTH"]),
     (SPEND_WORDS, ["SPEND"]),
     (('are you mapping', 'you mapping', 'are you napping', 'is mapping on', 'mapping status'), ["MAPPING"]),
     (JOKE_WORDS, ["You're a joke. [laugh]"]),        # [laugh]: the speak node adds the sound after the words
@@ -452,6 +456,8 @@ def _node_main(args):
             self.last_sound = None          # what the sounds node played last (mood or file)
             self.last_question = None       # what her last chatter was an answer to
             self.last_action = None         # ... and what kind of question it was
+            self.offer_until = 0.0          # "Want a full status report?" waits for yes or no until then
+            self.offer_report = ''
             self.pending = []               # the rest of a briefing, after "want to hear more?"
             self.pending_until = 0.0
             self.active = False
@@ -583,6 +589,19 @@ def _node_main(args):
 
         def _understand(self, text: str, seconds: float, took: float = 0.0, db: float = None) -> None:
             now = time.monotonic()
+            if self.offer_until and now < self.offer_until:          # "Want a full status report?"
+                t = normalize(text)
+                self.offer_until = 0.0
+                if _has(t, YES) and not _has(t, NO) and not _has(t, STOP):
+                    self.get_logger().info(f'heard "{text}" -> the full report')
+                    self.last_heard = now
+                    self._speak(self.offer_report or english_reply('status report', self.battery, health=self.health))
+                    return
+                if _has(t, NO) or _has(t, STOP):
+                    self.get_logger().info(f'heard "{text}" -> no report')
+                    self.last_heard = now
+                    self._speak('Okay.')
+                    return
             if self.pending and now < self.pending_until:       # "want to hear more?"
                 t = normalize(text)
                 if _has(t, YES) and not _has(t, NO) and not _has(t, STOP):
@@ -653,9 +672,11 @@ def _node_main(args):
             elif action == 'chat' and self._words() and self.brain_ready and _has(normalize(text), THINK_WORDS):
                 self._ask_brain(text, think=True)
             elif action == 'chat' and self._words():
-                if _has(normalize(text), HEALTH_WORDS):
+                if _has(normalize(text), REPORT_WORDS):
                     self._speak('Okay, checking.')             # the report samples for a couple of seconds
-                    self._speak(english_reply(text, self.battery, health=self.health))
+                    self._speak(english_reply('status report', self.battery, health=self.health))
+                elif _has(normalize(text), HEALTH_WORDS):
+                    self._how_am_i(text)
                 elif known_subject(text) or not self.brain_ready:
                     self._speak(english_reply(text, self.battery, health=self.health))
                 else:
@@ -743,6 +764,26 @@ def _node_main(args):
                 self._publish_state()
 
         # --------------------------------------------------------- briefing --
+
+        def _how_am_i(self, text: str) -> None:
+            """'How are you?': a line or two of banter from her real status (the
+            model upstairs, free), then 'Want a full status report?'."""
+            opener = random.choice(HOW_AM_I)
+            self._speak(opener)
+
+            def run():
+                report = self.health.report()            # samples the sensors for a couple of seconds
+                self.offer_report = report
+                self.offer_until = time.monotonic() + 45.0
+                if self.brain_ready:
+                    msg = self._String()
+                    msg.data = json.dumps({'text': text, 'lead_in': opener, 'health': report,
+                                           'then_say': 'Want a full status report?'})
+                    self.ask_pub.publish(msg)
+                    self.get_logger().info('asks the brain for banter about how she is')
+                else:
+                    self._speak(report.split('\n')[0] + '\nWant a full status report?')
+            threading.Thread(target=run, daemon=True, name='listen-howami').start()
 
         def _ask_brain(self, text: str, think: bool = False) -> None:
             # "think hard": the brain says "Give me a moment..." itself, no lead-in
