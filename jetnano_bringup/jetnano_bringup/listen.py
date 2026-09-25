@@ -114,6 +114,12 @@ def decide(text: str, mode: str):
     action: 'quiet' | 'talk' | 'english' | 'robot' | 'bye' | 'chat' | None; mode: 'idle' | 'chat'."""
     t = normalize(text)
     addressed = re.search(rf'\b{NAME}\b', t) is not None
+    # These two are specific enough to work even when her name got lost at
+    # the start of the sentence (the model drops a soft first word now and then).
+    if _has(t, ('speak robot', 'talk robot', 'speak rosie', 'speak beeps', 'speak droid')):
+        return 'robot', mode
+    if _has(t, ('speak english', 'talk english', 'in english')):
+        return 'english', mode
     if not (addressed or mode == 'chat'):
         return None, mode
     if _has(t, QUIET):
