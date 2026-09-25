@@ -220,7 +220,7 @@ def story(phrases=3, j=0.0, rng=random):
     parts = []
     for i in range(phrases):
         last = i == phrases - 1
-        parts.append(chat(rng.randrange(6, 11), j, rng, end='down' if last else None))
+        parts.append(chat(rng.randrange(6, 10), j, rng, end='down' if last else None))
         if not last:
             parts.append(rest(rng.choice([0.12, 0.18, 0.25])))
     return np.concatenate(parts)
