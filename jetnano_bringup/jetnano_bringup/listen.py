@@ -160,15 +160,15 @@ def decide(text: str, mode: str):
         return 'robot', mode
     if _has(t, ENGLISH_ON):
         return 'english', 'chat'
+    for kind, words in NEWS:            # before "in english": "the weather, in English" is a briefing
+        if _has(t, words):
+            return f'brief:{kind}', 'chat'
     if _has(t, ENGLISH_REPEAT):
         return 'repeat', mode
     if _has(t, TALK):
         return 'talk', mode
     if _has(t, BYE):
         return 'bye', 'idle'
-    for kind, words in NEWS:
-        if _has(t, words):
-            return f'brief:{kind}', 'chat'
     return 'chat', 'chat'
 
 
@@ -321,6 +321,7 @@ def _node_main(args):
             self.battery = None
             self.last_sound = None          # what the sounds node played last (mood or file)
             self.last_question = None       # what her last chatter was an answer to
+            self.last_action = None         # ... and what kind of question it was
             self.pending = []               # the rest of a briefing, after "want to hear more?"
             self.pending_until = 0.0
             self.active = False
@@ -470,26 +471,40 @@ def _node_main(args):
             elif action == 'robot':
                 self._set_param('english', False)         # the sounds node boops
             elif action == 'repeat':
-                self._speak(self._last_in_english())      # once, in words; the language stays
+                # once, in words; the language stays. A news question answered
+                # with a story gets the real briefing now.
+                if self.last_sound == self.chat_file and (self.last_action or '').startswith('brief:'):
+                    self._brief(self.last_action.split(':', 1)[1])
+                else:
+                    self._speak(self._last_in_english())
             elif action == 'bye':
                 self._say('bye')
             elif action and action.startswith('brief:'):
-                self._brief(action.split(':', 1)[1])
+                # In her own language a news question gets a story (Steve,
+                # 2026-09-25), unless English is on or asked for in the question.
+                if self.english or 'english' in normalize(text):
+                    self._brief(action.split(':', 1)[1])
+                else:
+                    self.last_question, self.last_action = text, action
+                    self._story()
             elif action == 'chat' and self.english:
                 self._speak(english_reply(text, self.battery, health=self.health))
             elif action == 'chat':
                 t = normalize(text)
-                self.last_question = text
+                self.last_question, self.last_action = text, action
                 if _has(t, JOKE_WORDS):
                     self._say('laugh')
                     return
                 if _has(t, HEALTH_WORDS):       # "how are you?" gets the story: ~6 s (Steve: "it's funny")
-                    y = voice.story(random.randrange(4, 6), rng=random)
+                    self._story()
                 else:
                     n = int(min(12, max(3, round(2 + seconds * 2.2))))
-                    y = voice.chat(n, rng=random)
-                voice.write_wav(self.chat_file, y)
-                self._say(self.chat_file)
+                    voice.write_wav(self.chat_file, voice.chat(n, rng=random))
+                    self._say(self.chat_file)
+
+        def _story(self) -> None:
+            voice.write_wav(self.chat_file, voice.story(random.randrange(4, 6), rng=random))
+            self._say(self.chat_file)
 
         def _tick(self) -> None:
             if self.mode == 'chat' and time.monotonic() - self.last_heard > self.chat_timeout:

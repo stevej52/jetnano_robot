@@ -101,6 +101,10 @@ def generate_launch_description():
             'listen_python', default_value='/home/jeston/venv-voice/bin/python3',
             description='the venv python that has sherpa-onnx'),
         DeclareLaunchArgument(
+            'location', default_value='',
+            description='where "local news" and "the weather" are: "City,State" (set in /etc/default/jetnano-robot); '
+                        'empty = wherever the internet connection appears to be'),
+        DeclareLaunchArgument(
             'use_web_teleop', default_value='true',
             description='serve the driving web page (camera + arrows) on port 8081'),
 
@@ -199,6 +203,7 @@ def generate_launch_description():
             output='screen',
             respawn=True,
             respawn_delay=10.0,
+            parameters=[{'location': LaunchConfiguration('location')}],
             prefix=[LaunchConfiguration('listen_python'), ' '],
             condition=IfCondition(PythonExpression([
                 "'", LaunchConfiguration('use_listen'), "' == 'true' and '",

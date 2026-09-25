@@ -22,7 +22,7 @@ Environment=HOME=/home/jeston
 # then start regardless (no network in the field).
 ExecStartPre=/bin/sh -c '[ "$(date +%%s)" -gt "$(stat -c %%Y /home/jeston/ros2_ws/install/setup.bash)" ] && exit 0; for i in $(seq 1 45); do [ "$(timedatectl show -p NTPSynchronized --value)" = "yes" ] && exit 0; sleep 2; done; echo "jetnano-robot: no time sync after 90 s, starting anyway"'
 # What the robot boots with. Override in /etc/default/jetnano-robot, e.g.
-#     ROBOT_ARGS="nvblox:=true use_cliff:=true"
+#     ROBOT_ARGS="nvblox:=true use_cliff:=true location:=Ventura,California"
 # once the cliff sensors are fitted; no unit edit needed.
 # nvblox:=true: the camera's 3D obstacle map for Nav2 and the collision guard
 # as well as the GPU odometry (~40 Hz instead of 89; both far above the 10 Hz

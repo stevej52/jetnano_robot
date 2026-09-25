@@ -44,12 +44,15 @@ def _get(url: str, timeout: float = 8.0) -> str:
 # ----------------------------------------------------------------- where --
 
 def where(location: str = ''):
-    """(city, region, lat, lon): the named place, else where the robot's
-    internet connection appears to be."""
+    """(city, region, lat, lon): the named place ("Ventura" or
+    "Ventura,California" - the state picks between the Venturas), else where
+    the robot's internet connection appears to be."""
     if location:
-        j = json.loads(_get('https://geocoding-api.open-meteo.com/v1/search?count=1&language=en&name='
-                            + urllib.parse.quote(location)))
-        r = j['results'][0]
+        city, _, state = [s.strip() for s in location.partition(',')]
+        j = json.loads(_get('https://geocoding-api.open-meteo.com/v1/search?count=5&language=en&name='
+                            + urllib.parse.quote(city)))
+        results = j['results']
+        r = next((x for x in results if state and x.get('admin1', '').lower() == state.lower()), results[0])
         return r['name'], r.get('admin1', ''), r['latitude'], r['longitude']
     j = json.loads(_get('http://ip-api.com/json/?fields=status,city,regionName,lat,lon'))
     if j.get('status') != 'success':

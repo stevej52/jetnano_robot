@@ -79,6 +79,28 @@ class Health:
         self.level = None
         node.create_subscription(BatteryState, 'battery', self._on_battery, 10)
         node.create_subscription(Float32, 'sound/level', self._on_level, 10)
+        # CPU busy time from /proc/stat, sampled every couple of seconds: real
+        # utilisation, not the load average (which counts waiting tasks too
+        # and read "102 percent" on a 6-core machine).
+        self._stat = self._read_stat()
+        self.busy = None
+        node.create_timer(2.0, self._sample_cpu)
+
+    @staticmethod
+    def _read_stat():
+        try:
+            with open('/proc/stat') as f:
+                cols = [int(x) for x in f.readline().split()[1:]]
+            idle = cols[3] + (cols[4] if len(cols) > 4 else 0)
+            return sum(cols), idle
+        except (OSError, ValueError):
+            return None
+
+    def _sample_cpu(self) -> None:
+        now = self._read_stat()
+        if now and self._stat and now[0] > self._stat[0]:
+            self.busy = 100.0 * (1.0 - (now[1] - self._stat[1]) / (now[0] - self._stat[0]))
+        self._stat = now
 
     def _on_battery(self, msg) -> None:
         self.battery = msg
@@ -106,10 +128,9 @@ class Health:
         except (OSError, subprocess.TimeoutExpired):
             return None
 
-    @staticmethod
-    def cpu():
-        """(load percent of all cores, cpu temperature C or None)."""
-        load = os.getloadavg()[0] / (os.cpu_count() or 1) * 100.0
+    def cpu(self):
+        """(busy percent of all cores, cpu temperature C or None)."""
+        load = self.busy if self.busy is not None else os.getloadavg()[0] / (os.cpu_count() or 1) * 100.0
         temp = None
         try:
             for zone in os.listdir('/sys/class/thermal'):
@@ -195,7 +216,7 @@ class Health:
             parts.append("I'm not on Wi-Fi.")
 
         load, temp = self.cpu()
-        s = f'CPU load is {int(round(load))} percent'
+        s = f'CPU is at {int(round(min(load, 100.0)))} percent'
         if temp is not None:
             s += f' at {int(round(temp))} degrees'
         parts.append(s + '.')
