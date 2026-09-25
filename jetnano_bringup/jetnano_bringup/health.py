@@ -14,19 +14,22 @@
 
 """How Rosie is doing, in words.
 
-``Health`` hangs a few light subscriptions on a node (it counts messages, it
-does not look at them) and turns what it sees into a spoken report: which
-sensors are actually delivering and how fast, whether she is mapping, the
-collision guard, the battery, the Wi-Fi link, CPU load and temperature,
-uptime, and how noisy the room is. listen says it when someone asks "how are
-you?" in English mode.
+``Health`` turns what a node can see into a spoken report: which sensors are
+actually delivering and how fast, whether she is mapping, the collision
+guard, the battery, the Wi-Fi link, CPU and temperature, uptime, and how
+noisy the room is. listen says it when someone asks "how are you?" in
+English mode.
+
+The sensor topics are only subscribed to while a report is being made (two
+seconds of counting, then the subscriptions are dropped): standing
+subscriptions to ~165 messages a second cost a Python node a third of a core
+in executor overhead alone (measured 2026-09-25).
 
     from jetnano_bringup.health import Health
     health = Health(node)         # once, at start
     text = health.report()        # any time
 """
 
-import collections
 import os
 import random
 import re
@@ -41,40 +44,37 @@ from std_msgs.msg import Float32
 LATCHED = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
 
 
-class Watch:
-    """Message times of one topic; alive = something within stale_s."""
+WATCHES = (
+    ('lidar', 'lidar', LaserScan, 'scan', qos_profile_sensor_data),
+    ('imu', 'the I M U', Imu, 'imu/data', qos_profile_sensor_data),
+    ('camera', 'the camera', CameraInfo, 'camera/color/camera_info', qos_profile_sensor_data),
+    ('vo', 'visual odometry', Odometry, 'vo', qos_profile_sensor_data),
+    ('ekf', 'odometry', Odometry, 'odometry/filtered', qos_profile_sensor_data),
+    ('nvblox', 'the 3D map', OccupancyGrid, 'nvblox_node/static_occupancy_grid', qos_profile_sensor_data),
+    ('map', 'the map', OccupancyGrid, 'map', LATCHED),
+)
 
-    def __init__(self, label: str, stale_s: float = 2.0):
+
+class Watch:
+    """Message count of one topic over the sample."""
+
+    def __init__(self, label: str):
         self.label = label
-        self.stale_s = stale_s
-        self.times = collections.deque(maxlen=2000)
+        self.count = 0
 
     def tick(self, _msg=None) -> None:
-        self.times.append(time.monotonic())
-
-    def hz(self, window_s: float = 5.0) -> float:
-        now = time.monotonic()
-        return sum(1 for t in self.times if now - t <= window_s) / window_s
+        self.count += 1
 
     def alive(self) -> bool:
-        return bool(self.times) and time.monotonic() - self.times[-1] <= self.stale_s
+        return self.count > 0
 
 
 class Health:
 
-    def __init__(self, node):
+    def __init__(self, node, sample_s: float = 2.0):
         self.node = node
+        self.sample_s = sample_s
         self.watch = {}
-        for key, label, msg_type, topic, qos, stale in (
-                ('lidar', 'lidar', LaserScan, 'scan', qos_profile_sensor_data, 2.0),
-                ('imu', 'the I M U', Imu, 'imu/data', qos_profile_sensor_data, 2.0),
-                ('camera', 'the camera', CameraInfo, 'camera/color/camera_info', qos_profile_sensor_data, 2.0),
-                ('vo', 'visual odometry', Odometry, 'vo', qos_profile_sensor_data, 2.0),
-                ('ekf', 'odometry', Odometry, 'odometry/filtered', qos_profile_sensor_data, 2.0),
-                ('nvblox', 'the 3D map', OccupancyGrid, 'nvblox_node/static_occupancy_grid', qos_profile_sensor_data, 5.0),
-                ('map', 'the map', OccupancyGrid, 'map', LATCHED, 20.0)):
-            self.watch[key] = Watch(label, stale)
-            node.create_subscription(msg_type, topic, self.watch[key].tick, qos)
         self.battery = None
         self.level = None
         node.create_subscription(BatteryState, 'battery', self._on_battery, 10)
@@ -107,6 +107,19 @@ class Health:
 
     def _on_level(self, msg) -> None:
         self.level = msg.data
+
+    def _sample(self) -> None:
+        """Count messages on the sensor topics for sample_s, then let go of
+        them. Raw subscriptions: nothing is deserialised."""
+        self.watch = {key: Watch(label) for key, label, _t, _n, _q in WATCHES}
+        subs = [self.node.create_subscription(msg_type, topic, self.watch[key].tick, qos, raw=True)
+                for key, _label, msg_type, topic, qos in WATCHES]
+        time.sleep(self.sample_s)
+        for sub in subs:
+            self.node.destroy_subscription(sub)
+
+    def hz(self, key: str) -> float:
+        return self.watch[key].count / self.sample_s if key in self.watch else 0.0
 
     # ---------------------------------------------------------------- facts --
 
@@ -163,6 +176,7 @@ class Health:
         return items[0] if len(items) == 1 else ', '.join(items[:-1]) + ' and ' + items[-1]
 
     def report(self, rng=random) -> str:
+        self._sample()
         names = set(self.node.get_node_names())
         core = ['lidar', 'imu', 'camera', 'vo', 'ekf']
         up = [k for k in core if self.watch[k].alive()]
@@ -179,7 +193,7 @@ class Health:
             labels = [self.watch[k].label for k in up]
             s = f'{self._join(labels)} {"are" if len(up) > 1 else "is"} online'
             if 'vo' in up:
-                s += f', visual odometry at {self.watch["vo"].hz():.0f} hertz'
+                s += f', visual odometry at {self.hz("vo"):.0f} hertz'
             parts.append(s[0].upper() + s[1:] + '.')
         if down:
             labels = [self.watch[k].label for k in down]

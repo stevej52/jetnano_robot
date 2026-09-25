@@ -566,7 +566,7 @@ def _node_main(args):
                 self.get_logger().warning('no speak node: cannot say it in English')
                 self._say('hm')
                 return
-            self.get_logger().info(f'says "{words.replace(chr(10), " | ")[:200]}"')
+            self.get_logger().info(f'says "{words.replace(chr(10), " | ")[:500]}"')
             msg = self._String()
             msg.data = words
             self.speak_pub.publish(msg)
