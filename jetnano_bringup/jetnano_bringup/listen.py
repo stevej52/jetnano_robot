@@ -312,6 +312,7 @@ def _node_main(args):
             # reaches it far quieter than her own speaker does (2026-09-25,
             # Steve spoke and nothing triggered). Boost before the detector.
             self.declare_parameter('gain_db', 15.0)
+            self.declare_parameter('highpass_hz', 100.0)
             self.declare_parameter('vad_threshold', 0.4)
             self.declare_parameter('min_silence_s', 0.5)            # a pause this long ends what you said
             self.declare_parameter('min_speech_s', 0.3)
@@ -328,6 +329,18 @@ def _node_main(args):
             self.recognizer = make_recognizer(model_dir, str(p('asr')), int(p('threads')))
             self.min_silence = float(p('min_silence_s'))
             self.gain = 10.0 ** (float(p('gain_db')) / 20.0)
+            # Three quarters of the quiet room's "noise" at this mic is an
+            # 11-15 Hz rumble (vibration or electrical, from inside the robot):
+            # a 100 Hz high-pass takes the floor from -46 to -52.5 dBFS.
+            self.hp, self.hp_state = None, None
+            if float(p('highpass_hz')) > 0:
+                try:
+                    from scipy.signal import butter, sosfilt, sosfilt_zi
+                    self.hp = butter(4, float(p('highpass_hz')), 'highpass', fs=16000, output='sos')
+                    self.hp_state = sosfilt_zi(self.hp) * 0.0
+                    self._sosfilt = sosfilt
+                except ImportError:
+                    self.get_logger().warning('no scipy: no high-pass filter')
             self.vad, self.window = make_vad(model_dir, float(p('vad_threshold')), self.min_silence,
                                              float(p('min_speech_s')), float(p('max_speech_s')))
             self.chat_timeout = float(p('chat_timeout_s'))
@@ -394,6 +407,9 @@ def _node_main(args):
 
         def _on_audio(self, msg) -> None:
             x = np.frombuffer(msg.data, dtype=np.int16).astype(np.float32) / 32768.0
+            if self.hp is not None:
+                x, self.hp_state = self._sosfilt(self.hp, x, zi=self.hp_state)
+                x = x.astype(np.float32)
             try:
                 self.queue.put_nowait(np.clip(x * self.gain, -1.0, 1.0))
             except queue.Full:
