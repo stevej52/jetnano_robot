@@ -185,8 +185,16 @@ sudo cp jetnano_bringup/systemd/*.service /etc/systemd/system/
 sudo cp jetnano_bringup/systemd/logind-removeipc.conf /etc/systemd/logind.conf.d/
 sudo systemctl daemon-reload
 sudo systemctl restart systemd-logind      # only with nobody logged in on a desktop
-sudo systemctl enable --now jetson-clocks.service isaac-vo.service jetnano-robot.service jetnano-slam.service wifi-watchdog.service
+sudo systemctl enable --now jetson-clocks.service isaac-vo.service jetnano-robot.service wifi-watchdog.service
 ```
+
+`jetnano-slam.service` (the persistent lidar map) is installed but not
+enabled: it starts on request - "Rosie, start mapping" / "stop mapping", or
+`sudo systemctl start|stop jetnano-slam` - because the map's origin is the
+parking spot and a map started anywhere else (the bench) spoils it. Its
+`KillMode=mixed` matters: with the default, the stop signal reached
+slam_toolbox at the same moment as the wrapper that was asking it to save,
+the save hung, and 90 s later everything was killed unsaved.
 
 `jetson-clocks.service` pins the CPU clocks at boot. With the default governor
 the cores idle down between bursts and ramp late, and every late ramp costs
@@ -320,6 +328,34 @@ Three rules hold this together, and each was a bug before it was a rule:
 Tested in simulate mode: teleop overrides Nav2 mid-run and Nav2 resumes when
 teleop lets go; the e-stop lock blocks a full-throttle command; every channel
 returns to neutral 0.5 s after commands stop.
+
+## Rosie: voice, brain and watchdog
+
+The robot is called Rosie. Everything below starts with `robot.launch.py`;
+what she understands is in [docs/talking-to-rosie.md](docs/talking-to-rosie.md),
+and the full rebuild in robot-environment `REBUILD.md`.
+
+| Node | What it does |
+|---|---|
+| `ears` | owns the USB mic (ALSA card `Device`): the room's level on `sound/level`, the raw audio on `sound/audio`, "huh?" at a clap |
+| `listen` | speech detection and speech-to-text on the CPU (sherpa-onnx, Moonshine); decides what was meant; her name wakes her, a conversation then runs without it |
+| `brain` | answers: small talk on the local model upstairs (llama.cpp, Qwen 2.5 14B), everything real handed to Claude Opus 5.5; "think hard" gets full thinking; a daily budget |
+| `speak` | text to her English voice (Piper), sentence by sentence, cached |
+| `sounds` | plays everything on the USB speaker (card `UACDemoV10`), one sound at a time; `mute` |
+| `health` (in listen) | her real status for "how are you" and the spoken report |
+| `topic_watch` (jetnano_watchdog, C++) | a cheap live count of the important streams |
+| `watchdog` | restarts whatever goes silent, step by step and within limits; shows problems on the driving page; `~/watchdog/events.jsonl` |
+
+Her voice nodes run in `~/venv-voice` (robot-environment
+`scripts/install_voice.sh`); the Claude key sits in
+`/etc/default/jetnano-robot` (`scripts/add-rosie-key.sh`); the local model
+lives on the PC upstairs (robot-environment `scripts/jedipc_brain.md`).
+Without the PC she answers with Claude; without the key, with the PC;
+without either, in her own beeps.
+
+Measured on the Orin, 2026-09-25: listen about 4 % of one core idle,
+`topic_watch` plus `watchdog` about 2 %. A Claude answer costs 0.3 to 0.7
+cents.
 
 ## Frames
 
