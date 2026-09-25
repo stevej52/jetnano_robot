@@ -12,24 +12,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Brain: Rosie thinks with Claude.
+"""Brain: Rosie thinks - with the model on JEDIPC, or with Claude.
 
     ros2 run jetnano_bringup brain            (in ~/venv-voice, like listen)
     ros2 topic pub --once /brain/ask std_msgs/msg/String "{data: 'What do you think about cats?'}"
 
 A question on ``brain/ask`` (plain text, or JSON {"text", "lead_in"}) is
-answered by Claude in her persona with the live facts (time, place, battery,
-uptime, the room). The answer streams sentence by sentence to ``/speak`` so
-she starts talking on the first one; the whole of it goes out on
+answered in her persona with the live facts (time, place, battery, uptime,
+the room). The answer streams sentence by sentence to ``/speak`` so she
+starts talking on the first one; the whole of it goes out on
 ``brain/answer``. A lead-in is what listen already said out loud before
 asking ("The Dodgers."): the model continues from it so the join is seamless.
 
-The key comes from the environment, ``ANTHROPIC_API_KEY``, set in
-``/etc/default/jetnano-robot`` (root-only) - never in the repo. Without one
-``brain/ready`` (latched) stays false and listen falls back to its own words.
-A daily budget in cents (``daily_budget_cents``) stops a chatty day from
-running the balance down; the day's spend is kept in ``~/voice/brain_spend.json``.
-She remembers the last few turns for ten minutes.
+Two backends, ``backend`` = auto | local | claude:
+  local   llama.cpp's server on the PC upstairs (``local_url``; Qwen 2.5 14B
+          on the Radeon, robot-environment ``scripts/jedipc_brain.md``): free,
+          private, fastest. Used whenever it answers ``/health``.
+  claude  ``claude-sonnet-5`` with ``ANTHROPIC_API_KEY`` from the environment
+          (``/etc/default/jetnano-robot``, root-only, never in the repo) -
+          the smarter one, and the fallback when that PC is off. A daily
+          budget in cents (``daily_budget_cents``) stops a chatty day from
+          running the balance down; the day's spend is in ``~/voice/brain_spend.json``.
+``brain/ready`` (latched) is true while either can answer; otherwise listen
+keeps to its own words. She remembers the last few turns for ten minutes.
 """
 
 import collections
@@ -39,6 +44,8 @@ import queue
 import re
 import threading
 import time
+import urllib.error
+import urllib.request
 
 import rclpy
 from rclpy.node import Node
@@ -79,6 +86,10 @@ class Brain(Node):
 
     def __init__(self):
         super().__init__('brain')
+        self.declare_parameter('backend', 'auto')                 # auto | local | claude
+        self.declare_parameter('local_url', 'http://192.168.1.137:8090')
+        self.declare_parameter('local_model', 'rosie')
+        self.declare_parameter('local_timeout_s', 30.0)
         self.declare_parameter('model', 'claude-sonnet-5')
         self.declare_parameter('max_tokens', 160)
         self.declare_parameter('timeout_s', 20.0)
@@ -90,6 +101,10 @@ class Brain(Node):
         self.declare_parameter('location', '')
         self.declare_parameter('spend_file', os.path.expanduser('~/voice/brain_spend.json'))
         p = lambda n: self.get_parameter(n).value  # noqa: E731
+        self.backend = str(p('backend'))
+        self.local_url = str(p('local_url')).rstrip('/')
+        self.local_model = str(p('local_model'))
+        self.local_timeout = float(p('local_timeout_s'))
         self.model = str(p('model'))
         self.max_tokens = int(p('max_tokens'))
         self.timeout = float(p('timeout_s'))
@@ -117,18 +132,89 @@ class Brain(Node):
 
         key = os.environ.get('ANTHROPIC_API_KEY', '').strip()
         self.client = None
-        if key:
+        if key and self.backend in ('auto', 'claude'):
             import anthropic
             self.client = anthropic.Anthropic(api_key=key, timeout=self.timeout, max_retries=1)
             self.get_logger().info(f'{self.model}, budget {self.budget:.0f} cents a day, '
                                    f'spent today {self._spent():.1f}')
-        else:
-            self.get_logger().warning('no ANTHROPIC_API_KEY in the environment: brain asleep '
+        elif self.backend in ('auto', 'claude'):
+            self.get_logger().warning('no ANTHROPIC_API_KEY in the environment: no Claude '
                                       '(put it in /etc/default/jetnano-robot)')
-        flag = Bool()
-        flag.data = self.client is not None
-        self.ready_pub.publish(flag)
+        self.local_up = self.backend in ('auto', 'local') and self._local_ok()
+        self.get_logger().info(f'local model at {self.local_url}: {"up" if self.local_up else "not answering"}')
+        self.ready = None
+        self._publish_ready()
+        self.create_timer(30.0, self._check_local)
         threading.Thread(target=self._work, daemon=True, name='brain').start()
+
+    # ----------------------------------------------------------- backends --
+
+    def _local_ok(self) -> bool:
+        try:
+            with urllib.request.urlopen(self.local_url + '/health', timeout=1.5) as r:
+                return r.status == 200
+        except (OSError, urllib.error.URLError, ValueError):
+            return False
+
+    def _check_local(self) -> None:
+        if self.backend not in ('auto', 'local'):
+            return
+        up = self._local_ok()
+        if up != self.local_up:
+            self.local_up = up
+            self.get_logger().info(f'local model {"is back" if up else "went away"}')
+        self._publish_ready()
+
+    def _publish_ready(self) -> None:
+        ready = self.local_up or self.client is not None
+        if ready != self.ready:
+            self.ready = ready
+            flag = Bool()
+            flag.data = ready
+            self.ready_pub.publish(flag)
+
+    def _pick(self):
+        if self.local_up and self.backend in ('auto', 'local'):
+            return 'local'
+        if self.client is not None and self.backend in ('auto', 'claude'):
+            return 'claude'
+        return None
+
+    def _stream_claude(self, system: str, messages: list):
+        with self.client.messages.stream(model=self.model, max_tokens=self.max_tokens,
+                                         system=system, messages=messages) as stream:
+            for piece in stream.text_stream:
+                if self._stopped:
+                    break
+                yield piece
+            final = stream.get_final_message()
+        self._usage = (final.usage.input_tokens, final.usage.output_tokens)
+
+    def _stream_local(self, system: str, messages: list):
+        body = json.dumps({'model': self.local_model, 'stream': True, 'max_tokens': self.max_tokens,
+                           'temperature': 0.7,
+                           'messages': [{'role': 'system', 'content': system}] + messages}).encode()
+        req = urllib.request.Request(self.local_url + '/v1/chat/completions', data=body,
+                                     headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(req, timeout=self.local_timeout) as r:
+            for raw in r:
+                if self._stopped:
+                    break
+                line = raw.decode('utf-8', 'replace').strip()
+                if not line.startswith('data:'):
+                    continue
+                data = line[5:].strip()
+                if data == '[DONE]':
+                    break
+                j = json.loads(data)
+                choice = (j.get('choices') or [{}])[0]
+                delta = (choice.get('delta') or {}).get('content')
+                if delta:
+                    yield delta
+                if j.get('usage'):
+                    self._usage = (int(j['usage'].get('prompt_tokens', 0)), int(j['usage'].get('completion_tokens', 0)))
+                if j.get('timings'):
+                    self._timings = j['timings']
 
     # ------------------------------------------------------------- facts --
 
@@ -207,10 +293,11 @@ class Brain(Node):
                 self._answer(text, str(ask.get('lead_in', '')).strip())
 
     def _answer(self, text: str, lead_in: str) -> None:
-        if self.client is None:
+        backend = self._pick()
+        if backend is None:
             self._say("I can't think right now. My brain is asleep.")
             return
-        if self._spent() >= self.budget:
+        if backend == 'claude' and self._spent() >= self.budget:
             self.get_logger().warning('daily budget spent')
             self._say("I've talked enough for today. Ask me again tomorrow.")
             return
@@ -221,28 +308,28 @@ class Brain(Node):
             system += LEAD_IN.format(lead_in=lead_in)
         messages = list(self.memory) + [{'role': 'user', 'content': text}]
         self._stopped = False
+        self._usage, self._timings = (0, 0), None
         buf, full, t0, first = '', '', time.monotonic(), None
         try:
-            with self.client.messages.stream(model=self.model, max_tokens=self.max_tokens,
-                                             system=system, messages=messages) as stream:
-                for piece in stream.text_stream:
-                    if self._stopped:
-                        break
-                    if first is None:
-                        first = time.monotonic() - t0
-                    buf += piece
-                    full += piece
-                    done, buf = sentences(buf)
-                    for s in done:
-                        self._say(s)
-                if not self._stopped and buf.strip():
-                    self._say(buf.strip())
-                final = stream.get_final_message()
-            cents = self._add_spend(final.usage.input_tokens, final.usage.output_tokens)
-        except Exception as exc:      # noqa: BLE001 - any API trouble: say so, stay up
-            self.get_logger().warning(f'{type(exc).__name__}: {str(exc)[:160]}')
+            pieces = self._stream_local(system, messages) if backend == 'local' else self._stream_claude(system, messages)
+            for piece in pieces:
+                if first is None:
+                    first = time.monotonic() - t0
+                buf += piece
+                full += piece
+                done, buf = sentences(buf)
+                for s in done:
+                    self._say(s)
+            if not self._stopped and buf.strip():
+                self._say(buf.strip())
+        except Exception as exc:      # noqa: BLE001 - any trouble: say so, stay up
+            self.get_logger().warning(f'{backend}: {type(exc).__name__}: {str(exc)[:160]}')
+            if backend == 'local':
+                self.local_up = False
+                self._publish_ready()
             self._say("I can't reach my brain right now.")
             return
+        cents = self._add_spend(*self._usage) if backend == 'claude' else self._spent()
         self.last_exchange = time.monotonic()
         full = full.strip()
         self.memory.append({'role': 'user', 'content': text})
@@ -250,9 +337,13 @@ class Brain(Node):
         answer = String()
         answer.data = (lead_in + ' ' + full).strip() if lead_in else full
         self.answer_pub.publish(answer)
-        self.get_logger().info(f'"{text[:80]}" -> "{full[:160]}" (first words {first or 0:.1f} s, '
-                               f'{time.monotonic() - t0:.1f} s, {final.usage.input_tokens}+{final.usage.output_tokens} '
-                               f'tokens, {cents:.1f} cents today{", cut" if self._stopped else ""})')
+        speed = ''
+        if self._timings and self._timings.get('predicted_per_second'):
+            speed = f', {self._timings["predicted_per_second"]:.0f} tokens/s'
+        self.get_logger().info(f'{backend}: "{text[:80]}" -> "{full[:160]}" (first words {first or 0:.1f} s, '
+                               f'{time.monotonic() - t0:.1f} s, {self._usage[0]}+{self._usage[1]} tokens{speed}'
+                               + (f', {cents:.1f} cents today' if backend == 'claude' else '')
+                               + (', cut' if self._stopped else '') + ')')
 
 
 def main(args=None):
