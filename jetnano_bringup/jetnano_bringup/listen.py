@@ -46,11 +46,19 @@ silence:
                                  when she reverts; "speak robot" ends it early
     "Rosie, in English"          the last thing she said, again, in words
 
+Anything else said to her in English goes to her brain (brain.py, Claude)
+when it is awake; she starts with a lead-in chosen here - the topic echoed
+back ("The Dodgers.") or a neutral opener ("Well,") - which the brain then
+continues, so the pause for thinking sounds like the start of the answer.
+In her own language she chatters and spends nothing; "Rosie, in English"
+then asks the brain the same question.
+
 Anyone may talk to her - no voice check, Steve's choice (2026-09-25). Deaf
 while the motors run.
 """
 
 import collections
+import json
 import os
 import queue
 import random
@@ -123,6 +131,38 @@ ENGLISH_REPLIES = (
     (('hello', 'hi', 'hey'), ["Hello!", "Hi! What's up?", "Hey there."]),
 )
 ENGLISH_FILLERS = ["I don't know. I'm just a robot."]
+
+# Lead-ins for the brain: never a stall, always the first words of the answer.
+# Steve, 2026-09-25: no "hmm", no "good question", no "let me think".
+LEAD_OPENERS = ('Well,', 'So,', 'Okay,', 'Right,', 'Honestly,', 'Oh,', "Let's see,", 'The way I see it,', 'Ah,', 'Now,')
+LEAD_ECHO = re.compile(r"\b(?:about|of|like|love|hate|into|heard of|know about|think of|thoughts on|feel about)"
+                       r"\s+(?:the |a |an |my |your |our )?([a-z]+(?: [a-z]+)?)\s*$")
+LEAD_SKIP = {'it', 'that', 'this', 'you', 'me', 'them', 'him', 'her', 'us', 'there', 'here', 'now', 'today', 'rosie',
+             'yourself', 'myself', 'something', 'anything', 'things', 'stuff', 'one', 'those', 'these'}
+FETCH_LEAD = {'all': "The news. Here's what's going on.", 'world': 'Okay, world news.', 'us': 'Okay, U S news.',
+              'local': 'Okay, news from {city}.', 'weather': 'The weather in {city}.', 'markets': 'The markets.'}
+
+
+def lead_in(text: str, last: str = None, rng=random) -> str:
+    """The first words of her answer, chosen before the brain is asked: the
+    topic echoed back when the sentence hands it over, else a neutral opener
+    (never the same one twice running), else nothing about a third of the time."""
+    t = normalize(text)
+    m = LEAD_ECHO.search(t)
+    if m:
+        topic = m.group(1)
+        if topic.split()[-1] not in LEAD_SKIP and topic.split()[0] not in LEAD_SKIP:
+            return topic[0].upper() + topic[1:] + '.'
+    if rng.random() < 0.33:
+        return ''
+    choices = [o for o in LEAD_OPENERS if o != last]
+    return rng.choice(choices)
+
+
+def known_subject(text: str) -> bool:
+    """True when the English table has an answer of its own for this."""
+    t = normalize(text)
+    return any(_has(t, subjects) for subjects, _replies in ENGLISH_REPLIES)
 
 
 def normalize(text: str) -> str:
@@ -297,6 +337,11 @@ def _node_main(args):
             self.say_pub = self.create_publisher(String, 'say', 10)
             self.speak_pub = self.create_publisher(String, 'speak', 10)
             self.stop_pub = self.create_publisher(Empty, 'sound/stop', 10)
+            self.ask_pub = self.create_publisher(String, 'brain/ask', 10)
+            self.brain_ready = False
+            self.last_opener = None
+            self.create_subscription(Bool, 'brain/ready', self._on_brain_ready,
+                                     QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
             self.mute_client = self.create_client(SetParameters, '/sounds/set_parameters')
             self.create_subscription(Int16MultiArray, 'sound/audio', self._on_audio, 10)
             self.create_subscription(Bool, 'sound/speaking', self._on_speaking, 10)
@@ -365,6 +410,11 @@ def _node_main(args):
 
         def _on_last(self, msg) -> None:
             self.last_sound = msg.data
+
+        def _on_brain_ready(self, msg) -> None:
+            if msg.data != self.brain_ready:
+                self.brain_ready = msg.data
+                self.get_logger().info('brain awake' if msg.data else 'brain asleep: her own words only')
 
         def _on_speak(self, msg) -> None:
             self.own_text.append(normalize(re.sub(r'\[\w+\]', '', msg.data)))
@@ -476,9 +526,13 @@ def _node_main(args):
                 self._set_param('english', False)         # the sounds node boops
             elif action == 'repeat':
                 # once, in words; the language stays. A news question answered
-                # with a story gets the real briefing now.
+                # with a story gets the real briefing now; an open question
+                # answered with chatter goes to the brain.
                 if self.last_sound == self.chat_file and (self.last_action or '').startswith('brief:'):
                     self._brief(self.last_action.split(':', 1)[1])
+                elif (self.last_sound == self.chat_file and self.last_action == 'chat' and self.brain_ready
+                      and self.last_question and not known_subject(self.last_question)):
+                    self._ask_brain(self.last_question)
                 else:
                     self._speak(self._last_in_english())
             elif action == 'bye':
@@ -492,7 +546,13 @@ def _node_main(args):
                     self.last_question, self.last_action = text, action
                     self._story()
             elif action == 'chat' and self.english:
-                self._speak(english_reply(text, self.battery, health=self.health))
+                if _has(normalize(text), HEALTH_WORDS):
+                    self._speak('Okay, checking.')             # the report samples for a couple of seconds
+                    self._speak(english_reply(text, self.battery, health=self.health))
+                elif known_subject(text) or not self.brain_ready:
+                    self._speak(english_reply(text, self.battery, health=self.health))
+                else:
+                    self._ask_brain(text)
             elif action == 'chat':
                 t = normalize(text)
                 self.last_question, self.last_action = text, action
@@ -519,8 +579,23 @@ def _node_main(args):
 
         # --------------------------------------------------------- briefing --
 
+        def _ask_brain(self, text: str) -> None:
+            lead = lead_in(text, self.last_opener)
+            if lead:
+                self._speak(lead)
+                self.last_opener = lead if lead in LEAD_OPENERS else self.last_opener
+            self.get_logger().info(f'asks the brain "{text[:80]}"' + (f' after "{lead}"' if lead else ''))
+            msg = self._String()
+            msg.data = json.dumps({'text': text, 'lead_in': lead})
+            self.ask_pub.publish(msg)
+
         def _brief(self, kind: str) -> None:
-            self._speak('Let me check.')
+            city = self.location.partition(',')[0].strip()
+            lead = FETCH_LEAD[kind]
+            if '{city}' in lead:
+                lead = (lead.format(city=city) if city
+                        else lead.replace(' in {city}', ' here').replace(' from {city}', ' from around here'))
+            self._speak(lead)
 
             def fetch():
                 try:

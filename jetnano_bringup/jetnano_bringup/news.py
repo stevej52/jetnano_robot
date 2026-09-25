@@ -160,6 +160,7 @@ def briefing(kind: str = 'all', location: str = '') -> list:
     """Sentences to say. kind: all | world | us | local | weather | markets."""
     kinds = list(KINDS) if kind == 'all' else [kind]
     per = 2 if kind == 'all' else 3
+    titled = kind == 'all'          # a single kind was announced by the lead-in already
     out = []
     place = None
     if 'local' in kinds or 'weather' in kinds:
@@ -170,12 +171,12 @@ def briefing(kind: str = 'all', location: str = '') -> list:
     for k in kinds:
         try:
             if k == 'world':
-                out += ['World news.'] + headlines('world', per)
+                out += (['World news.'] if titled else []) + headlines('world', per)
             elif k == 'us':
-                out += ['U S news.'] + headlines('us', per)
+                out += (['U S news.'] if titled else []) + headlines('us', per)
             elif k == 'local':
                 if place:
-                    out += [f'News from {place[0]}.'] + headlines('local', per, place[0])
+                    out += ([f'News from {place[0]}.'] if titled else []) + headlines('local', per, place[0])
                 else:
                     out.append("I don't know where local is.")
             elif k == 'weather':

@@ -195,6 +195,23 @@ def generate_launch_description():
                 LaunchConfiguration('listen_python'), "')"])),
         ),
 
+        # Her brain: Claude, when ANTHROPIC_API_KEY is in the environment
+        # (/etc/default/jetnano-robot); otherwise it starts, says so once, and
+        # listen keeps to its own words.
+        Node(
+            package='jetnano_bringup',
+            executable='brain',
+            name='brain',
+            output='screen',
+            respawn=True,
+            respawn_delay=10.0,
+            parameters=[{'location': LaunchConfiguration('location')}],
+            prefix=[LaunchConfiguration('listen_python'), ' '],
+            condition=IfCondition(PythonExpression([
+                "'", LaunchConfiguration('use_listen'), "' == 'true' and __import__('os').path.exists('",
+                LaunchConfiguration('listen_python'), "')"])),
+        ),
+
         # Words, from the ears' audio stream; needs the ears.
         Node(
             package='jetnano_bringup',

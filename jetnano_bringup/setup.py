@@ -39,6 +39,7 @@ setup(
             'ears = jetnano_bringup.ears:main',
             'listen = jetnano_bringup.listen:main',
             'speak = jetnano_bringup.speak:main',
+            'brain = jetnano_bringup.brain:main',
         ],
     },
 )
