@@ -61,11 +61,12 @@ TALK = ('you can talk', 'talk now', 'you can speak', 'speak now', 'unmute', 'tal
 BYE = ('i have to go', 'i got to go', 'gotta go', 'got to go', 'bye', 'goodbye', 'good bye', 'see you', 'see ya',
        'talk to you later', 'great talking', 'nice talking', 'good talking', 'good night', 'catch you later',
        'i am leaving', "i'm leaving", 'i am going')
-ENGLISH_ON = ('speak english', 'talk english', 'in english', 'english please', 'english for now', 'use english',
-              'say it in english', 'english now')
 ENGLISH_OFF = ('speak robot', 'talk robot', 'speak rosie', 'your language', 'own language', 'robot language',
                'rosie language', 'stop speaking english', 'no more english', 'speak beeps', 'back to beeps',
-               'back to normal', 'speak droid')
+               'back to normal', 'speak droid', 'beeps', 'boops', 'beep boop')
+# Any mention of English when she is addressed ("Rosie, English please") switches;
+# the off phrases are checked first so "no more english" is not an on.
+ENGLISH_ON = ('english',)
 
 # What she says in English when chatting (first matching subject wins, else a filler).
 ENGLISH_REPLIES = (
@@ -117,10 +118,10 @@ def decide(text: str, mode: str):
         return None, mode
     if _has(t, QUIET):
         return 'quiet', 'idle'
-    if _has(t, ENGLISH_ON):
-        return 'english', mode
     if _has(t, ENGLISH_OFF):
         return 'robot', mode
+    if _has(t, ENGLISH_ON):
+        return 'english', mode
     if _has(t, TALK):
         return 'talk', mode
     if _has(t, BYE):
