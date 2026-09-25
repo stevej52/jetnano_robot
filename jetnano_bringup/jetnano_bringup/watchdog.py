@@ -118,7 +118,7 @@ TOPICS = {
         ('signal', proc('jetnano_bringup/battery_monitor'), 15.0)]),
     'cliff': ('cliff sensors', '/cliff/ranges', 3.0, None, 'seen', None, [
         ('signal', proc('jetnano_bringup/cliff_guard'), 15.0)]),
-    'map': ('map', '/map', 30.0, None, 'slam', None, []),       # report only: never restart mapping
+    'map': ('map', '/map', 45.0, None, 'slam', None, []),       # report only: never restart mapping
 }
 
 # Nodes that respawn by themselves: reported if one stays away.
@@ -193,6 +193,7 @@ class Watchdog(Node):
         self.english = False
         self.container_busy_until = 0.0  # one container action at a time
         self.slam_active = False
+        self.slam_since = 0.0
         self.guard_inactive_since = 0.0
 
         self.events_pub = self.create_publisher(String, 'watchdog/events', 10)
@@ -256,7 +257,7 @@ class Watchdog(Node):
             if age >= 0:
                 item.seen = True
             expected = (need == 'always' or (need == 'seen' and item.seen)
-                        or (need == 'slam' and self.slam_active))
+                        or (need == 'slam' and self.slam_active and now - self.slam_since > 60.0))
             if not expected:
                 continue
             if depends and self.items[depends].state != 'ok':
@@ -279,9 +280,15 @@ class Watchdog(Node):
 
     def _slow_checks(self) -> None:
         """Every 10 s: nodes present, web endpoints, the guard's lifecycle."""
+        now = time.monotonic()
+        # mapping is started and stopped on request: follow it closely, and
+        # give a new mapper a minute before judging its map
+        active = self._run(['systemctl', 'is-active', 'jetnano-slam'], timeout=5.0).strip() == 'active'
+        if active and not self.slam_active:
+            self.slam_since = now
+        self.slam_active = active
         if self._in_grace():
             return
-        now = time.monotonic()
         names = set(self.get_node_names())
         for n, item in self.node_items.items():
             if n == 'topic_watch':
@@ -368,7 +375,6 @@ class Watchdog(Node):
         link = self._run(['iw', 'dev', 'wlP1p1s0', 'link'])
         m = re.search(r'signal: (-?\d+)', link)
         s['wifi_dbm'] = int(m.group(1)) if m else None
-        self.slam_active = self._run(['systemctl', 'is-active', 'jetnano-slam']).strip() == 'active'
         s['slam'] = self.slam_active
         self.sys = s
         if self._in_grace():
