@@ -218,8 +218,8 @@ def decide(text: str, mode: str):
         return 'map_stop', mode
     if _has(t, MAP_START):
         return 'map_start', mode
-    if _has(t, QUIET):
-        return 'quiet', 'idle'
+    if _has(t, QUIET) and addressed:     # a mute is sticky: only "Rosie, be quiet" (2026-09-25:
+        return 'quiet', 'idle'            # "tell her to be quiet", said about someone else, muted her)
     if _has(t, STOP):
         return 'stop', 'idle' if 'enough' in t else mode
     if _has(t, THANKS):
@@ -246,7 +246,10 @@ def over_her_voice(text: str, own: str = ''):
     the word is in what she is saying herself ("It's nice and quiet",
     a headline with "stop" in it): that is her, not you."""
     t = normalize(text)
+    named = re.search(rf'{NAME}', t) is not None
     for action, phrases in (('map_stop', MAP_STOP), ('quiet', QUIET), ('stop', STOP)):
+        if action == 'quiet' and not named:
+            continue                      # muting needs her name, even over her own voice
         if any(re.search(r'\b' + re.escape(p) + r'\b', t) and not re.search(r'\b' + re.escape(p) + r'\b', own)
                for p in phrases):
             return action
