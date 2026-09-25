@@ -35,9 +35,11 @@ night can be told to stop without stopping it. With no speaker present it
 logs once and keeps trying quietly.
 
 English mode ("Rosie, speak English", or ros2 param set /sounds english true):
-for ``english_for_s`` (three minutes) every mood is said in words instead,
-through the ``speak`` node (text -> her Piper voice); then she goes back to
-her own language by herself. ``sound/english`` (latched) says which it is.
+for ``english_for_s`` (five minutes) every mood is said in words instead
+(voice.ENGLISH, through the ``speak`` node); then she goes back to her own
+language by herself, with a boopity boop. ``sound/english`` (latched) says
+which it is. ``sound/last`` is whatever she played last (a mood or a file),
+for "Rosie, in English".
 """
 
 import glob
@@ -56,25 +58,12 @@ from rclpy.qos import DurabilityPolicy, QoSProfile
 from sensor_msgs.msg import BatteryState
 from std_msgs.msg import Bool, String
 
+from jetnano_bringup.voice import ENGLISH
+
 try:
     from nav2_msgs.msg import CollisionMonitorState
 except ImportError:  # pragma: no cover
     CollisionMonitorState = None
-
-# What each mood says when she speaks English (one is picked at random).
-ENGLISH = {
-    'hello': ["Hello!", "Hi there!", "Rosie is up and running."],
-    'ok': ["Okay.", "Got it.", "Sure."],
-    'no': ["Nope.", "I can't go that way.", "Something is in the way."],
-    'alarm': ["Emergency stop!", "Stopping!"],
-    'sad': ["My battery is getting low.", "I could use a charge soon."],
-    'happy': ["Yay!", "I made it!", "Woo hoo!"],
-    'curious': ["Who's there?", "Hello? Is somebody there?"],
-    'sleepy': ["I'm so sleepy. Going to sleep now.", "Time for a nap."],
-    'hm': ["Hm?"],
-    'huh': ["What was that?", "Huh? Did you hear that?", "What was that noise?"],
-    'bye': ["Bye bye! Come back soon.", "See you later!", "Bye! It was nice talking to you."],
-}
 
 
 class Sounds(Node):
@@ -91,7 +80,7 @@ class Sounds(Node):
         self.declare_parameter('min_gap_s', 2.5)
         self.declare_parameter('hello_after_s', 4.0)
         self.declare_parameter('english', False)         # speak English (for english_for_s, then back)
-        self.declare_parameter('english_for_s', 180.0)
+        self.declare_parameter('english_for_s', 300.0)
 
         self.dir = os.path.expanduser(str(self.get_parameter('sound_dir').value))
         card = str(self.get_parameter('card').value)
@@ -111,6 +100,7 @@ class Sounds(Node):
         self.speak_pub = self.create_publisher(String, 'speak', 10)
         self.english_pub = self.create_publisher(
             Bool, 'sound/english', QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+        self.last_pub = self.create_publisher(String, 'sound/last', 10)
         self.english_until = 0.0
         self.add_on_set_parameters_callback(self._on_params)
         self.create_timer(1.0, self._tick)
@@ -151,16 +141,18 @@ class Sounds(Node):
     def _on_params(self, params):
         for prm in params:
             if prm.name == 'english':
+                was_on = self.english_until > 0.0
                 self.english_until = (time.monotonic() + float(self.get_parameter('english_for_s').value)
                                       if prm.value else 0.0)
                 self._publish_english(prm.value)
+                if was_on and not prm.value:
+                    self.get_logger().info('back to her own language')
+                    self.say('boop', force=True)
         return SetParametersResult(successful=True)
 
     def _tick(self) -> None:
-        if self.english_until and not self.english:
-            self.english_until = 0.0
+        if self.english_until and not self.english:       # the five minutes are up
             self.set_parameters([Parameter('english', Parameter.Type.BOOL, False)])
-            self.get_logger().info('back to her own language')
 
     def _publish_english(self, on=None) -> None:
         msg = Bool()
@@ -200,6 +192,9 @@ class Sounds(Node):
                     self._warned = True
                 elif result.returncode == 0:
                     self._warned = False
+                    last = String()
+                    last.data = mood
+                    self.last_pub.publish(last)
             except (OSError, subprocess.TimeoutExpired) as exc:
                 if not self._warned:
                     self.get_logger().warning(f'cannot play sounds: {exc}')

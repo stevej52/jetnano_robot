@@ -30,10 +30,13 @@ robot). Then:
                                  whatever you say next gets an answer, no name
                                  needed, until "I have to go" / "bye" (a wave)
                                  or ``chat_timeout_s`` of silence
-    "Rosie, speak English"       for three minutes she says everything in words
+    "Rosie, speak English"       for five minutes she says everything in words
                                  (the sounds node's English mode, through the
                                  speak node) and answers a chat in English;
-                                 "Rosie, speak robot" ends it early
+                                 "Rosie, speak robot" ends it early, and the
+                                 end gets a boopity boop
+    "Rosie, in English"          she says the last thing she said again, in
+                                 words, and stays in her own language
 
 Her chatter is made fresh for every reply in her own voice, about as long as
 what you said. Anyone may talk to her - no voice check, Steve's choice
@@ -64,9 +67,12 @@ BYE = ('i have to go', 'i got to go', 'gotta go', 'got to go', 'bye', 'goodbye',
 ENGLISH_OFF = ('speak robot', 'talk robot', 'speak rosie', 'your language', 'own language', 'robot language',
                'rosie language', 'stop speaking english', 'no more english', 'speak beeps', 'back to beeps',
                'back to normal', 'speak droid', 'beeps', 'boops', 'beep boop')
-# Any mention of English when she is addressed ("Rosie, English please") switches;
-# the off phrases are checked first so "no more english" is not an on.
-ENGLISH_ON = ('english',)
+# Five minutes of English; the off phrases are checked first so "no more
+# english" is not an on. Any other mention of English ("Rosie, in English",
+# "say that in English") is a request to repeat the last thing in words.
+ENGLISH_ON = ('speak english', 'talk english', 'switch to english', 'use english', 'english please',
+              'english for now', 'english mode', 'go english', 'english now', 'english for a while')
+ENGLISH_REPEAT = ('english',)
 
 HEALTH_WORDS = ('how are you', 'how you doing', 'you doing', 'how is it going', "how's it going", 'how are things',
                 'how do you feel', 'how are you feeling', 'status report', 'status', 'how is everything',
@@ -111,14 +117,15 @@ def _has(t: str, phrases) -> bool:
 
 def decide(text: str, mode: str):
     """What she does with what she heard -> (action, new mode).
-    action: 'quiet' | 'talk' | 'english' | 'robot' | 'bye' | 'chat' | None; mode: 'idle' | 'chat'."""
+    action: 'quiet' | 'talk' | 'english' | 'robot' | 'repeat' | 'bye' | 'chat' | None;
+    mode: 'idle' | 'chat'."""
     t = normalize(text)
     addressed = re.search(rf'\b{NAME}\b', t) is not None
     # These two are specific enough to work even when her name got lost at
     # the start of the sentence (the model drops a soft first word now and then).
     if _has(t, ('speak robot', 'talk robot', 'speak rosie', 'speak beeps', 'speak droid')):
         return 'robot', mode
-    if _has(t, ('speak english', 'talk english', 'in english')):
+    if _has(t, ('speak english', 'talk english')):
         return 'english', 'chat'         # asking for English opens the conversation too
     if not (addressed or mode == 'chat'):
         return None, mode
@@ -128,6 +135,8 @@ def decide(text: str, mode: str):
         return 'robot', mode
     if _has(t, ENGLISH_ON):
         return 'english', 'chat'
+    if _has(t, ENGLISH_REPEAT):
+        return 'repeat', mode
     if _has(t, TALK):
         return 'talk', mode
     if _has(t, BYE):
@@ -209,6 +218,7 @@ def _node_main(args):
 
     from jetnano_bringup import voice
     from jetnano_bringup.health import Health
+    from jetnano_bringup.voice import ENGLISH
 
     class Listen(Node):
 
@@ -248,6 +258,7 @@ def _node_main(args):
             self.create_subscription(Bool, 'sound/english', self._on_english,
                                      QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
             self.create_subscription(BatteryState, 'battery', self._on_battery, 10)
+            self.create_subscription(String, 'sound/last', self._on_last, 10)
             self.create_subscription(Twist, 'cmd_vel', self._on_cmd, 10)
             # Typed words count as heard: for tests, and for a page one day.
             self.create_subscription(String, 'speech/type', lambda m: self._understand(m.data, 2.0), 10)
@@ -259,6 +270,8 @@ def _node_main(args):
             self.muted = False
             self.english = False
             self.battery = None
+            self.last_sound = None          # what the sounds node played last (mood or file)
+            self.last_question = None       # what her last chatter was an answer to
             self.active = False
             self.last_heard = 0.0
             self.last_cmd = 0.0
@@ -289,6 +302,22 @@ def _node_main(args):
 
         def _on_battery(self, msg) -> None:
             self.battery = (msg.percentage, msg.present)
+
+        def _on_last(self, msg) -> None:
+            self.last_sound = msg.data
+
+        def _last_in_english(self) -> str:
+            """The last thing she said, in words."""
+            last = self.last_sound
+            if last is None:
+                return "I haven't said anything yet."
+            if last in (self.chat_file, 'laugh') and self.last_question:
+                return english_reply(self.last_question, self.battery, health=self.health)
+            if last in ENGLISH:
+                return random.choice(ENGLISH[last])
+            if last.endswith('.wav'):
+                return 'That was already in English.'
+            return "I don't know how to say that in English."
 
         def _on_cmd(self, msg) -> None:
             if msg.linear.x != 0.0 or msg.angular.z != 0.0:
@@ -361,17 +390,19 @@ def _node_main(args):
                 self._set_mute(False)
                 self._say('happy')
             elif action == 'english':
-                self._set_param('english', True)
-                self._speak("Okay! I'll speak English for the next three minutes.")
+                self._set_param('english', True)          # five minutes; the sounds node keeps the clock
+                self._speak('Okay.')
             elif action == 'robot':
-                self._set_param('english', False)
-                self._say('ok')
+                self._set_param('english', False)         # the sounds node boops
+            elif action == 'repeat':
+                self._speak(self._last_in_english())      # once, in words; the language stays
             elif action == 'bye':
                 self._say('bye')
             elif action == 'chat' and self.english:
                 self._speak(english_reply(text, self.battery, health=self.health))
             elif action == 'chat':
                 t = normalize(text)
+                self.last_question = text
                 if _has(t, JOKE_WORDS):
                     self._say('laugh')
                     return

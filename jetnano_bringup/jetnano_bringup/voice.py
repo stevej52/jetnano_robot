@@ -36,6 +36,10 @@ different. The moods and where the sounds node uses them:
               statement at the end                       one fresh each time, as long as yours
     laugh     six rough "heh"s bouncing down, a slide    "tell me a joke" (after "you're a joke")
     story     several runs of chatter with breaths       "how are you?" in her own language
+    boop      boopity boop                               back to her own language after English
+
+ENGLISH below is what each mood means in words: the sounds node says that
+instead in English mode, and listen uses it for "Rosie, in English".
 
 Each mood is written with three slightly different takes (pitch and timing
 jitter), so she does not say exactly the same thing twice in a row.
@@ -53,6 +57,23 @@ import numpy as np
 
 RATE = 22050
 BASE = 467.0        # her middle: half an octave under A5, where Steve liked it (2026-09-24)
+
+# What each mood says in words (one is picked at random).
+ENGLISH = {
+    'hello': ["Hello!", "Hi there!", "Rosie is up and running."],
+    'ok': ["Okay.", "Got it.", "Sure."],
+    'no': ["Nope.", "I can't go that way.", "Something is in the way."],
+    'alarm': ["Emergency stop!", "Stopping!"],
+    'sad': ["My battery is getting low.", "I could use a charge soon."],
+    'happy': ["Yay!", "I made it!", "Woo hoo!"],
+    'curious': ["Who's there?", "Hello? Is somebody there?"],
+    'sleepy': ["I'm so sleepy. Going to sleep now.", "Time for a nap."],
+    'hm': ["Hm?"],
+    'huh': ["What was that?", "Huh? Did you hear that?", "What was that noise?"],
+    'bye': ["Bye bye! Come back soon.", "See you later!", "Bye! It was nice talking to you."],
+    'laugh': ["You're a joke. [laugh]"],
+    'boop': ["Back to my own language."],
+}
 # The USB speaker swallows the first ~80 ms after it wakes: measured with her
 # own mic 2026-09-25, "hm" came out as 0.08 s of 0.16 s and 8 dB quieter;
 # with a lead-in of silence all of it came through. So every file starts quiet.
@@ -241,10 +262,20 @@ def laugh(j):
     return np.concatenate(parts)
 
 
+def boop(j):
+    """Boopity boop: three quick notes and a settling one - she is back to
+    her own language after a spell of English."""
+    k = 2 ** (j / 12)
+    return np.concatenate([tone(flat(BASE * k * 1.26), 0.07, vibrato_depth=0.0), rest(0.02),
+                           tone(flat(BASE * k * 1.5), 0.06, vibrato_depth=0.0), rest(0.02),
+                           tone(flat(BASE * k * 1.26), 0.07, vibrato_depth=0.0), rest(0.09),
+                           tone(glide(BASE * k * 1.0, BASE * k * 0.9), 0.16, vibrato_depth=0.02)])
+
+
 MOODS = {'hello': hello, 'ok': ok, 'no': no, 'alarm': alarm, 'sad': sad,
          'happy': happy, 'curious': curious, 'sleepy': sleepy, 'hm': hm, 'huh': huh,
          'bye': bye, 'chat': lambda j: chat(random.randrange(4, 9), j), 'laugh': laugh,
-         'story': lambda j: story(3, j)}
+         'story': lambda j: story(3, j), 'boop': boop}
 
 
 def write_wav(path, samples, volume=0.6):
