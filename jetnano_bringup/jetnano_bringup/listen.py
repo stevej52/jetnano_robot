@@ -64,6 +64,7 @@ while the motors run.
 """
 
 import collections
+import difflib
 import glob
 import json
 import os
@@ -254,6 +255,28 @@ def over_her_voice(text: str, own: str = ''):
                for p in phrases):
             return action
     return None
+
+
+def beyond_her_voice(text: str, own: str) -> str:
+    """What someone said right after her, caught in the same stretch of sound
+    as the end of her own sentence (2026-09-25: "...What's on your mind today?
+    What's your full status report" was dropped whole as her echo). Her words
+    are matched and cut off; what follows them is returned, or '' if nothing
+    of a person's is left."""
+    t = normalize(text).split()
+    o = normalize(own).split()
+    if len(t) < 2 or not o:
+        return ''
+    sm = difflib.SequenceMatcher(a=t, b=o, autojunk=False)
+    blocks = [b for b in sm.get_matching_blocks() if b.size >= 2]
+    if not blocks:
+        return ''
+    rest = t[max(b.a + b.size for b in blocks):]
+    if len(rest) < 2:
+        return ''
+    if difflib.SequenceMatcher(a=rest, b=o, autojunk=False).ratio() > 0.6:
+        return ''                      # more of her own words, heard badly
+    return ' '.join(rest)
 
 
 ROBOT_SOUNDS = re.compile(r"^(beep|beeps|boop|boops|bop|bops|bleep|bleeps|bloop|bloops|blip|blips|blorp|bip|bweep|"
@@ -581,6 +604,14 @@ def _node_main(args):
             if overlapped:
                 action = over_her_voice(text, ' '.join(self.own_text))
                 if action is None:
+                    rest = beyond_her_voice(text, ' '.join(list(self.own_text)[-3:]))
+                    if rest:
+                        self.get_logger().info(f'heard after her own voice: "{rest[:80]}" ({db:.0f} dBFS)')
+                        msg = self._String()
+                        msg.data = rest
+                        self.text_pub.publish(msg)
+                        self._understand(rest, seconds, took, db)
+                        return
                     self.get_logger().info(f'ignored over her own voice: "{text[:80]}" ({db:.0f} dBFS)')
                 if action == 'map_stop':
                     self.get_logger().info(f'heard "{text}" over her own voice -> stop mapping')
