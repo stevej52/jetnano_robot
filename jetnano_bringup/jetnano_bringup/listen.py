@@ -246,7 +246,7 @@ def over_her_voice(text: str, own: str = ''):
     the word is in what she is saying herself ("It's nice and quiet",
     a headline with "stop" in it): that is her, not you."""
     t = normalize(text)
-    named = re.search(rf'{NAME}', t) is not None
+    named = re.search(r'\b' + NAME + r'\b', t) is not None
     for action, phrases in (('map_stop', MAP_STOP), ('quiet', QUIET), ('stop', STOP)):
         if action == 'quiet' and not named:
             continue                      # muting needs her name, even over her own voice
