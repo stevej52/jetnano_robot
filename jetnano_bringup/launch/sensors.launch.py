@@ -81,6 +81,8 @@ def generate_launch_description():
                     package='laser_filters',
                     executable='scan_to_scan_filter_chain',
                     name='scan_filter',
+                    respawn=True,
+                    respawn_delay=3.0,
                     output='screen',
                     parameters=[scan_filter_config],
                     remappings=[('scan', 'scan_raw'), ('scan_filtered', 'scan')],
@@ -94,6 +96,8 @@ def generate_launch_description():
                 package='realsense2_camera',
                 executable='realsense2_camera_node',
                 name='camera',
+                respawn=True,
+                respawn_delay=3.0,
                 namespace='camera',
                 output='screen',
                 parameters=[{

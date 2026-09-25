@@ -40,6 +40,7 @@ setup(
             'listen = jetnano_bringup.listen:main',
             'speak = jetnano_bringup.speak:main',
             'brain = jetnano_bringup.brain:main',
+            'watchdog = jetnano_bringup.watchdog:main',
         ],
     },
 )

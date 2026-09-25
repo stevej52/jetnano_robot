@@ -295,7 +295,7 @@ def _node_main(args):
     from rclpy.node import Node
     from rclpy.qos import DurabilityPolicy, QoSProfile
     from sensor_msgs.msg import BatteryState
-    from std_msgs.msg import Bool, Empty, Int16MultiArray, String
+    from std_msgs.msg import Bool, Empty, Int16MultiArray, String, UInt32
 
     from jetnano_bringup import news, voice
     from jetnano_bringup.health import Health
@@ -382,6 +382,12 @@ def _node_main(args):
             self.health = Health(self)          # for "how are you?" in English
 
             self.queue = queue.Queue(maxsize=200)
+            # A heartbeat from the listening thread itself, for the watchdog:
+            # it stops if that thread hangs, even while the node looks alive.
+            self.worked = 0.0
+            self.beat_pub = self.create_publisher(UInt32, 'speech/heartbeat', 10)
+            self.beats = 0
+            self.create_timer(2.0, self._beat)
             self.mode = 'idle'
             self.muted = False
             self.english = False
@@ -452,6 +458,7 @@ def _node_main(args):
             pre = int(0.3 * 16000)                        # a little before the VAD's start, for a soft first word
             while rclpy.ok():
                 chunk = self.queue.get()
+                self.worked = time.monotonic()
                 if time.monotonic() - self.last_cmd < self.still_after:
                     buf = buf[:0]                         # motors running: deaf
                     continue
@@ -598,6 +605,13 @@ def _node_main(args):
         def _story(self) -> None:
             voice.write_wav(self.chat_file, voice.story(random.randrange(4, 6), rng=random))
             self._say(self.chat_file)
+
+        def _beat(self) -> None:
+            if time.monotonic() - self.worked < 3.0:
+                self.beats += 1
+                msg = UInt32()
+                msg.data = self.beats
+                self.beat_pub.publish(msg)
 
         def _tick(self) -> None:
             if self.mode == 'chat' and time.monotonic() - self.last_heard > self.chat_timeout:

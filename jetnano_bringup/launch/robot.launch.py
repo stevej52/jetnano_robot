@@ -101,6 +101,12 @@ def generate_launch_description():
             'listen_python', default_value='/home/jeston/venv-voice/bin/python3',
             description='the venv python that has sherpa-onnx'),
         DeclareLaunchArgument(
+            'use_watchdog', default_value='true',
+            description='restart silent sensors and nodes (jetnano_watchdog topic_watch + jetnano_bringup watchdog)'),
+        DeclareLaunchArgument(
+            'watchdog_act', default_value='true',
+            description='false: the watchdog only watches and reports'),
+        DeclareLaunchArgument(
             'location', default_value='',
             description='where "local news" and "the weather" are: "City,State" (set in /etc/default/jetnano-robot); '
                         'empty = wherever the internet connection appears to be'),
@@ -193,6 +199,31 @@ def generate_launch_description():
             condition=IfCondition(PythonExpression([
                 "'", LaunchConfiguration('use_listen'), "' == 'true' and __import__('os').path.exists('",
                 LaunchConfiguration('listen_python'), "')"])),
+        ),
+
+        # The watchdog: a C++ tally of the streams (cheap), and the node that
+        # decides what to restart when one goes silent.
+        Node(
+            package='jetnano_watchdog',
+            executable='topic_watch',
+            name='topic_watch',
+            output='screen',
+            respawn=True,
+            respawn_delay=3.0,
+            parameters=[{'topics': ['/scan_raw', '/scan', '/imu/data', '/vo', '/odometry/filtered',
+                                    '/nvblox_node/static_occupancy_grid', '/sound/audio', '/speech/heartbeat',
+                                    '/map', '/battery', '/cliff/ranges']}],
+            condition=IfCondition(LaunchConfiguration('use_watchdog')),
+        ),
+        Node(
+            package='jetnano_bringup',
+            executable='watchdog',
+            name='watchdog',
+            output='screen',
+            respawn=True,
+            respawn_delay=5.0,
+            parameters=[{'act': LaunchConfiguration('watchdog_act')}],
+            condition=IfCondition(LaunchConfiguration('use_watchdog')),
         ),
 
         # Her brain: Claude, when ANTHROPIC_API_KEY is in the environment

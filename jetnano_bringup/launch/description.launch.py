@@ -32,6 +32,8 @@ def generate_launch_description():
             package='robot_state_publisher',
             executable='robot_state_publisher',
             name='robot_state_publisher',
+            respawn=True,
+            respawn_delay=3.0,
             output='screen',
             parameters=[{
                 'robot_description': robot_description,
@@ -46,6 +48,8 @@ def generate_launch_description():
             package='joint_state_publisher',
             executable='joint_state_publisher',
             name='joint_state_publisher',
+            respawn=True,
+            respawn_delay=3.0,
             output='screen',
             parameters=[{'use_sim_time': use_sim_time}],
         ),
