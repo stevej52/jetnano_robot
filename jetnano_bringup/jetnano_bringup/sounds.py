@@ -120,7 +120,12 @@ class Sounds(Node):
             cmd = ['aplay', '-q'] + (['-D', self.device] if self.device else []) + [random.choice(takes)]
             self._speaking(True)
             try:
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                for attempt in range(5):
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+                    # someone else (a test, a tune) has the speaker: wait for them
+                    if result.returncode == 0 or 'busy' not in result.stderr or attempt == 4:
+                        break
+                    time.sleep(0.4)
                 if result.returncode != 0 and not self._warned:
                     self.get_logger().warning(f'cannot play sounds: {result.stderr.strip()[:120]} (is the speaker plugged in?)')
                     self._warned = True

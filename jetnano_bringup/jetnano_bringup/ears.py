@@ -28,8 +28,10 @@ speaker is right next to the mic), and she never listens to *words* here:
 this is a level meter, not a microphone feed to anything.
 
 The mic is named by ALSA card (``arecord -l``); a C-Media "USB PnP Sound
-Device" appears as card "Device". Its Auto Gain Control is switched on for
-speech-like levels.
+Device" appears as card "Device". Its Auto Gain Control is left off: a level
+meter wants the whole range, and it made no difference on the bench anyway.
+Watch what she hears with ``ros2 topic echo /sound/level`` and tune the two
+thresholds if claps go unheard or the TV gets answered.
 """
 
 import math
@@ -50,12 +52,14 @@ class Ears(Node):
         super().__init__('ears')
         self.declare_parameter('card', 'Device')
         self.declare_parameter('rate', 16000)
-        self.declare_parameter('gain_percent', 80)
-        self.declare_parameter('auto_gain', True)
+        # Measured 2026-09-25 on the bench: a quiet room reads -46 dBFS, her own
+        # speaker at 80 % only -24 at the mic; gain and AGC hardly move either.
+        self.declare_parameter('gain_percent', 100)
+        self.declare_parameter('auto_gain', False)
         self.declare_parameter('chunk_s', 0.1)
         self.declare_parameter('background_s', 3.0)      # how slowly the room's level is followed
-        self.declare_parameter('loud_above_db', 18.0)
-        self.declare_parameter('loud_min_dbfs', -28.0)
+        self.declare_parameter('loud_above_db', 15.0)
+        self.declare_parameter('loud_min_dbfs', -34.0)
         self.declare_parameter('still_after_s', 2.0)
         self.declare_parameter('say_min_gap_s', 6.0)
         self.declare_parameter('deaf_after_speaking_s', 0.6)   # the speaker is an inch from the mic
@@ -73,8 +77,8 @@ class Ears(Node):
         gain = int(self.get_parameter('gain_percent').value)
         for control in ('Mic', 'Capture'):
             subprocess.run(['amixer', '-q', '-c', self.card, 'sset', control, f'{gain}%'], capture_output=True, timeout=5)
-        if bool(self.get_parameter('auto_gain').value):
-            subprocess.run(['amixer', '-q', '-c', self.card, 'sset', 'Auto Gain Control', 'on'], capture_output=True, timeout=5)
+        agc = 'on' if bool(self.get_parameter('auto_gain').value) else 'off'
+        subprocess.run(['amixer', '-q', '-c', self.card, 'sset', 'Auto Gain Control', agc], capture_output=True, timeout=5)
 
         self.level_pub = self.create_publisher(Float32, 'sound/level', 10)
         self.loud_pub = self.create_publisher(Bool, 'sound/loud', 10)
