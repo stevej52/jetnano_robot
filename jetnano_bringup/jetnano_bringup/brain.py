@@ -63,10 +63,11 @@ You are SPEAKING OUT LOUD through a small speaker to whoever is in the room. Ans
 sentences, about twenty-five words at most. Plain spoken English: no lists, no markdown, no emojis, no stage \
 directions, no "as a robot". If you don't know, say so in a few words. Never claim to have moved, seen or \
 done something you have not. You cannot take actions from this conversation; if asked to go somewhere, say \
-Steve drives you from the web page for now.
+Steve drives you from the web page for now."""
 
-Right now: {facts}"""
-
+# The persona above never changes, so the local server keeps it cached and
+# only the lines below get processed each time: keep them last and short.
+FACTS = "\n\nRight now: {facts}"
 LEAD_IN = """\n\nYou have already said out loud: "{lead_in}" Continue from there so it reads as one natural \
 thought. Do not repeat it."""
 
@@ -192,7 +193,7 @@ class Brain(Node):
 
     def _stream_local(self, system: str, messages: list):
         body = json.dumps({'model': self.local_model, 'stream': True, 'max_tokens': self.max_tokens,
-                           'temperature': 0.7,
+                           'temperature': 0.7, 'cache_prompt': True,
                            'messages': [{'role': 'system', 'content': system}] + messages}).encode()
         req = urllib.request.Request(self.local_url + '/v1/chat/completions', data=body,
                                      headers={'Content-Type': 'application/json'})
@@ -303,7 +304,7 @@ class Brain(Node):
             return
         if time.monotonic() - self.last_exchange > self.memory_timeout:
             self.memory.clear()
-        system = PERSONA.format(place=self.place, facts=self._facts())
+        system = PERSONA.format(place=self.place) + FACTS.format(facts=self._facts())
         if lead_in:
             system += LEAD_IN.format(lead_in=lead_in)
         messages = list(self.memory) + [{'role': 'user', 'content': text}]
