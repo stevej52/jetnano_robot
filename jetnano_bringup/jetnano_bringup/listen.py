@@ -375,8 +375,8 @@ def _node_main(args):
                 if _has(t, JOKE_WORDS):
                     self._say('laugh')
                     return
-                if _has(t, HEALTH_WORDS):       # "how are you?" gets the story: ~3x a normal reply
-                    y = voice.story(random.randrange(2, 4), rng=random)
+                if _has(t, HEALTH_WORDS):       # "how are you?" gets the story: ~6 s (Steve: "it's funny")
+                    y = voice.story(random.randrange(4, 6), rng=random)
                 else:
                     n = int(min(12, max(3, round(2 + seconds * 2.2))))
                     y = voice.chat(n, rng=random)
