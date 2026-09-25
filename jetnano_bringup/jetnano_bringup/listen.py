@@ -285,6 +285,9 @@ def _node_main(args):
 
         def _work(self) -> None:
             buf = np.zeros(0, dtype=np.float32)
+            history = np.zeros(0, dtype=np.float32)      # the last 2 s fed to the VAD
+            fed = 0                                       # samples fed so far (VAD segment starts count in these)
+            pre = int(0.3 * 16000)                        # the VAD trims the first consonant: "Rosie" -> "See"
             while rclpy.ok():
                 chunk = self.queue.get()
                 if self._deaf():
@@ -292,8 +295,11 @@ def _node_main(args):
                     continue
                 buf = np.concatenate([buf, chunk])
                 while len(buf) >= self.window:
-                    self.vad.accept_waveform(buf[:self.window])
+                    window = buf[:self.window]
+                    self.vad.accept_waveform(window)
                     buf = buf[self.window:]
+                    fed += len(window)
+                    history = np.concatenate([history, window])[-32000:]
                 active = self.vad.is_speech_detected()
                 if active != self.active:
                     self.active = active
@@ -301,8 +307,13 @@ def _node_main(args):
                     flag.data = active
                     self.active_pub.publish(flag)
                 while not self.vad.empty():
-                    samples = np.array(self.vad.front.samples, dtype=np.float32)
+                    seg = self.vad.front
+                    samples = np.array(seg.samples, dtype=np.float32)
                     self.vad.pop()
+                    first = fed - len(history)            # absolute index of history[0]
+                    i0, i1 = max(int(seg.start) - pre, first) - first, int(seg.start) - first
+                    if 0 <= i0 < i1 <= len(history):
+                        samples = np.concatenate([history[i0:i1], samples])
                     self._utterance(samples)
 
         # ------------------------------------------------------------ words --
