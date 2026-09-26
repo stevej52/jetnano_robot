@@ -64,8 +64,13 @@ continues, so the pause for thinking sounds like the start of the answer.
 In her own language she chatters and spends nothing; "Rosie, in English"
 then asks the brain the same question.
 
-Anyone may talk to her - no voice check, Steve's choice (2026-09-25). Deaf
-while the motors run.
+Anyone may talk to her (Steve's choice, 2026-09-25), and she knows whose
+voice it is once taught (speaker.py, 2026-09-26): "Rosie, learn my voice".
+The first voice taught is the owner's. With him she is familiar and does
+everything; with anyone else she is polite and brief, keeps his business and
+her own status to herself, and mapping is his alone to start and stop. Once
+someone has her ear she follows that voice; another voice must say her name.
+Deaf while the motors run.
 """
 
 import collections
@@ -162,6 +167,20 @@ THINK_WORDS = ('think hard', 'think about it', 'think about this', 'think about 
                'use your brain', 'put your thinking cap on', 'thinking cap')
 SPEND_WORDS = ('how much have you spent', 'spent today', 'how much money', 'what did that cost', 'your spending',
                'cost today', 'how much did you spend', 'how much are you costing')
+# Voices (speaker.py). "Rosie, learn my voice" teaches her one; the first is the
+# owner's. Steve, 2026-09-26: know when it's him, his wife or the TV, and act
+# differently with him.
+LEARN_VOICE = ('learn my voice', 'remember my voice', 'learn this voice', 'this is my voice', 'memorize my voice',
+               'memorise my voice')
+FORGET_VOICE = ('forget my voice', 'forget this voice')
+WHO_WORDS = ('who am i', 'who is this', "who's this", 'who is talking', "who's talking", 'who is speaking',
+             "who's speaking", 'know my voice', 'do you know who i am', 'recognize me', 'recognise me',
+             'recognize my voice', 'recognise my voice', 'who do you think i am')
+NAME_PREFIX = re.compile(r"^(?:(?:hi|hello|hey|um|uh|oh|well|it's|its|it is|this is|i am|i'm|im|my name is|"
+                         r"my name's|call me|the name is|the name's)\s+)+")
+OWNER_ONLY = ('map_start', 'map_stop')          # hers to do only for the owner, once she knows his voice
+GUEST_FINE = ("I'm doing fine, thanks for asking.", "Pretty good! Just keeping an eye on the house.",
+              "All good here, thanks.")
 
 # What she says in English when chatting (first matching subject wins, else
 # she does not know - she is just a robot).
@@ -244,6 +263,12 @@ def decide(text: str, mode: str):
         return 'map_stop', mode
     if _has(t, MAP_START):
         return 'map_start', mode
+    if _has(t, FORGET_VOICE):
+        return 'forget_voice', mode
+    if _has(t, LEARN_VOICE):
+        return 'learn_voice', 'chat'
+    if _has(t, WHO_WORDS):
+        return 'who', 'chat'
     if _has(t, QUIET) and addressed:     # a mute is sticky: only "Rosie, be quiet" (2026-09-25:
         return 'quiet', 'idle'            # "tell her to be quiet", said about someone else, muted her)
     if _has(t, STOP):
@@ -408,7 +433,7 @@ def _node_main(args):
     from sensor_msgs.msg import BatteryState
     from std_msgs.msg import Bool, Empty, Int16MultiArray, String, UInt32
 
-    from jetnano_bringup import news, voice
+    from jetnano_bringup import news, speaker, voice
     from jetnano_bringup.health import Health
     from jetnano_bringup.voice import ENGLISH
 
@@ -439,6 +464,11 @@ def _node_main(args):
             self.declare_parameter('still_after_s', 2.0)
             self.declare_parameter('chat_file', '/tmp/rosie_chat.wav')
             self.declare_parameter('location', '')                  # for local news and weather; '' = where the internet says
+            self.declare_parameter('voice_model', speaker.DEFAULT_MODEL)   # '' or missing: no voice recognition
+            self.declare_parameter('voices_dir', speaker.DEFAULT_DIR)
+            self.declare_parameter('owner', 'Steve')
+            self.declare_parameter('voice_match', speaker.MATCH)         # cosine: confidently that person
+            self.declare_parameter('same_voice', speaker.SAME)           # cosine: the voice she is talking with
 
             p = lambda n: self.get_parameter(n).value  # noqa: E731
             model_dir = os.path.expanduser(str(p('model_dir')))
@@ -466,6 +496,21 @@ def _node_main(args):
             self.still_after = float(p('still_after_s'))
             self.chat_file = str(p('chat_file'))
             self.location = str(p('location'))
+            self.owner = str(p('owner'))
+            self.voices = None
+            voice_model = os.path.expanduser(str(p('voice_model')))
+            if voice_model and os.path.exists(voice_model):
+                try:
+                    self.voices = speaker.Voices(voice_model, os.path.expanduser(str(p('voices_dir'))), threads=1,
+                                                 match=float(p('voice_match')), same=float(p('same_voice')))
+                    self.get_logger().info(f'voices: knows {", ".join(self.voices.names()) or "nobody yet"}'
+                                           f' (say "{NAME}, learn my voice")')
+                except Exception as exc:      # noqa: BLE001 - she still hears without it
+                    self.get_logger().warning(f'no voice recognition: {exc}')
+            else:
+                self.get_logger().warning(f'no voice recognition: {voice_model or "no model"} not found')
+            self.chat_voice = None          # the voice print she is in conversation with
+            self.enrol = None               # a voice lesson in progress
 
             self.text_pub = self.create_publisher(String, 'speech/text', 10)
             self.active_pub = self.create_publisher(Bool, 'speech/active', 10)
@@ -474,6 +519,7 @@ def _node_main(args):
             self.speak_pub = self.create_publisher(String, 'speak', 10)
             self.stop_pub = self.create_publisher(Empty, 'sound/stop', 10)
             self.ask_pub = self.create_publisher(String, 'brain/ask', 10)
+            self.who_pub = self.create_publisher(String, 'speech/speaker', 10)
             self.brain_ready = False
             self.last_opener = None
             self.create_subscription(Bool, 'brain/ready', self._on_brain_ready,
@@ -632,6 +678,7 @@ def _node_main(args):
             if not text:
                 self.get_logger().info(f'speech with no words ({seconds:.1f} s at {db:.0f} dBFS)')
                 return
+            who = self._who(samples)
             if overlapped and code_word(text) == 'off':
                 self._understand(text, seconds, took, db)
                 return
@@ -644,7 +691,7 @@ def _node_main(args):
                         msg = self._String()
                         msg.data = rest
                         self.text_pub.publish(msg)
-                        self._understand(rest, seconds, took, db)
+                        self._understand(rest, seconds, took, db, who)
                         return
                     self.get_logger().info(f'ignored over her own voice: "{text[:80]}" ({db:.0f} dBFS)')
                 if action == 'map_stop':
@@ -664,9 +711,9 @@ def _node_main(args):
             msg = self._String()
             msg.data = text
             self.text_pub.publish(msg)
-            self._understand(text, seconds, took, db)
+            self._understand(text, seconds, took, db, who)
 
-        def _understand(self, text: str, seconds: float, took: float = 0.0, db: float = None) -> None:
+        def _understand(self, text: str, seconds: float, took: float = 0.0, db: float = None, who=None) -> None:
             now = time.monotonic()
             word = code_word(text)
             if self.voice_off:
@@ -676,6 +723,12 @@ def _node_main(args):
             if word == 'off':
                 self._voice(False, text)
                 return
+            if self.enrol:                                           # she is learning a voice
+                if now < self.enrol['until']:
+                    if self._enrol_step(text, who):
+                        return
+                else:
+                    self._enrol_end(timeout=True)
             if self.offer_until and now < self.offer_until:          # "Want a full status report?"
                 t = normalize(text)
                 self.offer_until = 0.0
@@ -704,8 +757,11 @@ def _node_main(args):
                     return
             action, mode = decide(text, self.mode)
             level = f', {db:.0f} dBFS' if db is not None else ', typed'
-            self.get_logger().info(f'heard "{text}" ({seconds:.1f} s{level}, decoded in {took:.2f} s)'
+            voice_note = f', {who.label}' if who is not None else ''
+            self.get_logger().info(f'heard "{text}" ({seconds:.1f} s{level}{voice_note}, decoded in {took:.2f} s)'
                                    + (f' -> {action}' if action else ''))
+            if action and not self._for_me(text, action, who):
+                return
             if mode != self.mode:
                 self.mode = mode
                 self._publish_state()
@@ -739,6 +795,12 @@ def _node_main(args):
                     self._ask_brain(self.last_question)
                 else:
                     self._speak(self._last_in_english())
+            elif action == 'learn_voice':
+                self._learn_voice(who)
+            elif action == 'forget_voice':
+                self._forget_voice(who)
+            elif action == 'who':
+                self._who_am_i(who)
             elif action in ('map_start', 'map_stop'):
                 self._mapping(action == 'map_start')
             elif action == 'bye':
@@ -757,7 +819,12 @@ def _node_main(args):
                 voice.write_wav(self.chat_file, voice.chat(n, rng=random))
                 self._say(self.chat_file)
             elif action == 'chat' and self._words() and self.brain_ready and _has(normalize(text), THINK_WORDS):
-                self._ask_brain(text, think=True)
+                self._ask_brain(text, think=not self._guest(who), who=who)     # heavy thinking is the owner's
+            elif action == 'chat' and self._words() and self._guest(who) and _has(normalize(text),
+                                                                                    REPORT_WORDS + SPEND_WORDS):
+                self._speak(f"That's between me and {self.owner}.")
+            elif action == 'chat' and self._words() and self._guest(who) and _has(normalize(text), HEALTH_WORDS):
+                self._speak(random.choice(GUEST_FINE))
             elif action == 'chat' and self._words():
                 if _has(normalize(text), REPORT_WORDS):
                     self._okay('Checking.')                    # the report samples for a couple of seconds
@@ -767,7 +834,7 @@ def _node_main(args):
                 elif known_subject(text) or not self.brain_ready:
                     self._speak(english_reply(text, self.battery, health=self.health))
                 else:
-                    self._ask_brain(text)
+                    self._ask_brain(text, who=who)
             elif action == 'chat':
                 t = normalize(text)
                 self.last_question, self.last_action = text, action
@@ -780,6 +847,134 @@ def _node_main(args):
                     n = int(min(12, max(3, round(2 + seconds * 2.2))))
                     voice.write_wav(self.chat_file, voice.chat(n, rng=random))
                     self._say(self.chat_file)
+
+        # ------------------------------------------------------------ voices --
+
+        def _who(self, samples: np.ndarray):
+            """The voice print of what was just heard, against the voices she knows."""
+            if self.voices is None:
+                return None
+            try:
+                w = self.voices.who(samples)
+            except Exception as exc:      # noqa: BLE001 - never lose the words over the voice
+                self.get_logger().warning(f'voice print failed: {exc}')
+                return None
+            if w is not None:
+                msg = self._String()
+                msg.data = json.dumps({'name': w.name if w.confident else None, 'nearest': w.name,
+                                       'score': round(w.score, 3), 'percent': w.percent})
+                self.who_pub.publish(msg)
+            return w
+
+        def _guest(self, who) -> bool:
+            """Not the owner, by voice - only once she knows the owner's voice. Typed words are his."""
+            return (self.voices is not None and self.voices.has(self.owner) and who is not None
+                    and not who.is_owner(self.owner))
+
+        def _describe(self, who) -> str:
+            if self.voices is None or not self.voices.names():
+                return f'{self.owner} or someone else in the room (you cannot tell voices apart yet)'
+            if who is None:
+                return f'{self.owner}, your owner (typed)'
+            return who.describe(self.owner)
+
+        def _for_me(self, text: str, action: str, who) -> bool:
+            """Is this for her, and may this voice ask it? Whoever says her name has
+            her ear; in a conversation another voice is ignored until it does.
+            Mapping is the owner's alone once she knows his voice."""
+            if who is not None and who.emb is not None:
+                addressed = re.search(rf'\b{NAME}\b', normalize(text)) is not None
+                if addressed or self.mode != 'chat' or self.chat_voice is None:
+                    self.chat_voice = who.emb
+                elif self.voices.cosine(who.emb, self.chat_voice) < self.voices.same:
+                    self.get_logger().info(f'another voice ({who.label}), not talking to me: "{text[:60]}"')
+                    return False
+            if action in OWNER_ONLY and self._guest(who):
+                self.get_logger().info(f'{action} asked by {who.label}: only {self.owner} may')
+                self._reply(f'Only {self.owner} can ask me that.', 'hm')
+                return False
+            return True
+
+        def _learn_voice(self, who) -> None:
+            if self.voices is None:
+                self._speak("I can't learn voices right now.")
+                return
+            if who is None or who.emb is None:
+                self._speak('Say that again, a little longer, and I will learn it.')
+                return
+            until = time.monotonic() + 60.0
+            if who.confident:
+                self.enrol = {'name': who.name, 'embs': [who.emb], 'first': who.emb, 'until': until, 'target': 4}
+                self._speak(f'I know your voice, {who.name}. Say a few more sentences and I will know it even better.')
+            elif not self.voices.has(self.owner):
+                self.enrol = {'name': self.owner, 'embs': [who.emb], 'first': who.emb, 'until': until, 'target': 6}
+                self._speak(f'Okay, {self.owner}. Say a few sentences to me, anything at all, '
+                            'and I will remember your voice.')
+            else:
+                self.enrol = {'name': None, 'embs': [who.emb], 'first': who.emb, 'until': until, 'target': 6}
+                self._speak("Happy to. What's your name?")
+
+        def _enrol_step(self, text: str, who) -> bool:
+            """One more utterance while she learns a voice. True: it was part of the lesson."""
+            e = self.enrol
+            t = normalize(text)
+            if _has(t, STOP) or _has(t, BYE):
+                self._enrol_end()
+                return True
+            if who is None or who.emb is None:
+                return True                                  # too short to use
+            if self.voices.cosine(who.emb, e['first']) < self.voices.same:
+                self.get_logger().info(f'learning a voice: a different one ({who.label}), ignored')
+                return True
+            if e['name'] is None:
+                name = NAME_PREFIX.sub('', t).strip().split(' ')[0] if t else ''
+                if len(name) < 2 or name == NAME:
+                    self._speak("Sorry, I didn't catch your name. Just your name, please.")
+                    return True
+                e['name'] = name[0].upper() + name[1:]
+                e['embs'].append(who.emb)
+                self._speak(f"Nice to meet you, {e['name']}. Say a few more sentences to me.")
+                return True
+            e['embs'].append(who.emb)
+            e['until'] = time.monotonic() + 60.0
+            if len(e['embs']) >= e['target']:
+                self._enrol_end()
+            elif len(e['embs']) == max(2, e['target'] // 2):
+                self._speak('Keep going, a couple more.')
+            return True
+
+        def _enrol_end(self, timeout: bool = False) -> None:
+            e, self.enrol = self.enrol, None
+            if not e or not e['name'] or len(e['embs']) < 2:
+                self._speak('Never mind about the voice, then.')
+                return
+            for emb in e['embs']:
+                self.voices.add(e['name'], emb)
+            self.chat_voice = e['embs'][-1]
+            self.get_logger().info(f'voice learned: {e["name"]}, {len(e["embs"])} samples; '
+                                   f'knows {", ".join(self.voices.names())}')
+            self._speak(f"Got it, {e['name']}. I'll know your voice now.")
+
+        def _forget_voice(self, who) -> None:
+            if self.voices is None or who is None or not who.confident:
+                self._speak("I don't know your voice anyway.")
+                return
+            self.voices.forget(who.name)
+            self._speak(f"Okay, I've forgotten your voice, {who.name}.")
+
+        def _who_am_i(self, who) -> None:
+            if self.voices is None:
+                self._speak("I can't tell voices apart right now.")
+            elif not self.voices.names():
+                self._speak(f"I don't know any voices yet. Say, {NAME}, learn my voice.")
+            elif who is None or who.emb is None:
+                self._speak('Say a little more and I will tell you.')
+            elif who.confident:
+                self._speak(f"That's you, {who.name}. I'm {who.percent} percent sure.")
+            elif who.name and who.score >= 0.25:
+                self._speak(f"You sound a bit like {who.name}, but I'm only {who.percent} percent sure.")
+            else:
+                self._speak("I don't know your voice.")
 
         def _voice(self, on: bool, text: str) -> None:
             """The code words: her whole voice off (sleepy, then silent and deaf
@@ -910,7 +1105,7 @@ def _node_main(args):
                     self._speak(report.split('\n')[0] + '\nWant a full status report?')
             threading.Thread(target=run, daemon=True, name='listen-howami').start()
 
-        def _ask_brain(self, text: str, think: bool = False) -> None:
+        def _ask_brain(self, text: str, think: bool = False, who=None) -> None:
             # "think hard": the brain says "Give me a moment..." itself, no lead-in
             lead = '' if think else lead_in(text, self.last_opener)
             if lead:
@@ -919,7 +1114,7 @@ def _node_main(args):
             self.get_logger().info(f'asks the brain "{text[:80]}"' + (f' after "{lead}"' if lead else '')
                                    + (' to think hard' if think else ''))
             msg = self._String()
-            msg.data = json.dumps({'text': text, 'lead_in': lead, 'think': think})
+            msg.data = json.dumps({'text': text, 'lead_in': lead, 'think': think, 'speaker': self._describe(who)})
             self.ask_pub.publish(msg)
 
         def _brief(self, kind: str) -> None:
