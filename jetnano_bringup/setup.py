@@ -42,6 +42,7 @@ setup(
             'brain = jetnano_bringup.brain:main',
             'watchdog = jetnano_bringup.watchdog:main',
             'throttle_calibration = jetnano_bringup.throttle_calibration:main',
+            'rates = jetnano_bringup.rates:main',
         ],
     },
 )

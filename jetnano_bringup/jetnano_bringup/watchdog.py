@@ -46,10 +46,15 @@ after each for the respawn to land:
     web page    restart web_teleop;   video: restart web_video_server
     container   start it if it stopped
     guard       bring the collision guard back to active
+    GPU         failed to start at boot (its firmware did not load): say so
+                and ask to be restarted - only a reboot brings it back
 
 Each item acts at most ``max_actions_per_hour`` times, then gives up and says
 so, so it can never loop. It never restarts the whole robot by itself: that
 would restart mapping away from the parking spot and spoil the map.
+
+A process that keeps dying is not "starting": after four fresh starts in ten
+minutes it is judged like anything else.
 
 It speaks only when it gives up or something it had given up on comes back
 (``announce``: failures | all | none), in English when she is in English
@@ -85,8 +90,11 @@ def proc(path: str) -> str:
 
 # key: (spoken label, topic, stale_s, min_hz, need, depends, ladder)
 #   need: always = must be there from the start; seen = watched once it has
-#         published (optional parts: nvblox, battery, cliff sensors); slam =
-#         only while jetnano-slam runs
+#         published (optional parts: battery, cliff sensors); soon = part of
+#         every boot but slow to come up: watched once it has published or
+#         expect_boot_parts_after_s after the stack started, whichever is first
+#         (2026-09-26 the GPU failed at boot, visual odometry never published,
+#         and under 'seen' nothing ever looked); slam = only while jetnano-slam runs
 #   ladder: (action, argument, seconds to wait before the next step)
 TOPICS = {
     'lidar': ('lidar', '/scan_raw', 2.0, 5.0, 'always', None, [
@@ -102,11 +110,11 @@ TOPICS = {
     'odometry': ('odometry', '/odometry/filtered', 1.5, 10.0, 'always', None, [
         ('signal', proc('robot_localization/ekf_node'), 10.0),
         ('signal', proc('robot_localization/ekf_node'), 20.0)]),
-    'vo': ('visual odometry', '/vo', 3.0, 10.0, 'seen', None, [
+    'vo': ('visual odometry', '/vo', 3.0, 10.0, 'soon', 'gpu', [
         ('wait', None, 25.0),                 # vo_watchdog restarts the launch after 5 s
         ('container_launch', None, 75.0),
         ('docker_restart', None, 120.0)]),
-    'nvblox': ('3D map', '/nvblox_node/static_occupancy_grid', 5.0, 2.0, 'seen', 'vo', [
+    'nvblox': ('3D map', '/nvblox_node/static_occupancy_grid', 5.0, 2.0, 'soon', 'vo', [
         ('container_launch', None, 75.0)]),
     'mic': ('microphone', '/sound/audio', 3.0, 5.0, 'seen', None, [
         ('signal', proc('jetnano_bringup/ears'), 12.0),
@@ -155,6 +163,7 @@ class Item:
         self.slow_since = 0.0
         self.slow_said = 0.0
         self.gave_up_at = 0.0
+        self.starts = set()              # recent start times of its process (crash-loop check)
 
 
 class Watchdog(Node):
@@ -171,6 +180,7 @@ class Watchdog(Node):
         # ~10 s): not silent, just new. 2026-09-25 the watchdog fought five
         # deliberate restarts of listen in an hour and gave up on it.
         self.declare_parameter('young_process_s', 40.0)
+        self.declare_parameter('expect_boot_parts_after_s', 180.0)
         self.declare_parameter('announce', 'failures')         # failures | all | none
         self.declare_parameter('act', True)                    # false: watch and report only
         self.declare_parameter('log_file', os.path.expanduser('~/watchdog/events.jsonl'))
@@ -181,6 +191,7 @@ class Watchdog(Node):
         self.lock = threading.RLock()
         self.node_missing_s = float(p('node_missing_s'))
         self.young_s = float(p('young_process_s'))
+        self.expect_after = float(p('expect_boot_parts_after_s'))
         self.announce = str(p('announce'))
         self.act = bool(p('act'))
         self.log_file = os.path.expanduser(str(p('log_file')))
@@ -200,6 +211,7 @@ class Watchdog(Node):
         self.slam_active = False
         self.slam_since = 0.0
         self.guard_inactive_since = 0.0
+        self.http_items['gpu'] = Item('gpu', 'graphics processor', [])
 
         self.events_pub = self.create_publisher(String, 'watchdog/events', 10)
         self.status_pub = self.create_publisher(
@@ -239,11 +251,13 @@ class Watchdog(Node):
 
     def _grace_end(self) -> float:
         now = time.monotonic()
+        self.stack_started = now
         try:
             out = subprocess.run(['systemctl', 'show', '-p', 'ActiveEnterTimestampMonotonic', '--value',
                                   'jetnano-robot'], capture_output=True, text=True, timeout=5).stdout.strip()
             stack_started = int(out) / 1e6
             if stack_started > 0:
+                self.stack_started = stack_started
                 return max(now + 15.0, stack_started + self.grace)
         except (OSError, ValueError, subprocess.TimeoutExpired):
             pass
@@ -262,10 +276,12 @@ class Watchdog(Node):
             if age >= 0:
                 item.seen = True
             expected = (need == 'always' or (need == 'seen' and item.seen)
+                        or (need == 'soon' and (item.seen or now - self.stack_started > self.expect_after))
                         or (need == 'slam' and self.slam_active and now - self.slam_since > 60.0))
             if not expected:
                 continue
-            if depends and self.items[depends].state != 'ok':
+            source = self.items.get(depends) or self.http_items.get(depends) if depends else None
+            if source is not None and source.state != 'ok':
                 continue                  # its source is down: fix that first
             silent = age < 0 or age > stale
             if silent:
@@ -406,6 +422,26 @@ class Watchdog(Node):
                 self.container_busy_until = time.monotonic() + 90.0
                 self._event('act', item.label, 'docker start')
                 threading.Thread(target=self._run, args=(['docker', 'start', CONTAINER],), daemon=True).start()
+        self._check_gpu()
+
+    def _check_gpu(self) -> None:
+        """A healthy GPU has ~15 entries in its device folder; one that failed to start has one."""
+        item = self.http_items['gpu']
+        try:
+            entries = len(os.listdir('/dev/nvgpu/igpu0'))
+        except OSError:
+            entries = 0
+        if entries >= 5:
+            self._good(item, 'running')
+            return
+        if item.state == 'ok':
+            dmesg = self._run(['sudo', '-n', 'dmesg'])
+            line = next((ln for ln in dmesg.splitlines()
+                         if 'ucode get fail' in ln or 'ACR bootstrap failed' in ln), '')
+            if line:
+                self._event('system', item.label, line.split(']', 1)[-1].strip()[:160])
+            self._bad(item, 'failed to start; restart me to bring it back', act=False)
+            self._announce("My graphics processor didn't start. Please restart me.", 'sad')
 
     # ---------------------------------------------------------------- state --
 
@@ -523,7 +559,9 @@ class Watchdog(Node):
                 with open(f'/proc/{pid}/stat') as f:
                     start = int(f.read().rsplit(')', 1)[1].split()[19]) / tick
                 if up - start < self.young_s:
-                    return True
+                    item.starts = {t for t in item.starts if up - t < 600.0} | {round(start)}
+                    # four fresh starts in ten minutes is a crash loop, not a start
+                    return len(item.starts) < 4
         except (OSError, ValueError, IndexError):
             pass
         return False
