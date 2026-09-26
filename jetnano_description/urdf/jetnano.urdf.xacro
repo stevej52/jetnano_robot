@@ -78,9 +78,13 @@
        lens 0.191 m above the floor, 39 000 points, 3 mm mean residual.
        z = 0.191 - wheel_radius. Re-run the tool whenever the mount moves:
        nvblox puts the floor in the map as an obstacle if this is a few
-       degrees off. -->
-  <xacro:property name="camera_xyz" value="0.155 0.0 0.126"/>
-  <xacro:property name="camera_rpy" value="0.098 0.183 0"/>
+       degrees off.
+       Moved again 2026-09-25 (Steve, to make room for the pan-tilt camera): low
+       between the front wheels, 0.35 m ahead of the rear axle (x = 0.35 - 0.165),
+       its centre 0.11 m off the floor (z = 0.11 - wheel_radius), held by tape for
+       now. The tilt below is PROVISIONAL (level) until the plane fit is re-run. -->
+  <xacro:property name="camera_xyz" value="0.185 0.0 0.045"/>
+  <xacro:property name="camera_rpy" value="0 0 0"/>
   <xacro:property name="imu_xyz"    value="0.0 0.0 0.060"/>
   <xacro:property name="imu_rpy"    value="2.9698 0.0552 1.5680"/>
 
