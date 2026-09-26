@@ -46,12 +46,15 @@ after each for the respawn to land:
     web page    restart web_teleop;   video: restart web_video_server
     container   start it if it stopped
     guard       bring the collision guard back to active
-    GPU         failed to start at boot (its firmware did not load): say so
-                and ask to be restarted - only a reboot brings it back
+    GPU         failed to start at boot (its firmware did not load): reboot,
+                once - only in the first 15 minutes after boot, never while
+                driving or mapping, never twice in a row; otherwise say so and
+                ask to be restarted (Steve's go-ahead, 2026-09-26)
 
 Each item acts at most ``max_actions_per_hour`` times, then gives up and says
-so, so it can never loop. It never restarts the whole robot by itself: that
-would restart mapping away from the parking spot and spoil the map.
+so, so it can never loop. Apart from that GPU case it never restarts the whole
+robot by itself: that would restart mapping away from the parking spot and
+spoil the map.
 
 A process that keeps dying is not "starting": after four fresh starts in ten
 minutes it is judged like anything else.
@@ -74,6 +77,7 @@ import urllib.request
 
 import rclpy
 from diagnostic_msgs.msg import DiagnosticArray
+from geometry_msgs.msg import Twist
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
 from std_msgs.msg import Bool, String
@@ -181,6 +185,7 @@ class Watchdog(Node):
         # deliberate restarts of listen in an hour and gave up on it.
         self.declare_parameter('young_process_s', 40.0)
         self.declare_parameter('expect_boot_parts_after_s', 180.0)
+        self.declare_parameter('gpu_reboot_within_s', 900.0)   # a GPU dead later than this is not the boot bug
         self.declare_parameter('announce', 'failures')         # failures | all | none
         self.declare_parameter('act', True)                    # false: watch and report only
         self.declare_parameter('log_file', os.path.expanduser('~/watchdog/events.jsonl'))
@@ -192,6 +197,7 @@ class Watchdog(Node):
         self.node_missing_s = float(p('node_missing_s'))
         self.young_s = float(p('young_process_s'))
         self.expect_after = float(p('expect_boot_parts_after_s'))
+        self.gpu_reboot_within = float(p('gpu_reboot_within_s'))
         self.announce = str(p('announce'))
         self.act = bool(p('act'))
         self.log_file = os.path.expanduser(str(p('log_file')))
@@ -212,6 +218,12 @@ class Watchdog(Node):
         self.slam_since = 0.0
         self.guard_inactive_since = 0.0
         self.http_items['gpu'] = Item('gpu', 'graphics processor', [])
+        # set when the watchdog reboots for the GPU; removed once the GPU is
+        # healthy, so a second failure in a row is reported, not rebooted again
+        self.gpu_flag = os.path.join(os.path.dirname(self.log_file), 'gpu_reboot_done')
+        self.gpu_rebooting = False
+        self.gpu_hold = ''
+        self.last_move = 0.0
 
         self.events_pub = self.create_publisher(String, 'watchdog/events', 10)
         self.status_pub = self.create_publisher(
@@ -219,6 +231,7 @@ class Watchdog(Node):
         self.say_pub = self.create_publisher(String, 'say', 10)
         self.speak_pub = self.create_publisher(String, 'speak', 10)
         self.create_subscription(DiagnosticArray, 'watchdog/topics', self._on_topics, 10)
+        self.create_subscription(Twist, 'cmd_vel', self._on_cmd, 10)
         self.create_subscription(Bool, 'sound/english', lambda m: setattr(self, 'english', m.data),
                                  QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
         self._guard_client = None
@@ -241,6 +254,10 @@ class Watchdog(Node):
             except ValueError:
                 continue
         self.topics_at = now
+
+    def _on_cmd(self, msg: Twist) -> None:
+        if msg.linear.x != 0.0 or msg.angular.z != 0.0:
+            self.last_move = time.monotonic()
 
     # --------------------------------------------------------------- checks --
 
@@ -433,6 +450,12 @@ class Watchdog(Node):
             entries = 0
         if entries >= 5:
             self._good(item, 'running')
+            self.gpu_hold = ''
+            if os.path.exists(self.gpu_flag):
+                try:
+                    os.remove(self.gpu_flag)      # healthy again: a later failure may reboot once more
+                except OSError:
+                    pass
             return
         if item.state == 'ok':
             dmesg = self._run(['sudo', '-n', 'dmesg'])
@@ -440,8 +463,46 @@ class Watchdog(Node):
                          if 'ucode get fail' in ln or 'ACR bootstrap failed' in ln), '')
             if line:
                 self._event('system', item.label, line.split(']', 1)[-1].strip()[:160])
-            self._bad(item, 'failed to start; restart me to bring it back', act=False)
-            self._announce("My graphics processor didn't start. Please restart me.", 'sad')
+            self._bad(item, 'failed to start', act=False)
+        self._maybe_reboot_for_gpu(item)
+
+    def _maybe_reboot_for_gpu(self, item) -> None:
+        """Only a reboot brings back a GPU whose firmware did not load at boot (2 of 31 boots, 2026-09)."""
+        if self.gpu_rebooting:
+            return
+        try:
+            with open('/proc/uptime') as f:
+                up = float(f.read().split()[0])
+        except (OSError, ValueError):
+            up = float('inf')
+        why = ''
+        if not self.act:
+            why = 'acting is switched off'
+        elif up > self.gpu_reboot_within:
+            why = 'it stopped long after boot'
+        elif os.path.exists(self.gpu_flag):
+            why = 'a reboot for it already did not help'
+        elif self.slam_active:
+            why = 'mapping is running'
+        elif time.monotonic() - self.last_move < 60.0:
+            why = 'she is driving'
+        if why:
+            if why != self.gpu_hold:
+                self.gpu_hold = why
+                item.note = f'failed to start; not rebooting: {why}'
+                self._event('gave_up', item.label, f'not rebooting: {why}')
+                self._announce("My graphics processor didn't start. Please restart me.", 'sad')
+            return
+        self.gpu_rebooting = True
+        try:
+            with open(self.gpu_flag, 'w') as f:
+                f.write(time.strftime('%Y-%m-%d %H:%M:%S') + '\n')
+        except OSError:
+            pass
+        item.note = 'failed to start; rebooting'
+        self._event('act', item.label, 'rebooting in 20 s: nothing else brings it back')
+        self._announce("My graphics processor didn't start. Restarting myself to fix it.", 'hm')
+        threading.Timer(20.0, self._run, args=(['sudo', '-n', 'systemctl', 'reboot'],)).start()
 
     # ---------------------------------------------------------------- state --
 
