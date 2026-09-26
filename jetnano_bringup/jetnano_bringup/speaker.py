@@ -65,10 +65,11 @@ def percent(score: float) -> int:
 class Who:
     """What one utterance sounded like: the closest known voice and how close."""
 
-    __slots__ = ('name', 'score', 'emb', 'match', 'seconds')
+    __slots__ = ('name', 'score', 'emb', 'match', 'seconds', 'audio')
 
-    def __init__(self, name, score: float, emb, match: float = MATCH, seconds: float = SURE_SECONDS):
+    def __init__(self, name, score: float, emb, match: float = MATCH, seconds: float = SURE_SECONDS, audio=None):
         self.name, self.score, self.emb, self.match, self.seconds = name, score, emb, match, seconds
+        self.audio = audio              # the sound itself, kept only while a lesson may want to save it
 
     @property
     def confident(self) -> bool:
@@ -188,7 +189,26 @@ class Voices:
         emb = self.embed(samples)
         if emb is None:
             return None
-        return self.identify(emb, len(samples) / 16000.0)
+        w = self.identify(emb, len(samples) / 16000.0)
+        w.audio = samples
+        return w
+
+    def save_samples(self, name: str, audios) -> int:
+        """Keep the recordings a voice was learned from (``voices test`` can then re-score them
+        when the thresholds are tuned). 16 kHz mono wav under samples/<Name>-<n>.wav."""
+        d = os.path.join(self.dir, 'samples')
+        os.makedirs(d, exist_ok=True)
+        n = len(glob.glob(os.path.join(d, f'{name}-*.wav')))
+        for x in audios:
+            if x is None:
+                continue
+            n += 1
+            with wave.open(os.path.join(d, f'{name}-{n}.wav'), 'wb') as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(16000)
+                w.writeframes((np.clip(np.asarray(x, dtype=np.float32), -1, 1) * 32767).astype(np.int16).tobytes())
+        return n
 
     def score(self, emb: np.ndarray, name: str) -> float:
         """How much like this person: the better of the centroid and the closest few samples

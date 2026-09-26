@@ -903,15 +903,19 @@ def _node_main(args):
                 self._speak('Say that again, a little longer, and I will learn it.')
                 return
             until = time.monotonic() + 60.0
+            audio = [who.audio]
             if who.confident:
-                self.enrol = {'name': who.name, 'embs': [who.emb], 'first': who.emb, 'until': until, 'target': 4}
+                self.enrol = {'name': who.name, 'embs': [who.emb], 'first': who.emb, 'until': until, 'target': 4,
+                              'audio': audio}
                 self._speak(f'I know your voice, {who.name}. Say a few more sentences and I will know it even better.')
             elif not self.voices.has(self.owner):
-                self.enrol = {'name': self.owner, 'embs': [who.emb], 'first': who.emb, 'until': until, 'target': 6}
+                self.enrol = {'name': self.owner, 'embs': [who.emb], 'first': who.emb, 'until': until, 'target': 6,
+                              'audio': audio}
                 self._speak(f'Okay, {self.owner}. Say a few sentences to me, anything at all, '
                             'and I will remember your voice.')
             else:
-                self.enrol = {'name': None, 'embs': [who.emb], 'first': who.emb, 'until': until, 'target': 6}
+                self.enrol = {'name': None, 'embs': [who.emb], 'first': who.emb, 'until': until, 'target': 6,
+                              'audio': audio}
                 self._speak("Happy to. What's your name?")
 
         def _enrol_step(self, text: str, who) -> bool:
@@ -933,9 +937,11 @@ def _node_main(args):
                     return True
                 e['name'] = name[0].upper() + name[1:]
                 e['embs'].append(who.emb)
+                e['audio'].append(who.audio)
                 self._speak(f"Nice to meet you, {e['name']}. Say a few more sentences to me.")
                 return True
             e['embs'].append(who.emb)
+            e['audio'].append(who.audio)
             e['until'] = time.monotonic() + 60.0
             if len(e['embs']) >= e['target']:
                 self._enrol_end()
@@ -950,6 +956,10 @@ def _node_main(args):
                 return
             for emb in e['embs']:
                 self.voices.add(e['name'], emb)
+            try:
+                self.voices.save_samples(e['name'], e.get('audio', []))     # for re-scoring when tuning
+            except OSError as exc:
+                self.get_logger().warning(f'could not keep the voice samples: {exc}')
             self.chat_voice = e['embs'][-1]
             self.get_logger().info(f'voice learned: {e["name"]}, {len(e["embs"])} samples; '
                                    f'knows {", ".join(self.voices.names())}')
