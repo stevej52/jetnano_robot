@@ -100,7 +100,7 @@ polite and brief, keeps his business (the status report, her spending) to
 herself, "think hard" is answered without the slow deep thinking, and
 mapping is his alone to start and stop: "Only Steve can ask me that."
 
-Tuning: `ros2 run jetnano_bringup voices` lists who she knows;
+Tuning: `~/venv-voice/bin/python3 -m jetnano_bringup.speaker` lists who she knows;
 `ros2 topic echo /speech/speaker` shows the score of each thing she hears.
 The thresholds are listen's `voice_match` (confidently that person) and
 `same_voice` (the voice she is talking with); the model is WeSpeaker CAM++

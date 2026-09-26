@@ -14,10 +14,13 @@
 
 """Whose voice is that?
 
-    ros2 run jetnano_bringup voices                  who she knows, and how many samples of each
-    ros2 run jetnano_bringup voices forget Jill
-    ros2 run jetnano_bringup voices rename Gill Jill
-    ros2 run jetnano_bringup voices test a.wav b.wav  what she makes of recordings (16 kHz mono wav)
+    voices                       who she knows, and how many samples of each
+    voices forget Jill
+    voices rename Gill Jill
+    voices test a.wav b.wav      what she makes of recordings (16 kHz mono wav)
+
+(``voices`` = ``~/venv-voice/bin/python3 -m jetnano_bringup.speaker``, the
+same Python listen runs in; plain ``ros2 run`` lacks sherpa-onnx.)
 
 A voice print (a 512-number embedding from WeSpeaker's CAM++ model, run by
 sherpa-onnx) is taken from every utterance listen.py hears, right after the
@@ -247,7 +250,11 @@ def main(argv=None):
     if argv and argv[0] in ('-h', '--help'):
         print(__doc__.split('\n\n')[0])
         return 0
-    v = Voices()
+    try:
+        v = Voices()
+    except ModuleNotFoundError as exc:
+        print(f'{exc}: run this with ~/venv-voice/bin/python3 -m jetnano_bringup.speaker')
+        return 1
     if not argv:
         if not v.names():
             print('she knows nobody yet: say "Rosie, learn my voice"')
