@@ -11,7 +11,7 @@
     i2c_address: 64            # 0x40
     pwm_frequency: 100.0
     twist_topic: cmd_vel
-    channels: [throttle, steering, rear_steering]
+    channels: [throttle, steering, rear_steering, pan, tilt]
 
     # Publish servo positions as joint_states. Left off for now: the driver
     # reports servo-horn degrees (85 deg = straight), which is not the same
@@ -77,3 +77,22 @@
       joint: rear_left_steer_joint
       twist:
         angular_z: 18.33       # opposite sign: four-wheel steering
+
+    # Camera pan-tilt: two micro servos on channels 8 and 9, added 2026-09-25.
+    # Nothing moves at start-up (home_on_start false): the first command comes
+    # from motion_watch or by hand. The 70..110 window is a safe first guess
+    # around the middle, to be widened once the mount's real reach is known.
+    # timeout 0 holds the last position. motion_watch aims these through
+    # /pca9685/pan/angle and /pca9685/tilt/angle; its pan/tilt centre and
+    # sign parameters must match what is measured here.
+    pan:
+      channel: 8
+      home: 90.0               # PROVISIONAL until centred by eye
+      min_limit: 70.0
+      max_limit: 110.0
+
+    tilt:
+      channel: 9
+      home: 90.0               # PROVISIONAL until levelled by eye
+      min_limit: 70.0
+      max_limit: 110.0

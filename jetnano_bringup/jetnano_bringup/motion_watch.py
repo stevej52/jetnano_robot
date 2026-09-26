@@ -33,6 +33,12 @@ Bearings are in the robot's frame (0 = nose, left positive). The lidar is
 mounted backwards (jetnano.urdf.xacro), hence ``scan_yaw_offset``. Pan range
 and centre are the mount's; set them when it exists. Without the pan-tilt
 the angle topics simply have no subscriber and the chirps still happen.
+
+``aim`` and the pan/tilt centre, limit and sign parameters are live, so the
+mount can be set up without a restart::
+
+    ros2 param set /motion_watch aim false            # hands off the servos
+    ros2 param set /motion_watch pan_center_deg 92.0
 """
 
 import math
@@ -41,6 +47,7 @@ import time
 import numpy as np
 import rclpy
 from geometry_msgs.msg import PointStamped, Twist
+from rcl_interfaces.msg import SetParametersResult
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
@@ -70,6 +77,7 @@ class MotionWatch(Node):
         self.declare_parameter('camera_height_m', 0.30)
         self.declare_parameter('look_at_height_m', 1.2)        # a face, roughly; a dog is 0.4
         self.declare_parameter('say', True)
+        self.declare_parameter('aim', True)                     # False: chirp, leave the servos alone
 
         p = lambda n: self.get_parameter(n).value  # noqa: E731
         self.yaw_off = float(p('scan_yaw_offset'))
@@ -86,6 +94,8 @@ class MotionWatch(Node):
         self.tilt_c, self.tilt_lim, self.tilt_sign = float(p('tilt_center_deg')), float(p('tilt_limit_deg')), float(p('tilt_sign'))
         self.cam_h, self.look_h = float(p('camera_height_m')), float(p('look_at_height_m'))
         self.chatty = bool(p('say'))
+        self.aim = bool(p('aim'))
+        self.add_on_set_parameters_callback(self._on_params)
 
         self.pan_pub = self.create_publisher(Float64, '/pca9685/pan/angle', 10)
         self.tilt_pub = self.create_publisher(Float64, '/pca9685/tilt/angle', 10)
@@ -103,6 +113,18 @@ class MotionWatch(Node):
         self.centred = True
         self.create_timer(0.5, self._housekeeping)
         self.get_logger().info('watching for movement while the robot stands still')
+
+    _LIVE = {'aim': 'aim', 'say': 'chatty',
+             'pan_center_deg': 'pan_c', 'pan_limit_deg': 'pan_lim', 'pan_sign': 'pan_sign',
+             'tilt_center_deg': 'tilt_c', 'tilt_limit_deg': 'tilt_lim', 'tilt_sign': 'tilt_sign'}
+
+    def _on_params(self, params) -> SetParametersResult:
+        for q in params:
+            attr = self._LIVE.get(q.name)
+            if attr:
+                setattr(self, attr, bool(q.value) if attr in ('aim', 'chatty') else float(q.value))
+                self.get_logger().info(f'{q.name} = {q.value}')
+        return SetParametersResult(successful=True)
 
     # ---------------------------------------------------------------- input --
 
@@ -199,6 +221,8 @@ class MotionWatch(Node):
             self._say('huh')
 
     def _servos(self, pan_deg: float, tilt_deg: float) -> None:
+        if not self.aim:
+            return
         a = Float64(); a.data = self.pan_c + self.pan_sign * pan_deg
         b = Float64(); b.data = self.tilt_c + self.tilt_sign * tilt_deg
         self.pan_pub.publish(a)
