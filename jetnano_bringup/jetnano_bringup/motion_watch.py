@@ -37,7 +37,7 @@ the angle topics simply have no subscriber and the chirps still happen.
 ``aim`` and the pan/tilt centre, limit and sign parameters are live, so the
 mount can be set up without a restart::
 
-    ros2 param set /motion_watch aim false            # hands off the servos
+    ros2 param set /motion_watch aim true             # starts false: hands off the servos
     ros2 param set /motion_watch pan_center_deg 92.0
 """
 
@@ -77,7 +77,9 @@ class MotionWatch(Node):
         self.declare_parameter('camera_height_m', 0.30)
         self.declare_parameter('look_at_height_m', 1.2)        # a face, roughly; a dog is 0.4
         self.declare_parameter('say', True)
-        self.declare_parameter('aim', True)                     # False: chirp, leave the servos alone
+        # Off until the pan-tilt is centred and its reach measured: on 2026-09-25 it
+        # aimed 2 s after a reboot and drove an uncalibrated mount into its stops.
+        self.declare_parameter('aim', False)                    # False: chirp, leave the servos alone
 
         p = lambda n: self.get_parameter(n).value  # noqa: E731
         self.yaw_off = float(p('scan_yaw_offset'))
