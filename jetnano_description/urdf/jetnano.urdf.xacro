@@ -81,10 +81,11 @@
        degrees off.
        Moved again 2026-09-25 (Steve, to make room for the pan-tilt camera): low
        between the front wheels, 0.35 m ahead of the rear axle (x = 0.35 - 0.165),
-       its centre 0.11 m off the floor (z = 0.11 - wheel_radius), held by tape for
-       now. The tilt below is PROVISIONAL (level) until the plane fit is re-run. -->
-  <xacro:property name="camera_xyz" value="0.185 0.0 0.045"/>
-  <xacro:property name="camera_rpy" value="0 0 0"/>
+       held by tape for now. Plane fit the same evening: 7.8 deg UP (pitch
+       -0.136), 1.2 deg roll, lens 0.112 m above the floor (Steve measured 0.11),
+       31 837 inlier points, 3 mm mean residual. -->
+  <xacro:property name="camera_xyz" value="0.185 0.0 0.047"/>
+  <xacro:property name="camera_rpy" value="-0.021 -0.136 0"/>
   <xacro:property name="imu_xyz"    value="0.0 0.0 0.060"/>
   <xacro:property name="imu_rpy"    value="2.9698 0.0552 1.5680"/>
 
