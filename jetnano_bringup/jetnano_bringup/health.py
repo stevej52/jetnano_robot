@@ -184,6 +184,26 @@ class Health:
     def _join(items):
         return items[0] if len(items) == 1 else ', '.join(items[:-1]) + ' and ' + items[-1]
 
+    def brief(self) -> str:
+        """For Steve: what is wrong, and the battery - no chat. "All systems go."
+        when nothing is."""
+        self._sample()
+        names = set(self.node.get_node_names())
+        core = ['lidar', 'imu', 'camera', 'vo', 'ekf']
+        down = [self.watch[k].label for k in core if not self.watch[k].alive()]
+        parts = []
+        if down:
+            s = f'{self._join(down)} offline.'
+            parts.append(s[0].upper() + s[1:])
+        if 'collision_guard' not in names:
+            parts.append('Guard off.')
+        if self.watch['map'].alive() or 'slam_toolbox' in names:
+            parts.append('Mapping.')
+        b = self.battery
+        if b is not None and b.present and b.percentage == b.percentage:
+            parts.append(f'Battery {int(round(b.percentage * 100))} percent.')
+        return ' '.join(parts) if down or 'collision_guard' not in names else ' '.join(['All systems go.'] + parts)
+
     def report(self, rng=random) -> str:
         self._sample()
         names = set(self.node.get_node_names())

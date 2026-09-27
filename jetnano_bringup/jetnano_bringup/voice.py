@@ -41,6 +41,9 @@ different. The moods and where the sounds node uses them:
     laugh     six rough "heh"s bouncing down, a slide    "tell me a joke" (after "you're a joke")
     story     several runs of chatter with breaths       "how are you?" in her own language
     boop      boopity boop                               back to her own language after English
+    yes       "uh-HUH!": a note, then one an octave up,    yes / affirmative / done, to Steve
+              clean and bright                             (listen, brain: his terse mode)
+    nope      "UH-uh": two low buzzy notes falling          no / negative, to Steve
 
 ENGLISH below is what each mood means in words: the sounds node says that
 instead in English mode, and listen uses it for "Rosie, in English".
@@ -77,6 +80,8 @@ ENGLISH = {
     'bye': ["Bye bye! Come back soon.", "See you later!", "Bye! It was nice talking to you."],
     'laugh': ["You're a joke. [laugh]"],
     'boop': ["Back to my own language."],
+    'yes': ["Yes."],
+    'nope': ["No."],
 }
 # The USB speaker swallows the first ~80 ms after it wakes: measured with her
 # own mic 2026-09-25, "hm" came out as 0.08 s of 0.16 s and 8 dB quieter;
@@ -303,10 +308,26 @@ def boop(j):
                            tone(glide(BASE * k * 1.0, BASE * k * 0.9), 0.16, vibrato_depth=0.02)])
 
 
+def yes(j):
+    """Affirmative: up, clean and bright - the opposite of nope in every way
+    (direction, register, timbre), so Steve can tell them apart across a room."""
+    k = 2 ** (j / 12)
+    return np.concatenate([tone(flat(BASE * k * 1.0), 0.09, vibrato_depth=0.0, bright=0.7), rest(0.03),
+                           tone(glide(BASE * k * 2.0, BASE * k * 2.25, 0.5), 0.20, vibrato_depth=0.0, bright=0.9)])
+
+
+def nope(j):
+    """Negative: down, low and buzzy, like a wrong-answer buzzer."""
+    k = 2 ** (j / 12)
+    return np.concatenate([tone(flat(BASE * k * 0.75), 0.15, vibrato_depth=0.0, rough=0.7, bright=0.3), rest(0.05),
+                           tone(glide(BASE * k * 0.56, BASE * k * 0.45, 0.8), 0.26, vibrato_depth=0.0, rough=0.9,
+                                bright=0.3)])
+
+
 MOODS = {'hello': hello, 'ok': ok, 'no': no, 'alarm': alarm, 'sad': sad,
          'happy': happy, 'curious': curious, 'sleepy': sleepy, 'hm': hm, 'huh': huh,
          'bye': bye, 'chat': lambda j: chat(random.randrange(4, 9), j), 'laugh': laugh, 'on': on, 'off': off,
-         'story': lambda j: story(3, j), 'boop': boop}
+         'story': lambda j: story(3, j), 'boop': boop, 'yes': yes, 'nope': nope}
 
 
 def write_wav(path, samples, volume=0.6):

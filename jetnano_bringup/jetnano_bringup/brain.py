@@ -117,6 +117,22 @@ Answer in one or two short, playful spoken sentences based ONLY on that status: 
 detail that stands out (something offline, the battery, heat, a busy CPU, a noisy room). Never invent a problem \
 or a number that is not there. Do not list your systems, do not ask a question, do not offer a report."""
 
+# Steve's terse mode (2026-09-27: "I don't want to talk to a chat bot ... very
+# military, affirmative, negative ... no extra words whatsoever when it's me").
+# It goes last, after the facts, so it overrides the tone and length above and
+# the cached persona stays the same. YES and NO become robot sounds.
+TERSE = """
+
+STEVE IS TALKING. He wants a tool, not a chat, and this overrides every rule above about tone and length. \
+Answer like a soldier reporting: the answer and nothing else, in as few words as possible, never more than \
+fifteen. No greeting, no name, no filler, no preamble ("Sure", "Well", "Here is"), no restating the question, \
+no explanation unless he asks for one, no follow-up question, no offer of more help, no pleasantries, no \
+jokes, no sass. If yes or no answers it, reply with exactly one word, YES or NO, and nothing else. If you do \
+not know, reply UNKNOWN. Examples: "Is the lidar working?" -> YES. "Two plus two?" -> Four. "How far is the \
+moon?" -> About 384,000 kilometres. "Should I take an umbrella?" -> NO."""
+YES_WORDS = {'yes', 'yep', 'yeah', 'affirmative', 'correct', 'yessir', 'yesitis', 'yesiam', 'yesyoudo'}
+NO_WORDS = {'no', 'nope', 'negative', 'incorrect', 'nosir', 'noitisnot', 'noitsnot', 'noiamnot'}
+
 # The persona above never changes, so the local server keeps it cached and
 # only the lines below get processed each time: keep them last and short.
 FACTS = "\n\nRight now: {facts}"
@@ -191,6 +207,8 @@ class Brain(Node):
         self.spend_file = os.path.expanduser(str(p('spend_file')))
 
         self.speak_pub = self.create_publisher(String, 'speak', 10)
+        self.say_pub = self.create_publisher(String, 'say', 10)       # the yes / no sounds for Steve
+        self.terse = False
         self.answer_pub = self.create_publisher(String, 'brain/answer', 10)
         self.ready_pub = self.create_publisher(
             Bool, 'brain/ready', QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
@@ -385,6 +403,27 @@ class Brain(Node):
         msg.data = text
         self.speak_pub.publish(msg)
 
+    def _sound(self, mood: str) -> None:
+        msg = String()
+        msg.data = mood
+        self.say_pub.publish(msg)
+
+    def _out(self, sent: str) -> None:
+        """One sentence out loud; to Steve a bare yes or no is her robot sound."""
+        if self.terse:
+            p = _plain(sent)
+            if p in YES_WORDS:
+                self._sound('yes')
+                return
+            if p in NO_WORDS:
+                self._sound('nope')
+                return
+        self._say(sent)
+
+    def _plainly(self, chatty: str, terse: str) -> str:
+        """A fixed line, in the voice for whoever is listening."""
+        return terse if self.terse else chatty
+
     def _work(self) -> None:
         while rclpy.ok():
             raw = self.queue.get()
@@ -397,6 +436,7 @@ class Brain(Node):
                 self._banter(text, str(ask.get('lead_in', '')).strip(), str(ask['health']),
                              str(ask.get('then_say', '')).strip())
             elif text:
+                self.terse = bool(ask.get('terse', False))
                 self._answer(text, str(ask.get('lead_in', '')).strip(), bool(ask.get('think', False)),
                              speaker=str(ask.get('speaker', '')).strip())
 
@@ -452,7 +492,7 @@ class Brain(Node):
                     return full, first, 'unsure'
                 if not spoke and said and _plain(sent) == _plain(said.split()[-1] if said.endswith(',') else said):
                     continue                 # it repeated what she already said out loud ("Me?" "Me?")
-                self._say(sent)
+                self._out(sent)
                 spoke = True
         rest = buf.strip()
         if check and not spoke:
@@ -462,22 +502,22 @@ class Brain(Node):
             if UNSURE.search(rest):
                 return full, first, 'unsure'
         if not self._stopped and rest:
-            self._say(rest)
+            self._out(rest)
         return full, first, None
 
     def _answer(self, text: str, lead_in: str, think: bool = False, speaker: str = '') -> None:
         backend = self._pick()
         if backend is None:
-            self._say("I can't think right now. My brain is asleep.")
+            self._say(self._plainly("I can't think right now. My brain is asleep.", 'Brain offline.'))
             return
         if backend == 'claude' and self._spent() >= self.budget:
             self.get_logger().warning('daily budget spent')
-            self._say("I've talked enough for today. Ask me again tomorrow.")
+            self._say(self._plainly("I've talked enough for today. Ask me again tomorrow.", 'Budget spent.'))
             return
         if time.monotonic() - self.last_exchange > self.memory_timeout:
             self.memory.clear()
         persona = PERSONA.format(place=self.place)
-        who_line = WHO.format(who=speaker) if speaker else ''
+        who_line = (WHO.format(who=speaker) if speaker else '') + (TERSE if self.terse else '')
         messages = list(self.memory) + [{'role': 'user', 'content': text}]
         self._stopped = False
         t0 = time.monotonic()
@@ -493,8 +533,11 @@ class Brain(Node):
 
         try:
             if think and self._claude_ok():            # "Rosie, think hard about ..."
-                bridge = self._bridge()
-                self._say(bridge)
+                bridge = '' if self.terse else self._bridge()
+                if bridge:
+                    self._say(bridge)
+                else:
+                    self._sound('hm')                  # Steve: a sound, not "Give me a moment" 
                 backend = 'claude'
                 full, first, _ = claude(True, (lead_in + ' ' + bridge).strip())
             elif backend == 'local':
@@ -508,30 +551,32 @@ class Brain(Node):
                         handed, backend = True, 'claude'
                         heavy = reason == 'think'
                         said = lead_in
-                        if heavy:
+                        if heavy and self.terse:
+                            self._sound('hm')
+                        elif heavy:
                             bridge = self._bridge()
                             self._say(bridge)
                             said = (lead_in + ' ' + bridge).strip()
                         full, first, _ = claude(heavy, said)
                         first = time.monotonic() - t0 if first is None else first
                     elif reason in ('passed', 'think'):
-                        full = "I don't know. I'm just a robot."
+                        full = self._plainly("I don't know. I'm just a robot.", 'Unknown.')
                         self._say(full)
                     else:
                         said_now = sentences(full.strip() + ' ')[0] or [full.strip()]
                         for sent in said_now:
-                            self._say(sent)
+                            self._out(sent)
             else:
                 full, first, _ = claude(think, lead_in)
             if backend == 'claude' and self._stop_reason == 'refusal':
-                full = "I'd rather not answer that one."
+                full = self._plainly("I'd rather not answer that one.", 'Declined.')
                 self._say(full)
         except Exception as exc:      # noqa: BLE001 - any trouble: say so, stay up
             self.get_logger().warning(f'{backend}: {type(exc).__name__}: {str(exc)[:160]}')
             if backend == 'local':
                 self.local_up = False
                 self._publish_ready()
-            self._say("I can't reach my brain right now.")
+            self._say(self._plainly("I can't reach my brain right now.", 'Brain unreachable.'))
             return
         cents = self._add_spend(*self._usage) if backend == 'claude' else self._spent()
         self.last_exchange = time.monotonic()
@@ -552,6 +597,7 @@ class Brain(Node):
             route = f'local ({reason}, no Claude to hand to)'
         else:
             route = backend
+        route += ' [terse]' if self.terse else ''
         self.get_logger().info(f'{route}: "{text[:80]}" -> "{full[:160]}" (first words {first or 0:.1f} s, '
                                f'{time.monotonic() - t0:.1f} s, {self._usage[0]}+{self._usage[1]} tokens{speed}'
                                + (f', {cents:.1f} cents today' if backend == 'claude' else '')

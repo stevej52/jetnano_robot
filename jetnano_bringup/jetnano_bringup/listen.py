@@ -601,6 +601,8 @@ def _node_main(args):
             self.last_question = None       # what her last chatter was an answer to
             self.last_action = None         # ... and what kind of question it was
             self.offer_until = 0.0          # "Want a full status report?" waits for yes or no until then
+            self.terse = False              # Steve is talking: no chat, yes/no as sounds (2026-09-27)
+            self.owner_at = -1e9            # when his voice was last recognised for sure
             self.offer_report = ''
             self.pending = []               # the rest of a briefing, after "want to hear more?"
             self.pending_until = 0.0
@@ -794,11 +796,12 @@ def _node_main(args):
                     self._okay()
                     self.last_heard = now
                     return
+            self.terse = self._owner_speaking(who)
             action, mode = decide(text, self.mode)
             level = f', {db:.0f} dBFS' if db is not None else ', typed'
             voice_note = f', {who.label}' if who is not None else ''
             self.get_logger().info(f'heard "{text}" ({seconds:.1f} s{level}{voice_note}, decoded in {took:.2f} s)'
-                                   + (f' -> {action}' if action else ''))
+                                   + (f' -> {action}' if action else '') + (' [terse]' if self.terse else ''))
             if action and not self._for_me(text, action, who):
                 return
             if mode != self.mode:
@@ -813,7 +816,7 @@ def _node_main(args):
             elif action == 'stop':
                 self._stop()                              # no complaint; waiting for the next thing
             elif action == 'thanks':
-                self._reply("You're welcome!", 'ok')
+                self._reply("You're welcome!", 'ok')          # to Steve: the yes sound
             elif action == 'talk':
                 self._set_mute(False)
                 self._say('happy')
@@ -871,8 +874,12 @@ def _node_main(args):
                 self._speak(random.choice(GUEST_FINE))
             elif action == 'chat' and self._words():
                 if _has(normalize(text), REPORT_WORDS):
-                    self._okay('Checking.')                    # the report samples for a couple of seconds
+                    if not self.terse:
+                        self._okay('Checking.')                # the report samples for a couple of seconds
                     self._speak(english_reply('status report', self.battery, health=self.health))
+                elif _has(normalize(text), HEALTH_WORDS) and self.terse:
+                    # Steve: what is wrong and the battery, nothing else
+                    threading.Thread(target=lambda: self._speak(self.health.brief()), daemon=True).start()
                 elif _has(normalize(text), HEALTH_WORDS):
                     self._how_am_i(text)
                 elif known_subject(text) or not self.brain_ready:
@@ -940,6 +947,21 @@ def _node_main(args):
                 self._reply(f'Only {self.owner} can ask me that.', 'hm')
                 return False
             return True
+
+        def _owner_speaking(self, who) -> bool:
+            """Is it Steve? Typed words are his. Once she knows his voice: a sure
+            match, or a short or unsure one that sounds nearest him within a
+            minute of a sure one (a "yes" is too short to be sure of)."""
+            if who is None:
+                return True
+            if self.voices is None or not self.voices.has(self.owner):
+                return False
+            now = time.monotonic()
+            if who.is_owner(self.owner):
+                self.owner_at = now
+                return True
+            return (not who.confident and who.name is not None and who.name.lower() == self.owner.lower()
+                    and who.score >= self.voices.same and now - self.owner_at < 60.0)
 
         def _learn_voice(self, who) -> None:
             if self.voices is None:
@@ -1025,6 +1047,8 @@ def _node_main(args):
                 self._speak(f"I don't know any voices yet. Say, {NAME}, learn my voice.")
             elif who is None or who.emb is None:
                 self._speak('Say a little more and I will tell you.')
+            elif who.confident and self.terse:
+                self._speak(f'{who.name}. {who.percent} percent.')
             elif who.confident:
                 self._speak(f"That's you, {who.name}. I'm {who.percent} percent sure.")
             elif who.name and who.score >= 0.25:
@@ -1058,7 +1082,10 @@ def _node_main(args):
 
         def _okay(self, then: str = '') -> None:
             """Okay, in one of her ways - now and then "Aaaalrighty then!" - and
-            whatever follows it."""
+            whatever follows it. To Steve: the yes sound, nothing else."""
+            if self.terse:
+                self._say('yes')
+                return
             if random.random() < ALRIGHTY_CHANCE and glob.glob(os.path.expanduser('~/sounds/alrighty[0-9]*.wav')):
                 self._say('alrighty')
                 if then:
@@ -1073,8 +1100,11 @@ def _node_main(args):
             return time.monotonic() >= self.robot_until
 
         def _reply(self, words: str, mood: str) -> None:
-            """Words by default, her own sound in a robot spell."""
-            if self._words():
+            """Words by default, her own sound in a robot spell. To Steve a good
+            outcome is the yes sound; anything else keeps its (short) words."""
+            if self.terse and mood in ('ok', 'happy'):
+                self._say('yes')
+            elif self._words():
                 self._speak(words)
             else:
                 self._say(mood)
@@ -1162,24 +1192,28 @@ def _node_main(args):
             threading.Thread(target=run, daemon=True, name='listen-howami').start()
 
         def _ask_brain(self, text: str, think: bool = False, who=None) -> None:
-            # "think hard": the brain says "Give me a moment..." itself, no lead-in
-            lead = '' if think else lead_in(text, self.last_opener)
+            # "think hard": the brain says "Give me a moment..." itself, no lead-in;
+            # Steve gets no lead-in at all
+            lead = '' if think or self.terse else lead_in(text, self.last_opener)
             if lead:
                 self._speak(lead)
                 self.last_opener = lead if lead in LEAD_OPENERS else self.last_opener
             self.get_logger().info(f'asks the brain "{text[:80]}"' + (f' after "{lead}"' if lead else '')
                                    + (' to think hard' if think else ''))
             msg = self._String()
-            msg.data = json.dumps({'text': text, 'lead_in': lead, 'think': think, 'speaker': self._describe(who)})
+            msg.data = json.dumps({'text': text, 'lead_in': lead, 'think': think, 'speaker': self._describe(who),
+                                   'terse': self.terse})
             self.ask_pub.publish(msg)
 
         def _brief(self, kind: str) -> None:
             city = self.location.partition(',')[0].strip()
-            lead = FETCH_LEAD[kind].replace('{ok}', random.choice(OKAYS))
-            if '{city}' in lead:
-                lead = (lead.format(city=city) if city
-                        else lead.replace(' in {city}', ' here').replace(' from {city}', ' from around here'))
-            self._speak(lead)
+            self.brief_terse = self.terse
+            if not self.terse:                  # Steve gets the news, not "Okay, here's the news"
+                lead = FETCH_LEAD[kind].replace('{ok}', random.choice(OKAYS))
+                if '{city}' in lead:
+                    lead = (lead.format(city=city) if city
+                            else lead.replace(' in {city}', ' here').replace(' from {city}', ' from around here'))
+                self._speak(lead)
 
             def fetch():
                 try:
@@ -1200,7 +1234,8 @@ def _node_main(args):
             lines = self.pending.pop(0)
             more = bool(self.pending)
             words = sum(len(s.split()) for s in lines)
-            self._speak('\n'.join(lines) + ('\nWant to hear more?' if more else ''))
+            ask = more and not getattr(self, 'brief_terse', False)   # Steve says "more" if he wants it
+            self._speak('\n'.join(lines) + ('\nWant to hear more?' if ask else ''))
             self.pending_until = time.monotonic() + words / 2.5 + 6.0 + self.more_timeout
             self.last_heard = time.monotonic()
 
