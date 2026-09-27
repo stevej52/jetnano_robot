@@ -188,6 +188,17 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /odometry/filtered
       Value: false
+    - Class: nvblox_rviz_plugin/NvbloxMesh
+      Enabled: true
+      Name: 3D map (colour)
+      Topic:
+        Depth: 10
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /nvblox_node/mesh
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
