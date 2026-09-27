@@ -23,8 +23,7 @@ a grid arrives (9.5 Hz, a few hundred points), so the guard can stop the robot
 for something the lidar's single plane cannot see.
 """
 
-import struct
-
+import numpy as np
 import rclpy
 from nav_msgs.msg import OccupancyGrid
 from rclpy.node import Node
@@ -52,7 +51,6 @@ class GridToPoints(Node):
         self.create_subscription(
             OccupancyGrid, self.get_parameter('grid_topic').value, self.on_grid,
             QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE))
-        self._packer = struct.Struct('<fff')
         self.get_logger().info(
             f"{self.get_parameter('grid_topic').value} cells >= {self.threshold} -> "
             f"{self.get_parameter('points_topic').value} at z = {self.height:.2f}")
@@ -64,18 +62,18 @@ class GridToPoints(Node):
         width = info.width
         # Grids from nvblox are axis-aligned with their frame (no rotation in
         # the origin), so a cell's centre is a plain offset from the origin.
-        chunks = []
-        for index, value in enumerate(grid.data):
-            if value >= self.threshold:
-                chunks.append(self._packer.pack(
-                    ox + (index % width + 0.5) * res,
-                    oy + (index // width + 0.5) * res,
-                    self.height))
+        # numpy, not a Python loop over every cell (2026-09-27: that loop was
+        # ~4 % of a core at 9.5 grids a second).
+        cells = np.flatnonzero(np.asarray(grid.data, dtype=np.int8) >= self.threshold)
+        points = np.empty((len(cells), 3), dtype='<f4')
+        points[:, 0] = ox + (cells % width + 0.5) * res
+        points[:, 1] = oy + (cells // width + 0.5) * res
+        points[:, 2] = self.height
 
         cloud = PointCloud2()
         cloud.header = grid.header
         cloud.height = 1
-        cloud.width = len(chunks)
+        cloud.width = len(cells)
         cloud.fields = [
             PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
             PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
@@ -83,8 +81,8 @@ class GridToPoints(Node):
         ]
         cloud.is_bigendian = False
         cloud.point_step = 12
-        cloud.row_step = 12 * len(chunks)
-        cloud.data = b''.join(chunks)
+        cloud.row_step = 12 * len(cells)
+        cloud.data = points.tobytes()
         cloud.is_dense = True
         self.pub.publish(cloud)
 

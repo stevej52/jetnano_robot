@@ -153,7 +153,9 @@ def generate_launch_description():
                     'i2c_bus': LaunchConfiguration('imu_i2c_bus'),
                     'i2c_addr': 0x28,
                     'frame_id': 'imu_link',
-                    'data_query_frequency': 50,
+                    # 100 Hz, the BNO055's fusion rate (2026-09-27; was 50): the C++
+                    # safety_monitor's tilt guard reacts twice as fast
+                    'data_query_frequency': 100,
                     'ros_topic_prefix': 'imu/',
                 }],
                 # The driver names its fused output imu/imu; everything
