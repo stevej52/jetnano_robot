@@ -192,6 +192,19 @@ def generate_launch_description():
             condition=IfCondition(LaunchConfiguration('use_ears')),
         ),
 
+        # Settles buzzing steering servos after a stop by ear: listens to the
+        # ears' audio for the servo chatter and wiggles the wheels through
+        # twist_mux until it stops (Steve, 2026-09-27).
+        Node(
+            package='jetnano_bringup',
+            executable='settle',
+            name='settle',
+            output='screen',
+            respawn=True,
+            respawn_delay=10.0,
+            condition=IfCondition(LaunchConfiguration('use_ears')),
+        ),
+
         # Her English voice (text on /speak), for the sounds node's English
         # mode and listen's English replies. Same venv as listen.
         Node(

@@ -35,6 +35,12 @@ twist_mux:
         topic: cmd_vel_nav
         timeout: 0.5
         priority: 10
+      # The settle node's steering wiggle after a stop (a buzzing servo):
+      # bottom of the pile, so anyone actually driving, and every lock, wins.
+      settle:
+        topic: cmd_vel_settle
+        timeout: 0.5
+        priority: 5
       # Above teleop on purpose: if the robot is going over, the operator's
       # stick must not be able to fight the recovery. tilt_guard publishes
       # nothing at all when it is not recovering, so this input simply times

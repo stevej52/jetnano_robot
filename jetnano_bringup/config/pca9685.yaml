@@ -71,10 +71,11 @@
       # the rug edge; tightening the linkage is the real fix.
       home: 81.0
       home_on_start: true
-      # on carpet the tyres wind up and the servo chatters holding them; one
-      # +-1.5 deg wiggle 0.7 s after settling (motors idle) relaxes it: buzz
-      # +5.7 -> -3.5 dB by her own mic, 2026-09-27
-      relax_deg: 1.5
+      # On carpet the tyres wind up and the servo chatters holding them. The
+      # driver can do one +-relax_deg wiggle relax_after_s after settling, but
+      # by her own mic (2026-09-27) no fixed wiggle cures it every time, so it
+      # is off and the settle node listens and wiggles until it is quiet.
+      relax_deg: 0.0
       relax_after_s: 0.7
       min_limit: 40.0          # measured: 45 reaches cleanly, no binding
       max_limit: 125.0         # measured: 120 reaches cleanly, no binding
@@ -87,7 +88,7 @@
       channel: 2
       home: 87.0               # mirrored about the front centre: rear = 168 - front (trim, see steering)
       home_on_start: true
-      relax_deg: 1.5
+      relax_deg: 0.0           # see steering: the settle node does this by ear
       relax_after_s: 0.7
       min_limit: 43.0
       max_limit: 128.0
