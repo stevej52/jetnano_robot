@@ -117,9 +117,14 @@ class TiltGuardNode(Node):
         self._base_frame = str(self.get_parameter('base_frame').value)
         self._mount = None                 # imu_link -> base_link rotation, once known
         self._tf_buffer = None
+        self._tf_listener = None
         if bool(self.get_parameter('use_tf_for_imu_mount').value):
+            # The mount is a fixed joint in the URDF, so it arrives once on /tf_static
+            # (latched). Listening to /tf as well - 90 messages a second, for nothing -
+            # was most of this node's 17 % of a core (2026-09-27); and once the mount
+            # is known the listener goes away altogether.
             self._tf_buffer = Buffer()
-            self._tf_listener = TransformListener(self._tf_buffer, self)
+            self._tf_listener = TransformListener(self._tf_buffer, self, static_only=True)
         else:
             rpy = [float(v) for v in self.get_parameter('imu_mount_rpy').value]
             self._mount = quaternion_from_rpy(*rpy)
@@ -173,6 +178,9 @@ class TiltGuardNode(Node):
             return False
         q = transform.transform.rotation
         self._mount = (q.x, q.y, q.z, q.w)
+        if self._tf_listener is not None:           # it never changes: stop listening
+            self._tf_listener.unregister()
+            self._tf_listener = None
         roll, pitch = roll_pitch_from_quaternion(*self._mount)
         self.get_logger().info(
             f'IMU mount from TF ({imu_frame} in {self._base_frame}): roll '
