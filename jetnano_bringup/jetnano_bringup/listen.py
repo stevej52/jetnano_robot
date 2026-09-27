@@ -130,7 +130,12 @@ NEWS = (
 # alarms) carry on (Steve, 2026-09-26). They count only as the entire
 # utterance, fillers aside.
 VOICE_OFF = ('over and out', 'over and how', 'over an out')
-VOICE_ON = ('rise and shine', 'rising shine', 'rise n shine', 'rise and shine rosie', 'rise in shine')
+# Said at normal speed "rise and shine" runs together into one word; what the
+# recognizer made of it on 2026-09-27: "Rosentree", "Right in the chain",
+# "The writing shine" (said slowly, with pauses, it hears it right).
+VOICE_ON = ('rise and shine', 'rising shine', 'rise n shine', 'rise and shine rosie', 'rise in shine',
+            'risenshine', 'risen shine', 'rise shine', 'rice and shine', 'writing shine', 'right and shine',
+            'rising sign', 'rise and sign')
 FILLERS = {'um', 'uh', 'erm', 'hmm', 'okay', 'ok', 'so', 'hey', 'alright', 'now', 'please', 'rosie'}
 VOICE_OFF_FLAG = os.path.expanduser('~/voice/voice_off')
 
@@ -140,13 +145,20 @@ def code_word(text: str):
     Near misses count: the recognizer makes "rising shine" or "rise in shine"
     of it (2026-09-27, Steve said it three times to a deaf robot)."""
     words = [w for w in normalize(text).split() if w not in FILLERS]
+    while words and words[0] in ('the', 'a', 'and'):
+        words = words[1:]                   # "The writing shine"
     said = ' '.join(words)
     if not said:
         return None
+    joined = said.replace(' ', '')
     for phrases, answer in ((VOICE_OFF, 'off'), (VOICE_ON, 'on')):
         for phrase in phrases:
-            if said == phrase or difflib.SequenceMatcher(None, said, phrase).ratio() >= 0.8:
+            if (said == phrase or difflib.SequenceMatcher(None, said, phrase).ratio() >= 0.8
+                    or difflib.SequenceMatcher(None, joined, phrase.replace(' ', '')).ratio() >= 0.8):
                 return answer
+    # a short utterance that ends in "shine" is her wake-up, however the start came out
+    if len(words) <= 4 and words[-1] in ('shine', 'shines', 'shining', 'shined'):
+        return 'on'
     return None
 
 
