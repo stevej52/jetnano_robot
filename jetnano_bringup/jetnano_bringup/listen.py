@@ -159,6 +159,14 @@ MAP_STOP = ('stop mapping', 'end mapping', 'finish mapping', 'done mapping', 'st
             'turn off mapping', 'turn mapping off', 'mapping off', 'save the map', 'save your map', 'stop napping',
             'stop map')
 
+# Watchdog mode for motion_watch (Steve, 2026-09-27): normally she only reacts
+# to someone coming right at her; on watch she says "huh" and looks at every
+# mover the lidar sees. Not remembered across a restart.
+WATCH_ON = ('keep watch', 'watchdog mode', 'watch dog mode', 'guard mode', 'stand guard', 'on guard',
+            'keep an eye out', 'guard the house', 'watch the house', 'start watching', 'be on watch')
+WATCH_OFF = ('stand down', 'stop watching', 'at ease', 'watchdog off', 'watch dog off', 'guard off', 'off duty',
+             'stop guarding', 'end watch')
+
 HEALTH_WORDS = ('how are you', 'how you doing', 'you doing', 'how is it going', "how's it going", 'how are things',
                 'how do you feel', 'how are you feeling', 'how is everything', "how's everything", 'you okay',
                 'you all right', 'how are ya', 'how you feeling', 'feeling okay')
@@ -270,6 +278,10 @@ def decide(text: str, mode: str):
         return 'map_stop', mode
     if _has(t, MAP_START):
         return 'map_start', mode
+    if _has(t, WATCH_OFF):              # before STOP: "stop watching" is not "stop"
+        return 'watch_off', mode
+    if _has(t, WATCH_ON):
+        return 'watch_on', mode
     if _has(t, FORGET_VOICE):
         return 'forget_voice', mode
     if _has(t, LEARN_VOICE):
@@ -527,6 +539,7 @@ def _node_main(args):
             self.stop_pub = self.create_publisher(Empty, 'sound/stop', 10)
             self.ask_pub = self.create_publisher(String, 'brain/ask', 10)
             self.who_pub = self.create_publisher(String, 'speech/speaker', 10)
+            self.watch_pub = self.create_publisher(String, 'motion/mode', 10)
             self.brain_ready = False
             self.last_opener = None
             self.create_subscription(Bool, 'brain/ready', self._on_brain_ready,
@@ -812,6 +825,11 @@ def _node_main(args):
                 self._who_am_i(who)
             elif action in ('map_start', 'map_stop'):
                 self._mapping(action == 'map_start')
+            elif action in ('watch_on', 'watch_off'):
+                m = String()
+                m.data = 'watch' if action == 'watch_on' else 'approach'
+                self.watch_pub.publish(m)
+                self._reply("I'm on watch." if action == 'watch_on' else "Standing down.", 'ok')
             elif action == 'bye':
                 self._say('bye')
             elif action and action.startswith('brief:'):

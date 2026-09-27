@@ -34,6 +34,20 @@ mounted backwards (jetnano.urdf.xacro), hence ``scan_yaw_offset``. Pan range
 and centre are the mount's; set them when it exists. Without the pan-tilt
 the angle topics simply have no subscriber and the chirps still happen.
 
+Three modes (Steve, 2026-09-27), parameter ``mode`` or a String on
+``motion/mode`` (listen sends it: "Rosie, keep watch" / "Rosie, stand down"):
+
+* ``approach`` (the default): quiet about people moving around the room; she
+  reacts only to someone coming right at her - a mover that has closed in by
+  ``approach_by_m`` within ``approach_window_s`` on a steady bearing and is now
+  inside ``close_m``. Then she says "huh" and follows them like watch mode
+  until nobody has been seen for ``return_after_s``.
+* ``watch``: watchdog mode - "huh" and a look at every mover, as before.
+* ``off``: nothing.
+
+The mode in force is latched on ``motion/mode_state``. It is not remembered
+across a restart: she always comes up in the ``mode`` parameter's mode.
+
 ``aim`` and the pan/tilt centre, limit and sign parameters are live, so the
 mount can be set up without a restart::
 
@@ -43,13 +57,14 @@ mount can be set up without a restart::
 
 import math
 import time
+from collections import deque
 
 import numpy as np
 import rclpy
 from geometry_msgs.msg import PointStamped, Twist
 from rcl_interfaces.msg import SetParametersResult
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Float64, String
 
@@ -80,6 +95,11 @@ class MotionWatch(Node):
         # Off until the pan-tilt is centred and its reach measured: on 2026-09-25 it
         # aimed 2 s after a reboot and drove an uncalibrated mount into its stops.
         self.declare_parameter('aim', False)                    # False: chirp, leave the servos alone
+        self.declare_parameter('mode', 'approach')              # approach | watch | off (see the top)
+        self.declare_parameter('close_m', 0.9)                  # approach: this close to the lidar (bumper ~0.25 m)
+        self.declare_parameter('approach_by_m', 0.8)            # ... having come this much closer
+        self.declare_parameter('approach_window_s', 4.0)        # ... within this long
+        self.declare_parameter('approach_bearing_deg', 25.0)    # ... on a steady bearing (walking past sweeps it)
 
         p = lambda n: self.get_parameter(n).value  # noqa: E731
         self.yaw_off = float(p('scan_yaw_offset'))
@@ -97,6 +117,10 @@ class MotionWatch(Node):
         self.cam_h, self.look_h = float(p('camera_height_m')), float(p('look_at_height_m'))
         self.chatty = bool(p('say'))
         self.aim = bool(p('aim'))
+        self.mode = str(p('mode'))
+        self.close_m, self.approach_by = float(p('close_m')), float(p('approach_by_m'))
+        self.approach_window = float(p('approach_window_s'))
+        self.approach_bearing = math.radians(float(p('approach_bearing_deg')))
         self.add_on_set_parameters_callback(self._on_params)
 
         self.pan_pub = self.create_publisher(Float64, '/pca9685/pan/angle', 10)
@@ -105,8 +129,12 @@ class MotionWatch(Node):
         self.say_pub = self.create_publisher(String, 'say', 10)
         self.create_subscription(LaserScan, 'scan', self._on_scan, qos_profile_sensor_data)
         self.create_subscription(Twist, 'cmd_vel', self._on_cmd, 10)
+        self.create_subscription(String, 'motion/mode', self._on_mode, 10)
+        latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.mode_pub = self.create_publisher(String, 'motion/mode_state', latched)
 
         self.last_cmd = 0.0                # monotonic time of the last non-zero command
+        self.seen = deque()                # (time, bearing, range) of movers, for approach mode
         self.background = None             # per-beam range, learned while still
         self.learned = 0
         self.hits = 0                      # consecutive scans with a mover
@@ -114,14 +142,22 @@ class MotionWatch(Node):
         self.tracking = False
         self.centred = True
         self.create_timer(0.5, self._housekeeping)
-        self.get_logger().info('watching for movement while the robot stands still')
+        self._publish_mode()
+        self.get_logger().info(f'watching for movement while the robot stands still; mode {self.mode}')
 
-    _LIVE = {'aim': 'aim', 'say': 'chatty',
+    MODES = ('approach', 'watch', 'off')
+    _LIVE = {'aim': 'aim', 'say': 'chatty', 'close_m': 'close_m', 'approach_by_m': 'approach_by',
+             'approach_window_s': 'approach_window',
              'pan_center_deg': 'pan_c', 'pan_limit_deg': 'pan_lim', 'pan_sign': 'pan_sign',
              'tilt_center_deg': 'tilt_c', 'tilt_limit_deg': 'tilt_lim', 'tilt_sign': 'tilt_sign'}
 
     def _on_params(self, params) -> SetParametersResult:
         for q in params:
+            if q.name == 'mode':
+                if q.value not in self.MODES:
+                    return SetParametersResult(successful=False, reason=f'mode must be one of {self.MODES}')
+                self._set_mode(q.value)
+                continue
             attr = self._LIVE.get(q.name)
             if attr:
                 setattr(self, attr, bool(q.value) if attr in ('aim', 'chatty') else float(q.value))
@@ -137,12 +173,33 @@ class MotionWatch(Node):
         if msg.linear.x != 0.0 or msg.linear.y != 0.0:
             self.last_cmd = time.monotonic()
 
+    def _on_mode(self, msg: String) -> None:
+        mode = msg.data.strip().lower()
+        if mode in self.MODES:
+            self._set_mode(mode)
+        else:
+            self.get_logger().warning(f'unknown mode {msg.data!r}; one of {self.MODES}')
+
+    def _set_mode(self, mode: str) -> None:
+        if mode != self.mode:
+            self.get_logger().info(f'mode {self.mode} -> {mode}')
+        self.mode = mode
+        self.seen.clear()
+        if mode == 'off':
+            self._centre()
+        self._publish_mode()
+
+    def _publish_mode(self) -> None:
+        m = String(); m.data = self.mode
+        self.mode_pub.publish(m)
+
     def _still(self) -> bool:
         return time.monotonic() - self.last_cmd > self.still_after
 
     def _on_scan(self, scan: LaserScan) -> None:
         if not self._still():
             self.background, self.learned, self.hits = None, 0, 0
+            self.seen.clear()
             self._centre()
             return
         r = np.array(scan.ranges, dtype=np.float32)
@@ -174,7 +231,28 @@ class MotionWatch(Node):
         if self.hits < self.persist:
             return
         bearing, rng = mover
-        self._look(bearing, rng)
+        if self.mode == 'watch':
+            self._look(bearing, rng)
+        elif self.mode == 'approach':
+            self._approach(bearing, rng)
+
+    def _approach(self, bearing: float, rng: float) -> None:
+        """Approach mode: follow only someone who came right at her."""
+        now = time.monotonic()
+        self.seen.append((now, bearing, rng))
+        while self.seen and now - self.seen[0][0] > self.approach_window:
+            self.seen.popleft()
+        if self.tracking and now - self.last_seen <= self.return_after:
+            self._look(bearing, rng)                    # already noticed: keep following
+            return
+        if rng > self.close_m:
+            return
+        steady = [(t, r) for t, b, r in self.seen
+                  if abs((b - bearing + math.pi) % (2 * math.pi) - math.pi) <= self.approach_bearing]
+        t_far, r_far = max(steady, key=lambda tr: tr[1])
+        if r_far - rng >= self.approach_by:
+            self.get_logger().info(f'coming right at her: {r_far:.1f} m -> {rng:.1f} m in {now - t_far:.1f} s')
+            self._look(bearing, rng)
 
     def _cluster(self, closer, r, scan):
         """The nearest run of adjacent 'closer' beams that looks like a body, as (bearing, range)."""
