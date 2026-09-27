@@ -220,7 +220,12 @@ WHO_WORDS = ('who am i', 'who is this', "who's this", 'who is talking', "who's t
              'recognize my voice', 'recognise my voice', 'who do you think i am')
 NAME_PREFIX = re.compile(r"^(?:(?:hi|hello|hey|um|uh|oh|well|it's|its|it is|this is|i am|i'm|im|my name is|"
                          r"my name's|call me|the name is|the name's)\s+)+")
-OWNER_ONLY = ('map_start', 'map_stop')          # hers to do only for the owner, once she knows his voice
+OWNER_ONLY = ('map_start', 'map_stop')
+# Voice commands that make her DO something. Off until the new microphone array
+# (Steve, 2026-09-27: "the voice commands have been basically unusable ... disable
+# all voice commands that have the robot do anything"); she answers them with the
+# "nope" sound so it is clear she heard. Parameter voice_actions turns them back on.
+ROBOT_ACTIONS = ('map_start', 'map_stop', 'watch_on', 'watch_off', 'save_3d')          # hers to do only for the owner, once she knows his voice
 GUEST_FINE = ("I'm doing fine, thanks for asking.", "Pretty good! Just keeping an eye on the house.",
               "All good here, thanks.")
 
@@ -515,6 +520,7 @@ def _node_main(args):
             self.declare_parameter('voice_model', speaker.DEFAULT_MODEL)   # '' or missing: no voice recognition
             self.declare_parameter('voices_dir', speaker.DEFAULT_DIR)
             self.declare_parameter('owner', 'Steve')
+            self.declare_parameter('voice_actions', False)            # see ROBOT_ACTIONS
             self.declare_parameter('voice_match', speaker.MATCH)         # cosine: confidently that person
             self.declare_parameter('same_voice', speaker.SAME)           # cosine: the voice she is talking with
 
@@ -815,6 +821,10 @@ def _node_main(args):
             self.get_logger().info(f'heard "{text}" ({seconds:.1f} s{level}{voice_note}, decoded in {took:.2f} s)'
                                    + (f' -> {action}' if action else '') + (' [terse]' if self.terse else ''))
             if action and not self._for_me(text, action, who):
+                return
+            if action in ROBOT_ACTIONS and not self.get_parameter('voice_actions').value:
+                self.get_logger().info(f'{action}: voice commands that move or change her are off (voice_actions)')
+                self._say('nope')
                 return
             if mode != self.mode:
                 self.mode = mode

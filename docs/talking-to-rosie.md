@@ -89,6 +89,13 @@ go to Claude (Opus 5.5), a fraction of a cent each; the first word you hear
 | "Rosie, speak robot" | beeps instead of words for five minutes |
 | "Rosie, speak English" | words again |
 
+## Commands that make her do something - OFF for now
+
+Since 2026-09-27, until the new microphone array arrives, the commands below
+(mapping, keeping watch, saving the 3D map) are switched off: she answers them
+with her "nope" sound. Being quiet, "over and out" and "rise and shine" still
+work. `ros2 param set /listen voice_actions true` turns them back on.
+
 ## Mapping
 
 Mapping does not start by itself. Put her at the parking spot first - it is
