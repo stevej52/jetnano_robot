@@ -48,7 +48,7 @@ import numpy as np
 
 DEFAULT_MODEL = os.path.expanduser('~/voice/models/speaker/wespeaker_en_voxceleb_CAM++.onnx')
 DEFAULT_DIR = os.path.expanduser('~/voice/speakers')
-MATCH = 0.45            # confidently this person
+MATCH = 0.55            # confidently this person (2026-09-27: Steve live >= 0.65; other voices 0.18-0.44)
 SAME = 0.35             # the same voice as a moment ago
 MIN_SECONDS = 0.6       # shorter than this, no print: too little to go on
 SURE_SECONDS = 1.0      # shorter than this, a print is a hint, never a confident match
