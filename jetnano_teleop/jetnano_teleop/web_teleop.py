@@ -62,7 +62,7 @@ from rcl_interfaces.srv import GetParameters, SetParameters
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
 from sensor_msgs.msg import BatteryState
-from std_msgs.msg import Bool, String
+from std_msgs.msg import Bool, Float64, String
 
 try:
     from nav2_msgs.msg import CollisionMonitorState
@@ -197,6 +197,14 @@ def make_handler(node: 'WebTeleop'):
                 state.set_e_stop(False)
                 node.get_logger().info('GO from the web page: e_stop cleared')
                 self._json(node.status())
+            elif path == '/look':
+                # the pan-tilt camera, from the dashboard: view degrees, pan + = left, tilt + = up
+                try:
+                    node.look(float(body.get('pan', 0.0)), float(body.get('tilt', 0.0)))
+                except (TypeError, ValueError):
+                    self._json({'error': 'pan and tilt must be numbers'}, HTTPStatus.BAD_REQUEST)
+                    return
+                self._json({'look': node.look_at})
             elif path == '/guard':
                 ok, why = node.set_guard(bool(body.get('enabled', True)))
                 if ok:
@@ -239,6 +247,17 @@ class WebTeleop(Node):
         # The iPad dashboard (Steve, 2026-09-27): /dash - cameras, sensors, everything
         # she knows, a STOP and no driving. Its data: dash.py.
         self.declare_parameter('dash_page', default_dash())
+        # The pan-tilt from the dashboard (Steve, 2026-09-27: "hand pan and tilt ...
+        # right next to the video feed"). View degrees -> servo degrees, as measured
+        # 2026-09-26 (pca9685.yaml, motion_watch): pan 74.6 = dead ahead, higher =
+        # LEFT; tilt 90 = level, higher = DOWN. The driver clamps to its own limits too.
+        self.declare_parameter('pan_topic', '/pca9685/pan/angle')
+        self.declare_parameter('tilt_topic', '/pca9685/tilt/angle')
+        self.declare_parameter('pan_center_deg', 74.6)
+        self.declare_parameter('pan_range_deg', [-69.0, 105.0])     # right .. left
+        self.declare_parameter('tilt_center_deg', 90.0)
+        self.declare_parameter('tilt_sign', -1.0)
+        self.declare_parameter('tilt_range_deg', [-78.0, 78.0])     # down .. up
 
         self.max_linear = float(self.get_parameter('max_linear').value)
         self.max_angular = float(self.get_parameter('max_angular').value)
@@ -252,6 +271,9 @@ class WebTeleop(Node):
             Bool, self.get_parameter('e_stop_topic').value, 10)
 
         self.state = State()
+        self.look_at = [0.0, 0.0]            # the pan-tilt, view degrees (pan + = left, tilt + = up)
+        self.pan_pub = self.create_publisher(Float64, str(self.get_parameter('pan_topic').value), 10)
+        self.tilt_pub = self.create_publisher(Float64, str(self.get_parameter('tilt_topic').value), 10)
         self._quiet_at = 0.0      # when the last stop-burst ends and we go silent
         self._driving = False
         self._last_lock_publish = 0.0
@@ -393,6 +415,18 @@ class WebTeleop(Node):
             self.get_logger().error(f'cannot read the page {path}: {exc}')
             return b'<h1>jetnano web_teleop: page missing</h1>'
 
+    def look(self, pan: float, tilt: float) -> None:
+        """Point the pan-tilt camera: view degrees, clamped to the mount's reach."""
+        lo, hi = [float(v) for v in self.get_parameter('pan_range_deg').value]
+        tlo, thi = [float(v) for v in self.get_parameter('tilt_range_deg').value]
+        pan, tilt = max(lo, min(hi, pan)), max(tlo, min(thi, tilt))
+        self.look_at = [round(pan, 1), round(tilt, 1)]
+        a, b = Float64(), Float64()
+        a.data = float(self.get_parameter('pan_center_deg').value) + pan
+        b.data = float(self.get_parameter('tilt_center_deg').value) + float(self.get_parameter('tilt_sign').value) * tilt
+        self.pan_pub.publish(a)
+        self.tilt_pub.publish(b)
+
     def dash_page(self) -> bytes:
         # read each time, so the page can be edited without a restart
         return self._read_page(str(self.get_parameter('dash_page').value))
@@ -411,6 +445,7 @@ class WebTeleop(Node):
                 'guard_enabled': self._guard_enabled,
                 'battery': (self._battery if self.monotonic() - self._battery_stamp < 5.0 else None),
                 'health': (self._health if self.monotonic() - self._health_stamp < 20.0 else None),
+                'look': self.look_at,
                 'linear': self.state.linear if live else 0.0,
                 'angular': self.state.angular if live else 0.0,
             }

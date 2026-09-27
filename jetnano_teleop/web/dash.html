@@ -124,7 +124,21 @@
     color: rgba(255,255,255,0.7); text-shadow: 0 1px 2px #000; }
 
   #pan { grid-area: pan; }
-  #pan .feed { top: 30px; height: calc(100% - 30px); }
+  #pan .feed { top: 30px; height: calc(100% - 30px); touch-action: none; cursor: grab; }
+  /* the look pad: drag to turn the pan-tilt, further = faster; drag the picture itself to aim */
+  #lookpad { position: absolute; right: 12px; bottom: 12px; width: 122px; height: 122px; border-radius: 50%; z-index: 3;
+    background: radial-gradient(circle, rgba(5,7,12,0.25), rgba(5,7,12,0.6)); border: 1px solid var(--edge-hi);
+    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); touch-action: none;
+    box-shadow: 0 0 22px rgba(94,242,255,0.18), inset 0 0 18px rgba(94,242,255,0.10); }
+  #lookpad::before { content: ""; position: absolute; inset: 22%; border-radius: 50%; border: 1px dashed rgba(94,242,255,0.25); }
+  #lookpad .chev { position: absolute; font: 700 11px/1 var(--mono); color: rgba(94,242,255,0.6); }
+  #lookpad .u { top: 7px; left: 50%; transform: translateX(-50%); } #lookpad .d { bottom: 7px; left: 50%; transform: translateX(-50%); }
+  #lookpad .l { left: 8px; top: 50%; transform: translateY(-50%); } #lookpad .r { right: 8px; top: 50%; transform: translateY(-50%); }
+  #lookpad .knob { position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; margin: -22px 0 0 -22px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 35%, #b6fbff, #2bb8c8 70%); box-shadow: 0 0 18px rgba(94,242,255,0.65); }
+  #lookctr { position: absolute; right: 142px; bottom: 14px; z-index: 3; font: 700 10px/1 var(--mono); letter-spacing: 0.16em;
+    padding: 9px 11px; border-radius: 9px; border: 1px solid var(--edge-hi); background: rgba(5,7,12,0.6); color: var(--cyan); }
+  #lookctr:active { background: var(--cyan); color: var(--bg); }
 
   /* ------------------------------------------------------------- radar / map */
   #nav { grid-area: nav; }
@@ -215,6 +229,8 @@
     <h2>Pan-tilt camera <span class="tag" id="pantag">IMX219 · A</span></h2>
     <div class="nofeed" style="top:30px">CONNECTING</div>
     <img id="panimg" class="feed" alt="">
+    <button id="lookctr">CENTER</button>
+    <div id="lookpad"><span class="chev u">▲</span><span class="chev d">▼</span><span class="chev l">◀</span><span class="chev r">▶</span><div class="knob" id="knob"></div></div>
   </section>
 
   <section id="nav" class="panel">
@@ -297,6 +313,55 @@
   stopBtn.addEventListener('mousedown', press);
   ['touchend', 'touchcancel', 'mouseup', 'mouseleave'].forEach(function (ev) { stopBtn.addEventListener(ev, release); });
 
+  // --------------------------------------------------------------- pan-tilt
+  // view degrees: pan + = left, tilt + = up (web_teleop turns them into servo degrees)
+  var look = { pan: 0, tilt: 0 }, lookSent = 0, lookLocal = 0, pad = { x: 0, y: 0, held: false };
+  var LIM = { pan: [-69, 105], tilt: [-78, 78] };
+  function clampLook() { look.pan = Math.max(LIM.pan[0], Math.min(LIM.pan[1], look.pan)); look.tilt = Math.max(LIM.tilt[0], Math.min(LIM.tilt[1], look.tilt)); }
+  function sendLook(force) {
+    var now = performance.now(); lookLocal = now; clampLook(); paintLook();
+    if (!force && now - lookSent < 90) return;
+    lookSent = now;
+    fetch('/look', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pan: look.pan, tilt: look.tilt }) }).catch(function () {});
+  }
+  function paintLook() {
+    var p = Math.round(look.pan), t = Math.round(look.tilt);
+    $('pantag').textContent = 'PAN ' + (p === 0 ? '0°' : Math.abs(p) + '° ' + (p > 0 ? 'L' : 'R')) + ' · TILT ' + (t === 0 ? '0°' : Math.abs(t) + '° ' + (t > 0 ? 'UP' : 'DN'));
+  }
+  var padEl = $('lookpad'), knob = $('knob');
+  function padMove(e) {
+    var r = padEl.getBoundingClientRect(), rad = r.width / 2;
+    var x = (e.clientX - r.left - rad) / rad, y = (e.clientY - r.top - rad) / rad, m = Math.hypot(x, y);
+    if (m > 1) { x /= m; y /= m; }
+    pad.x = x; pad.y = y; knob.style.transform = 'translate(' + (x * rad * 0.62) + 'px,' + (y * rad * 0.62) + 'px)';
+  }
+  padEl.addEventListener('pointerdown', function (e) { e.preventDefault(); padEl.setPointerCapture(e.pointerId); pad.held = true; padMove(e); });
+  padEl.addEventListener('pointermove', function (e) { if (pad.held) padMove(e); });
+  function padUp() { pad.held = false; pad.x = pad.y = 0; knob.style.transform = ''; sendLook(true); }
+  padEl.addEventListener('pointerup', padUp); padEl.addEventListener('pointercancel', padUp);
+  var lastT = performance.now();
+  setInterval(function () {
+    var now = performance.now(), dt = (now - lastT) / 1000; lastT = now;
+    if (!pad.held) return;
+    function curve(v) { var a = Math.abs(v) < 0.12 ? 0 : v; return a * Math.abs(a); }     // fine near the middle
+    var dp = -curve(pad.x) * 75 * dt, dtl = -curve(pad.y) * 50 * dt;
+    if (dp || dtl) { look.pan += dp; look.tilt += dtl; sendLook(false); }
+  }, 40);
+  // drag the picture: the camera follows the finger
+  var panImg = $('panimg'), drag = null, lastTap = 0;
+  panImg.addEventListener('pointerdown', function (e) {
+    e.preventDefault(); panImg.setPointerCapture(e.pointerId); drag = { x: e.clientX, y: e.clientY };
+    var now = performance.now(); if (now - lastTap < 320) { look.pan = 0; look.tilt = 0; sendLook(true); } lastTap = now;
+  });
+  panImg.addEventListener('pointermove', function (e) {
+    if (!drag) return; var r = panImg.getBoundingClientRect();
+    look.pan -= (e.clientX - drag.x) / r.width * 70; look.tilt -= (e.clientY - drag.y) / r.height * 40;
+    drag = { x: e.clientX, y: e.clientY }; sendLook(false);
+  });
+  function dragEnd() { if (drag) { drag = null; sendLook(true); } }
+  panImg.addEventListener('pointerup', dragEnd); panImg.addEventListener('pointercancel', dragEnd);
+  $('lookctr').addEventListener('click', function () { look.pan = 0; look.tilt = 0; sendLook(true); });
+
   // ------------------------------------------------------------------- tabs
   function setView(v) {
     view = v; $('tradar').classList.toggle('on', v === 'radar'); $('tmap').classList.toggle('on', v === 'map');
@@ -331,6 +396,8 @@
     $('hwifi').textContent = sys.wifi_dbm != null ? sys.wifi_dbm + ' dBm' : '—';
     $('hup').textContent = fmtUp(sys.uptime_s);
     paintStop();
+    // the pan-tilt as the robot has it, unless we are steering it right now
+    if (page.look && !pad.held && !drag && performance.now() - lookLocal > 1500) { look.pan = page.look[0]; look.tilt = page.look[1]; paintLook(); }
 
     // main camera HUD
     var m = S.motion;
