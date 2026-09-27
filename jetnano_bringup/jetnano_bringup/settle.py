@@ -40,8 +40,9 @@ class Settle(Node):
         self.declare_parameter('band_hz', [1400.0, 1800.0])   # where the servo buzz lives
         self.declare_parameter('buzz_db', 8.0)                # prominence that counts as buzzing (room 3-6, faint buzz 8-10)
         self.declare_parameter('hits', 2)                      # ... in this many of the last
-        self.declare_parameter('windows', 6)                   # ... half-second windows
-        self.declare_parameter('after_stop_s', 1.5)            # still this long before listening
+        self.declare_parameter('windows', 4)                   # ... half-second windows (2 s: Steve, 2026-09-27,
+                                                                #     "jittered for a long time")
+        self.declare_parameter('after_stop_s', 1.0)            # still this long before listening
         self.declare_parameter('between_s', 2.0)               # listen this long after a wiggle
         self.declare_parameter('wiggle_deg', [4.0, 6.0, 8.0, 8.0])  # each try, a little bigger
         self.declare_parameter('step_s', 0.25)                 # one way, other way, centre
