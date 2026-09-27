@@ -171,7 +171,7 @@ class Calibrate(Node):
             raise Abort('the collision guard stopped her')
         c = self.clearance(direction)
         if moving and c < self.abort_m:
-            raise Abort(f'something {c:.2f} m in the way')
+            raise Abort(f'something {c:.2f} m in the way {"ahead" if direction > 0 else "behind"}')
         if self.v is not None and abs(self.v) > 2.5:
             raise Abort(f'too fast: {self.v:.2f} m/s')
 
@@ -223,8 +223,12 @@ class Calibrate(Node):
         self.ready(direction)
         x0, y0 = self.x, self.y
         cmd = 0.04
+        print(f'creeping {"forward" if direction > 0 else "backward"} from a standstill '
+              f'({self.clearance(direction):.2f} m clear that way)', flush=True)
         while cmd <= 0.60:
             self.cmd = direction * cmd
+            if round(cmd * 100) % 5 == 0:
+                print(f'  command {cmd:.2f}, speed {self.v if self.v is None else round(self.v, 3)}', flush=True)
             t0, moving_since = time.monotonic(), None
             while time.monotonic() - t0 < 0.7:
                 self.check(direction, moving=True)
