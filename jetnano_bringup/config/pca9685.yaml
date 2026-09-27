@@ -63,7 +63,13 @@
 
     steering:
       channel: 1
-      home: 84.0               # measured: dead straight
+      # 84 was "dead straight" on the bench; on the floor (2026-09-27, gyro over
+      # 1 m runs at slider 25 %) she veered ~4.7 deg/m RIGHT. 3 deg of trim toward
+      # a left turn (front 81, rear 87) averages nearest straight: forward -1.9
+      # and +3.7 deg/m on two runs, backward +2.0. The remaining scatter is play
+      # in the steering links (the same setting reads +-4 deg/m run to run) and
+      # the rug edge; tightening the linkage is the real fix.
+      home: 81.0
       home_on_start: true
       min_limit: 40.0          # measured: 45 reaches cleanly, no binding
       max_limit: 125.0         # measured: 120 reaches cleanly, no binding
@@ -74,7 +80,7 @@
 
     rear_steering:
       channel: 2
-      home: 84.0               # mirrored about the front centre: rear = 168 - front
+      home: 87.0               # mirrored about the front centre: rear = 168 - front (trim, see steering)
       home_on_start: true
       min_limit: 43.0
       max_limit: 128.0
