@@ -112,6 +112,10 @@ def generate_launch_description():
             description='where "local news" and "the weather" are: "City,State" (set in /etc/default/jetnano-robot); '
                         'empty = wherever the internet connection appears to be'),
         DeclareLaunchArgument(
+            'color_mesh', default_value='false',
+            description='with nvblox: a coloured 3D map (RViz: /nvblox_node/color_layer_marker; '
+                        '"Rosie, save the 3D map" -> ~/maps3d/*.ply). Off by default: it costs CPU and GPU'),
+        DeclareLaunchArgument(
             'cpp_safety', default_value='true',
             description='tilt guard + motion check + VO watchdog as one C++ node; false = the Python nodes'),
         DeclareLaunchArgument(
@@ -158,6 +162,7 @@ def generate_launch_description():
                  condition=IfCondition(LaunchConfiguration('use_odometry')),
                  arguments={'use_sim_time': use_sim_time, 'vo': vo_source,
                             'nvblox': LaunchConfiguration('nvblox'),
+                            'color_mesh': LaunchConfiguration('color_mesh'),
                             'vo_watchdog': PythonExpression(["'", LaunchConfiguration('cpp_safety'),
                                                              "' != 'true'"])}.items()),
 

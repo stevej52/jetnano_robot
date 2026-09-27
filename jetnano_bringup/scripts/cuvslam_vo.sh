@@ -30,6 +30,7 @@ PROFILE=${1:-640,360,90}
 JITTER=${2:-30.0}
 BASE_FRAME=${3:-base_link}
 NVBLOX=${4:-false}
+COLOR_MESH=${5:-false}      # nvblox paints the colour camera onto its 3D map (2026-09-27)
 CONTAINER=${CUVSLAM_CONTAINER:-isaac_vo}
 # The jitter threshold only decides when cuVSLAM logs a "delta above
 # threshold" warning; the frame is used either way. The camera drops a frame
@@ -141,7 +142,7 @@ trap 'stop; exit 0' INT TERM
 
 say "starting $(basename "${LAUNCH}" .launch.py) in ${CONTAINER}: IR ${PROFILE}, jitter ${JITTER} ms, base_frame ${BASE_FRAME}, nvblox ${NVBLOX}, ROS_DOMAIN_ID ${DOMAIN}"
 if [ "${NVBLOX}" = "true" ] || [ "${NVBLOX}" = "1" ]; then
-    LAUNCH_ARGS="profile:=${PROFILE} image_jitter_threshold_ms:=${JITTER} base_frame:=${BASE_FRAME} web_video:=false"
+    LAUNCH_ARGS="profile:=${PROFILE} image_jitter_threshold_ms:=${JITTER} base_frame:=${BASE_FRAME} web_video:=false color_mesh:=${COLOR_MESH}"
 else
     LAUNCH_ARGS="infra_profile:=${PROFILE} emitter:=0 image_jitter_threshold_ms:=${JITTER} base_frame:=${BASE_FRAME} web_video:=false"
 fi

@@ -74,6 +74,9 @@ def generate_launch_description():
             'cuvslam_jitter_ms', default_value='30.0',
             description='cuvslam image_jitter_threshold_ms (a warning threshold only; the wrapper uses 100 with nvblox)'),
         DeclareLaunchArgument(
+            'color_mesh', default_value='false',
+            description='nvblox only: paint the colour camera onto the 3D map (RViz, saved .ply)'),
+        DeclareLaunchArgument(
             'nvblox', default_value='false',
             description='cuvslam only: also run nvblox 3D mapping from the same camera '
                         '(projector alternates, odometry drops to ~43 Hz, Nav2 gets a '
@@ -96,7 +99,7 @@ def generate_launch_description():
                  LaunchConfiguration('cuvslam_infra_profile'),
                  LaunchConfiguration('cuvslam_jitter_ms'),
                  'base_link',
-                 LaunchConfiguration('nvblox')],
+                 LaunchConfiguration('nvblox'), LaunchConfiguration('color_mesh')],
             output='screen',
             respawn=True,
             respawn_delay=10.0,

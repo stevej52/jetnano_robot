@@ -179,6 +179,11 @@ WATCH_ON = ('keep watch', 'watchdog mode', 'watch dog mode', 'guard mode', 'stan
 WATCH_OFF = ('stand down', 'stop watching', 'at ease', 'watchdog off', 'watch dog off', 'guard off', 'off duty',
              'stop guarding', 'end watch')
 
+# The camera's 3D map (nvblox) as a .ply (2026-09-27). normalize() drops digits,
+# so "3D" arrives as "d".
+SAVE_3D = ('save the d map', 'save d map', 'save the three d map', 'save three d map', 'save the d model',
+           'save the three dimensional map', 'save your d map', 'save the d house')
+
 HEALTH_WORDS = ('how are you', 'how you doing', 'you doing', 'how is it going', "how's it going", 'how are things',
                 'how do you feel', 'how are you feeling', 'how is everything', "how's everything", 'you okay',
                 'you all right', 'how are ya', 'how you feeling', 'feeling okay')
@@ -296,6 +301,8 @@ def decide(text: str, mode: str):
         return 'english', 'chat'         # asking for English opens the conversation too
     if not (addressed or mode == 'chat'):
         return None, mode
+    if _has(t, SAVE_3D):                # before MAP_STOP ("save the map")
+        return 'save_3d', mode
     if _has(t, MAP_STOP):               # before STOP: "stop mapping" is not "stop"
         return 'map_stop', mode
     if _has(t, MAP_START):
@@ -850,6 +857,8 @@ def _node_main(args):
                 self._who_am_i(who)
             elif action in ('map_start', 'map_stop'):
                 self._mapping(action == 'map_start')
+            elif action == 'save_3d':
+                self._save_3d(announce=True)
             elif action in ('watch_on', 'watch_off'):
                 m = String()
                 m.data = 'watch' if action == 'watch_on' else 'approach'
@@ -1114,6 +1123,26 @@ def _node_main(args):
             else:
                 self._say(mood)
 
+        def _save_3d(self, announce: bool) -> None:
+            """nvblox's 3D map to ~/maps3d/*.ply (save_3d_map.sh), in the background."""
+            def run():
+                try:
+                    from ament_index_python.packages import get_package_prefix
+                    script = os.path.join(get_package_prefix('jetnano_bringup'), 'lib', 'jetnano_bringup',
+                                          'save_3d_map.sh')
+                    r = subprocess.run(['bash', script], capture_output=True, text=True, timeout=120)
+                except Exception as exc:      # noqa: BLE001
+                    r = None
+                    self.get_logger().warning(f'3D map not saved: {exc}')
+                ok = r is not None and r.returncode == 0
+                if ok:
+                    self.get_logger().info(f'3D map saved: {r.stdout.strip()}')
+                elif r is not None:
+                    self.get_logger().warning(f'3D map not saved: {r.stderr.strip()[:160]}')
+                if announce:
+                    self._reply('Saved my 3D map.' if ok else "I couldn't save my 3D map.", 'ok' if ok else 'no')
+            threading.Thread(target=run, daemon=True, name='listen-save3d').start()
+
         def _mapping(self, start: bool) -> None:
             """Start or stop jetnano-slam. Stopping saves the map (slam_boot.sh
             saves before slam_toolbox quits); this checks the file really changed."""
@@ -1149,6 +1178,7 @@ def _node_main(args):
                         after = os.path.getmtime(graph) if os.path.exists(graph) else 0.0
                         saved = after > before
                         self.get_logger().info(f'mapping stopped, map {"saved" if saved else "NOT saved"}')
+                        self._save_3d(announce=False)          # the camera's 3D model too
                         self._reply('Map saved. You can pick me up now.' if saved else
                                     "I stopped, but the map didn't save.", 'ok' if saved else 'sad')
                 except (OSError, subprocess.TimeoutExpired) as exc:
