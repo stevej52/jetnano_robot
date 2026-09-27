@@ -190,8 +190,8 @@ LEARN_VOICE = ('learn my voice', 'remember my voice', 'learn this voice', 'this 
 # Any learn/remember + voice counts: on 2026-09-27 "Can we do the Rosie learns
 # my voice thing now?" went to the brain, which played along and pretended to
 # learn his voice for three minutes.
-LEARN_VOICE_RE = re.compile(r"(learn|learns|learning|remember|memori[sz]e|train on|record)\s+"
-                            r"(?:my|this|our|me and my|his|her)?\s*voice")
+LEARN_VOICE_RE = re.compile(r"\b(learn|learns|learning|remember|memori[sz]e|train on|record)\s+"
+                            r"(?:my|this|our|me and my|his|her)?\s*voice\b")
 FORGET_VOICE = ('forget my voice', 'forget this voice')
 WHO_WORDS = ('who am i', 'who is this', "who's this", 'who is talking', "who's talking", 'who is speaking',
              "who's speaking", 'know my voice', 'do you know who i am', 'recognize me', 'recognise me',
