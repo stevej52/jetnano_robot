@@ -119,12 +119,13 @@ class TiltGuardNode(Node):
         self._tf_buffer = None
         self._tf_listener = None
         if bool(self.get_parameter('use_tf_for_imu_mount').value):
-            # The mount is a fixed joint in the URDF, so it arrives once on /tf_static
-            # (latched). Listening to /tf as well - 90 messages a second, for nothing -
-            # was most of this node's 17 % of a core (2026-09-27); and once the mount
-            # is known the listener goes away altogether.
+            # The mount is a fixed joint, known within a second of start-up. Listening
+            # to /tf for ever after - 90 messages a second, for nothing - was most of
+            # this node's 17 % of a core (2026-09-27), so the listener is dropped as
+            # soon as the mount is known (_find_mount). (Jazzy's tf2_ros has no
+            # static_only listener.)
             self._tf_buffer = Buffer()
-            self._tf_listener = TransformListener(self._tf_buffer, self, static_only=True)
+            self._tf_listener = TransformListener(self._tf_buffer, self)
         else:
             rpy = [float(v) for v in self.get_parameter('imu_mount_rpy').value]
             self._mount = quaternion_from_rpy(*rpy)
