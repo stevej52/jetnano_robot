@@ -29,6 +29,8 @@ different. The moods and where the sounds node uses them:
     happy     a trill, up and over                       goal reached
     curious   a rising slide with a question step        person spotted
     sleepy    three notes falling, fading                voice off / flat battery
+    on        a low hum climbing into a bright note        power arrives, before anything else
+              (systemd rosie-poweron.service, robot-environment system/rosie-poweron)
     off       one long slide down, the power draining    the last thing before power-off
               (played by systemd's shutdown hook, robot-environment system/rosie-goodbye)
     hm        one soft rising blip                       acknowledgement, looking
@@ -178,6 +180,17 @@ def sleepy(j):
                            tone(glide(BASE * k * 0.75, BASE * k * 0.55), 0.55, vibrato_hz=3.0, bright=0.25)])
 
 
+def on(j):
+    """Power arriving: a low hum that climbs, brightening, into a clear note
+    with a small lift - the mirror of ``off`` (Steve, 2026-09-26)."""
+    k = 2 ** (j / 12)
+    return np.concatenate([tone(glide(BASE * k * 0.3, BASE * k * 1.4, 0.7), 1.1, vibrato_hz=2.5,
+                                vibrato_depth=0.03, bright=0.25),
+                           rest(0.04),
+                           tone(glide(BASE * k * 1.5, BASE * k * 1.7, 0.5), 0.3, vibrato_hz=4.5,
+                                vibrato_depth=0.02, bright=0.5)])
+
+
 def off(j):
     """Powering down: a short steady note, then one long slide down and away,
     slowing and darkening as it goes (Steve, 2026-09-26: a downward-pitched
@@ -289,7 +302,7 @@ def boop(j):
 
 MOODS = {'hello': hello, 'ok': ok, 'no': no, 'alarm': alarm, 'sad': sad,
          'happy': happy, 'curious': curious, 'sleepy': sleepy, 'hm': hm, 'huh': huh,
-         'bye': bye, 'chat': lambda j: chat(random.randrange(4, 9), j), 'laugh': laugh, 'off': off,
+         'bye': bye, 'chat': lambda j: chat(random.randrange(4, 9), j), 'laugh': laugh, 'on': on, 'off': off,
          'story': lambda j: story(3, j), 'boop': boop}
 
 

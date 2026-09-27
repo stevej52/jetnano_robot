@@ -87,7 +87,9 @@ class Sounds(Node):
         self.declare_parameter('device', '')          # aplay -D ...; empty = plughw:<card>
         self.declare_parameter('volume_percent', 80)  # set on the card's PCM control at start
         # "over and out" (listen) leaves this flag: she starts silent after a reboot
-        self.declare_parameter('mute', os.path.exists(os.path.expanduser('~/voice/voice_off')))
+        # 'over and out' (listen's voice_off flag) no longer mutes her sounds: Steve,
+        # 2026-09-26, wants her noises to carry on with only the talking switched off
+        self.declare_parameter('mute', False)
         self.declare_parameter('min_gap_s', 2.5)
         self.declare_parameter('hello_after_s', 4.0)
         self.declare_parameter('english', False)         # speak English (for english_for_s, then back)

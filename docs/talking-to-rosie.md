@@ -32,17 +32,25 @@ the very last thing before her power goes - are her own beeps.
 | "Rosie, be quiet" | goes silent until told otherwise - her name is needed |
 | "Rosie, you can talk now" | talks again (a happy trill) |
 
-## Switching her voice off completely
+## Switching her talking off
 
-For when her name keeps coming up in the room. These code words work only
-when said on their own - "Over and out." - not inside a longer sentence.
+For when her name keeps coming up in the room, or you just want the robot
+without the conversation. These code words work only when said on their own -
+"Over and out." - not inside a longer sentence.
 
 | Say | She does |
 |---|---|
-| "Over and out" | a sleepy sound, then silence: she ignores everything, even her name, and makes no sounds at all |
-| "Rise and shine" | her voice back on, with a hello |
+| "Over and out" | a sleepy sound, then she ignores everything said, even her name: no conversation, no English, nothing sent to her brain. Her own sounds carry on - the hello at boot, the "huh?" at a clap, alarms |
+| "Rise and shine" | talking back on, with a hello (and unmuted, if she had been told to be quiet) |
 
 Off stays off through a restart or a reboot until "rise and shine".
+
+## Power on, power off
+
+She hums up as soon as her speaker has power, about twenty seconds after
+you switch her on and well before her software is up; the three rising notes
+of her hello come when everything has started. The long slide down is the
+very last thing she does before the power goes on a shutdown (not a reboot).
 
 ## Thinking
 

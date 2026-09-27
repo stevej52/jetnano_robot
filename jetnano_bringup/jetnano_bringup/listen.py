@@ -123,9 +123,12 @@ NEWS = (
              "what's new", 'what is new')),
 )
 
-# Code words that switch her whole voice off and on without her name (Steve,
+# Code words that switch her TALKING off and on without her name (Steve,
 # 2026-09-25: her name kept waking her - said in the room, read out from a
-# file). They count only as the entire utterance, fillers aside.
+# file). Off: she ignores everything said, even her name, asks her brain
+# nothing and says nothing in English; her own sounds (hello, the clap's huh,
+# alarms) carry on (Steve, 2026-09-26). They count only as the entire
+# utterance, fillers aside.
 VOICE_OFF = ('over and out',)
 VOICE_ON = ('rise and shine',)
 FILLERS = {'um', 'uh', 'erm', 'hmm', 'okay', 'ok', 'so', 'hey', 'alright', 'now', 'please', 'rosie'}
@@ -987,8 +990,9 @@ def _node_main(args):
                 self._speak("I don't know your voice.")
 
         def _voice(self, on: bool, text: str) -> None:
-            """The code words: her whole voice off (sleepy, then silent and deaf
-            to all but "rise and shine") or back on (hello)."""
+            """The code words: her talking off (sleepy, then deaf to all but "rise
+            and shine" and no English, brain or briefings; her sounds carry on)
+            or back on (hello, and unmuted if she had been told to be quiet)."""
             self.get_logger().info(f'heard "{text}" -> voice {"ON" if on else "OFF"}')
             if on:
                 self.voice_off = False
@@ -1003,8 +1007,7 @@ def _node_main(args):
                 self.pending, self.offer_until = [], 0.0
                 self.mode = 'idle'
                 self._say('sleepy')
-                self._set_mute(True, after=2.0)       # after the sleepy sound has played
-                self.voice_off = True
+                self.voice_off = True                 # her sounds stay on: only the talking stops
                 os.makedirs(os.path.dirname(VOICE_OFF_FLAG), exist_ok=True)
                 with open(VOICE_OFF_FLAG, 'w') as f:
                     f.write(time.strftime('%Y-%m-%d %H:%M:%S') + '\n')
