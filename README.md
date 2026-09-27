@@ -484,7 +484,9 @@ through TF.
 
 Still guesses:
 
-- **Body box and IMU position** (`jetnano.urdf.xacro`). The wheelbase
+- **IMU position** (`jetnano.urdf.xacro`). The overall size is measured
+  (2026-09-27, tyre to tyre): 0.444 m long, 0.295 m wide, 0.27 m tall - no
+  bumpers, the tyres are the edges; Nav2's footprint uses it. The wheelbase
   (0.330 m), track (0.230 m), wheel radius (0.065 m), the lidar's and
   camera's positions and the lidar's height were tape-measured on
   2026-09-22, and every sensor orientation is measured; the body box and

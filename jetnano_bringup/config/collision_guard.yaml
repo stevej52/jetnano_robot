@@ -13,8 +13,10 @@
 # Nothing is filtered by who asked: the tilt guard's reverse goes through only
 # if the way behind is clear, which is what you want.
 #
-# Distances are in base_footprint, x forward, from the robot's centre. The body
-# is 0.44 x 0.22 m, so the front bumper is at x = 0.22. The zones start a little
+# Distances are in base_footprint, x forward, from the robot's centre. No bumpers
+# on a crawler - the tyres are the edges: 0.444 long x 0.295 wide tyre to tyre
+# (tape-measured 2026-09-27), so the front of the tyres is at x = 0.222 and the
+# sides at y = +-0.148. The zones start a little
 # inside it: the lidar's self-returns are removed upstream (scan_filter.yaml),
 # so nothing legitimate is there.
 #

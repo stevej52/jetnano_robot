@@ -63,7 +63,10 @@
        routine (docs/bench-calibration-2026-09-21.md), exact to a couple of
        degrees. The tilt guard reads it back through TF, so this is the only
        place it lives. -->
-  <xacro:property name="lidar_xyz"  value="-0.005 0.0 0.205"/>
+  <!-- 2026-09-27, Steve's tape: the spinning head spans 0.255-0.271 m above the
+       floor, so the scan plane (mid-head) is ~0.263 m: z = 0.263 - 0.065 = 0.198.
+       Overall, tyre to tyre: 0.444 m long, 0.295 m wide, 0.27 m tall (lidar top). -->
+  <xacro:property name="lidar_xyz"  value="-0.005 0.0 0.198"/>
   <!-- Mounted BACKWARDS since the 2026-09-24 remount: the lidar's 0 deg is
        the robot's tail. Found on the floor - the lidar drew the wall behind
        the robot in front of it, 2.5 m from where the camera put the real
