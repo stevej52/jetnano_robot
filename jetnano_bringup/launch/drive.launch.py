@@ -26,6 +26,7 @@ from launch.actions import DeclareLaunchArgument, GroupAction
 from launch.conditions import IfCondition, UnlessCondition
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from nav2_common.launch import ReplaceString
 
 from jetnano_bringup.launch_lock import only_one
@@ -68,6 +69,14 @@ def generate_launch_description():
             description='Back out of a roll or pitch past its limit. Needs imu/data, '
                         'so it does nothing until sensors.launch.py is up.'),
         DeclareLaunchArgument(
+            'cpp_safety', default_value='true',
+            description='the tilt guard, motion check and VO watchdog as one C++ node '
+                        '(jetnano_watchdog safety_monitor); false = the Python nodes'),
+        DeclareLaunchArgument(
+            'vo_watchdog', default_value='false',
+            description='hold the EKF and restart the container launch when /vo goes quiet '
+                        '(GPU odometry only; robot.launch.py turns it on with vo:=cuvslam)'),
+        DeclareLaunchArgument(
             'guard', default_value='true',
             description='the collision guard between twist_mux and the driver (needs /scan)'),
         DeclareLaunchArgument(
@@ -98,9 +107,23 @@ def generate_launch_description():
             }],
         ),
 
-        # Told to drive but the odometry does not see her move: stop (the
-        # 2026-09-26 blind-camera drive into the curtains). jetnano_bringup
-        # motion_check; its lock is e_stop_motion in twist_mux.yaml.
+        # The fast safety watchers in one C++ process (2026-09-27: the three
+        # Python nodes cost ~19 % of a core): tilt guard (cmd_vel_tilt), motion
+        # check (told to drive but the odometry does not see her move: lock
+        # e_stop_motion) and, with the GPU odometry, the VO watchdog (odom_hold).
+        Node(
+            package='jetnano_watchdog',
+            executable='safety_monitor',
+            name='safety_monitor',
+            respawn=True,
+            respawn_delay=3.0,
+            output='screen',
+            parameters=[{'use_sim_time': use_sim_time,
+                         'tilt.enabled': ParameterValue(LaunchConfiguration('use_tilt_guard'), value_type=bool),
+                         'vo.enabled': ParameterValue(LaunchConfiguration('vo_watchdog'), value_type=bool)}],
+            condition=IfCondition(LaunchConfiguration('cpp_safety')),
+        ),
+        # The Python originals, with cpp_safety:=false.
         Node(
             package='jetnano_bringup',
             executable='motion_check',
@@ -109,6 +132,7 @@ def generate_launch_description():
             respawn_delay=3.0,
             output='screen',
             parameters=[{'use_sim_time': use_sim_time}],
+            condition=UnlessCondition(LaunchConfiguration('cpp_safety')),
         ),
 
         # twist_mux publishes cmd_vel_out; with the guard in the chain that is
@@ -191,7 +215,9 @@ def generate_launch_description():
             respawn_delay=3.0,
             output='screen',
             parameters=[{'use_sim_time': use_sim_time}],
-            condition=IfCondition(LaunchConfiguration('use_tilt_guard')),
+            condition=IfCondition(PythonExpression(["'", LaunchConfiguration('use_tilt_guard'),
+                                                    "' == 'true' and '", LaunchConfiguration('cpp_safety'),
+                                                    "' != 'true'"])),
         ),
 
         ]),

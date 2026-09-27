@@ -47,10 +47,20 @@ def generate_launch_description():
         return IfCondition(PythonExpression(
             ["'", use_vo, "' == 'true' and '", vo, "' == '", source, "'"]))
 
+    # robot.launch.py runs the VO watchdog inside the C++ safety_monitor and turns
+    # this Python one off; a bare odometry.launch.py still gets it.
+    py_vo_watchdog = IfCondition(PythonExpression(
+        ["'", use_vo, "' == 'true' and '", vo, "' == 'cuvslam' and '",
+         LaunchConfiguration('vo_watchdog'), "' == 'true'"]))
+
     cuvslam_script = PathJoinSubstitution(
         [FindPackagePrefix('jetnano_bringup'), 'lib', 'jetnano_bringup', 'cuvslam_vo.sh'])
 
     return LaunchDescription([
+        DeclareLaunchArgument(
+            'vo_watchdog', default_value='true',
+            description='the Python VO watchdog here (robot.launch.py: false, the C++ '
+                        'safety_monitor does it)'),
         DeclareLaunchArgument(
             'vo', default_value='rtabmap', choices=['cuvslam', 'rtabmap', 'none'],
             description='visual odometry source: cuvslam (GPU, Jetson only), rtabmap (CPU), none'),
@@ -110,7 +120,7 @@ def generate_launch_description():
             respawn_delay=3.0,
             output='screen',
             parameters=[{'use_sim_time': use_sim_time}],
-            condition=wants('cuvslam'),
+            condition=py_vo_watchdog,
         ),
 
         # CPU: rtabmap.

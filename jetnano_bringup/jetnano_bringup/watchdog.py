@@ -141,11 +141,12 @@ TOPICS = {
 
 # Nodes that respawn by themselves: reported if one stays away.
 NODES = ('pca9685', 'twist_mux', 'collision_guard', 'lifecycle_manager_guard', 'robot_state_publisher',
-         'ekf_filter_node', 'rplidar', 'scan_filter', 'bno055', 'tilt_guard', 'vo_watchdog', 'web_teleop',
+         'ekf_filter_node', 'rplidar', 'scan_filter', 'bno055', 'safety_monitor', 'web_teleop',
          'sounds', 'speak', 'listen', 'brain', 'ears', 'motion_watch', 'topic_watch')
 NODE_LABELS = {'pca9685': 'motor driver', 'twist_mux': 'command mixer', 'collision_guard': 'collision guard',
                'ekf_filter_node': 'odometry', 'rplidar': 'lidar driver', 'bno055': 'I M U driver',
-               'web_teleop': 'web page', 'robot_state_publisher': 'robot model'}
+               'web_teleop': 'web page', 'robot_state_publisher': 'robot model',
+               'safety_monitor': 'safety monitor'}
 
 HTTP = {
     'web page': ('http://127.0.0.1:8081/status', [('signal', proc('jetnano_teleop/web_teleop'), 12.0)]),

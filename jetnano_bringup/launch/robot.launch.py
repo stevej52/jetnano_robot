@@ -112,6 +112,9 @@ def generate_launch_description():
             description='where "local news" and "the weather" are: "City,State" (set in /etc/default/jetnano-robot); '
                         'empty = wherever the internet connection appears to be'),
         DeclareLaunchArgument(
+            'cpp_safety', default_value='true',
+            description='tilt guard + motion check + VO watchdog as one C++ node; false = the Python nodes'),
+        DeclareLaunchArgument(
             'use_csi_cameras', default_value='true',
             description='the two Pi cameras (pan-tilt front, rear) as MJPEG on port 8082, only while watched'),
         DeclareLaunchArgument(
@@ -136,6 +139,10 @@ def generate_launch_description():
             'nvblox': PythonExpression(["'", vo_source, "' == 'cuvslam' and '",
                                         LaunchConfiguration('nvblox'), "' == 'true'"]),
             'cliff': LaunchConfiguration('use_cliff'),
+            'cpp_safety': LaunchConfiguration('cpp_safety'),
+            # the C++ safety_monitor also watches the GPU odometry
+            'vo_watchdog': PythonExpression(["'", vo_source, "' == 'cuvslam' and '",
+                                             LaunchConfiguration('cpp_safety'), "' == 'true'"]),
         }.items()),
 
         _include('sensors.launch.py', arguments={
@@ -150,7 +157,9 @@ def generate_launch_description():
         _include('odometry.launch.py',
                  condition=IfCondition(LaunchConfiguration('use_odometry')),
                  arguments={'use_sim_time': use_sim_time, 'vo': vo_source,
-                            'nvblox': LaunchConfiguration('nvblox')}.items()),
+                            'nvblox': LaunchConfiguration('nvblox'),
+                            'vo_watchdog': PythonExpression(["'", LaunchConfiguration('cpp_safety'),
+                                                             "' != 'true'"])}.items()),
 
         _include('teleop.launch.py',
                  condition=IfCondition(LaunchConfiguration('use_teleop'))),
