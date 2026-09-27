@@ -80,6 +80,7 @@ class MotionCheck(Node):
         self.input_at = 0.0                   # last non-zero command from any driver
         self.paused_until = 0.0
         self.locked = False
+        self.locked_at = 0.0
         self.lock_sent = 0.0
         self.events = 0
 
@@ -123,7 +124,7 @@ class MotionCheck(Node):
     def _tick(self) -> None:
         now = time.monotonic()
         if self.locked:
-            if now - self.input_at >= self.release_after:
+            if now - self.input_at >= self.release_after and now - self.locked_at >= 2.0:
                 self.locked = False
                 self._send(False)
                 self.get_logger().info('released: nobody is driving now')
@@ -144,6 +145,7 @@ class MotionCheck(Node):
                 return
             reason = f'the odometry moved {moved * 100:.1f} cm in {self.window:g} s'
         self.locked = True
+        self.locked_at = now
         self.events += 1
         self.cmd_since = None
         self._send(True)
