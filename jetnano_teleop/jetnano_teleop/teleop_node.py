@@ -313,7 +313,7 @@ class TeleopNode(Node):
         for dev in attached:
             dev.close()
         self.active = None
-        self._say_once('no matching controller attached; holding the robot stopped')
+        self._say_once('no matching controller attached; the phone and Nav2 have the robot')
 
     def _rescan_if_idle(self) -> None:
         if self.active is None:
