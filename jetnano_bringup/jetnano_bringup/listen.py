@@ -192,6 +192,11 @@ THINK_WORDS = ('think hard', 'think about it', 'think about this', 'think about 
                'think it through', 'think this through', 'think that through', 'think carefully', 'really think',
                'take your time', 'think deeply', 'give it some thought', 'mull it over', 'think real hard',
                'use your brain', 'put your thinking cap on', 'thinking cap')
+# Her own systems: to Steve these are answered from the live status, never by
+# the chat model (it said YES to "is your lidar working?" without knowing).
+SYSTEM_WORDS = ('lidar', 'laser', 'camera', 'cameras', 'sensor', 'sensors', 'imu', 'gyro', 'odometry', 'battery',
+                'wifi', 'wi fi', 'guard', 'collision guard', 'systems', 'gpu', 'microphone', 'your mic', 'speaker',
+                'working', 'online', 'offline', 'broken')
 SPEND_WORDS = ('how much have you spent', 'spent today', 'how much money', 'what did that cost', 'your spending',
                'cost today', 'how much did you spend', 'how much are you costing')
 # Voices (speaker.py). "Rosie, learn my voice" teaches her one; the first is the
@@ -877,7 +882,7 @@ def _node_main(args):
                     if not self.terse:
                         self._okay('Checking.')                # the report samples for a couple of seconds
                     self._speak(english_reply('status report', self.battery, health=self.health))
-                elif _has(normalize(text), HEALTH_WORDS) and self.terse:
+                elif self.terse and (_has(normalize(text), HEALTH_WORDS) or _has(normalize(text), SYSTEM_WORDS)):
                     # Steve: what is wrong and the battery, nothing else
                     threading.Thread(target=lambda: self._speak(self.health.brief()), daemon=True).start()
                 elif _has(normalize(text), HEALTH_WORDS):
