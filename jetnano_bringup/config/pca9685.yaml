@@ -78,21 +78,27 @@
       twist:
         angular_z: 18.33       # opposite sign: four-wheel steering
 
-    # Camera pan-tilt: two micro servos on channels 8 and 9, added 2026-09-25.
-    # Nothing moves at start-up (home_on_start false): the first command comes
-    # from motion_watch or by hand. The 70..110 window is a safe first guess
-    # around the middle, to be widened once the mount's real reach is known.
-    # timeout 0 holds the last position. motion_watch aims these through
-    # /pca9685/pan/angle and /pca9685/tilt/angle; its pan/tilt centre and
-    # sign parameters must match what is measured here.
+    # Camera pan-tilt: two micro servos on channels 8 and 9. Centred and measured
+    # with Steve by eye and camera on 2026-09-26, after he re-seated the horns
+    # with both servos held at 1500 us. BOTH run backwards: a higher pan angle
+    # looks LEFT, a higher tilt angle looks DOWN. Nothing moves at start-up
+    # (home_on_start false); timeout 0 holds the last position. motion_watch's
+    # pan/tilt centre, limit and sign parameters (robot.launch.py) match these.
     pan:
       channel: 8
-      home: 90.0               # PROVISIONAL until centred by eye
-      min_limit: 70.0
-      max_limit: 110.0
+      # the servo's usable pulse range, found by stepping outward: clean at 700
+      # and 2450 us; it hunted ("one inch left and right") at 600 us, so the
+      # right-hand limit stays short of that. 1 deg here = 9.72 us.
+      min_pulse_us: 700.0
+      max_pulse_us: 2450.0
+      home: 74.6               # 1425 us: dead ahead (Steve, "that's dead ahead")
+      min_limit: 5.0           # 749 us, ~70 deg right of centre
+      max_limit: 180.0         # 2450 us, ~105 deg left of centre
 
     tilt:
       channel: 9
-      home: 90.0               # PROVISIONAL until levelled by eye
-      min_limit: 70.0
-      max_limit: 110.0
+      home: 90.0               # 1500 us: level, with the horn re-seated there
+      min_limit: 12.0          # 850 us, camera pointing well up (clean)
+      max_limit: 168.0         # 2150 us, camera pointing well down (clean)
+      # it twitched briefly at 1150 and 2000 us (a third of the way up and
+      # down) while settling; both ends were clean.

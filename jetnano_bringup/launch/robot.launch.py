@@ -174,6 +174,11 @@ def generate_launch_description():
             output='screen',
             respawn=True,
             respawn_delay=10.0,
+            # the pan-tilt as measured 2026-09-26 (pca9685.yaml): both servos run
+            # backwards - a higher pan angle looks left (so sign +1 for a left-
+            # positive bearing), a higher tilt angle looks down (sign -1)
+            parameters=[{'pan_center_deg': 74.6, 'pan_limit_deg': 69.0, 'pan_sign': 1.0,
+                         'tilt_center_deg': 90.0, 'tilt_limit_deg': 78.0, 'tilt_sign': -1.0}],
             condition=IfCondition(LaunchConfiguration('use_motion_watch')),
         ),
 
