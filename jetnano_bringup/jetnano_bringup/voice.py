@@ -187,8 +187,8 @@ def on(j):
     beep, the beeps an octave higher)."""
     k = 2 ** (j / 12)
     top = BASE * k * 1.6
-    beep = tone(flat(top * 2.0), 0.09, vibrato_depth=0.0, bright=0.5)      # an octave above the climb
-    gap = rest(0.07)
+    beep = tone(flat(top * 2.0), 0.08, vibrato_depth=0.0, bright=0.5)      # an octave above the climb
+    gap = rest(0.04)                                                          # quick: beep-beep-beep
     return np.concatenate([tone(glide(BASE * k * 0.3, top, 0.8), 1.25, vibrato_hz=2.5, vibrato_depth=0.02,
                                 bright=0.35),
                            beep, gap, beep, gap, beep])
