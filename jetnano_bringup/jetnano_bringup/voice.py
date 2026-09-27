@@ -28,7 +28,9 @@ different. The moods and where the sounds node uses them:
     sad       a long slide down, vibrato slowing         battery low
     happy     a trill, up and over                       goal reached
     curious   a rising slide with a question step        person spotted
-    sleepy    three notes falling, fading                shutting down / flat battery
+    sleepy    three notes falling, fading                voice off / flat battery
+    off       one long slide down, the power draining    the last thing before power-off
+              (played by systemd's shutdown hook, robot-environment system/rosie-goodbye)
     hm        one soft rising blip                       acknowledgement, looking
     huh       a cat's "mrrp?" - rolled onset, rising     something moved, a bang (motion_watch, ears)
     bye       three notes down with a little wave        "I have to go" ends a chat (listen)
@@ -176,6 +178,17 @@ def sleepy(j):
                            tone(glide(BASE * k * 0.75, BASE * k * 0.55), 0.55, vibrato_hz=3.0, bright=0.25)])
 
 
+def off(j):
+    """Powering down: a short steady note, then one long slide down and away,
+    slowing and darkening as it goes (Steve, 2026-09-26: a downward-pitched
+    shutting-down noise as the absolute last thing she does)."""
+    k = 2 ** (j / 12)
+    return np.concatenate([tone(flat(BASE * k * 1.5), 0.22, vibrato_hz=4.5, vibrato_depth=0.02, bright=0.45),
+                           rest(0.04),
+                           tone(glide(BASE * k * 1.5, BASE * k * 0.3, 1.5), 1.35, vibrato_hz=2.5,
+                                vibrato_depth=0.03, bright=0.2)])
+
+
 def hm(j):
     k = 2 ** (j / 12)
     return tone(glide(BASE * k * 1.1, BASE * k * 1.35), 0.16, bright=0.4)
@@ -276,7 +289,7 @@ def boop(j):
 
 MOODS = {'hello': hello, 'ok': ok, 'no': no, 'alarm': alarm, 'sad': sad,
          'happy': happy, 'curious': curious, 'sleepy': sleepy, 'hm': hm, 'huh': huh,
-         'bye': bye, 'chat': lambda j: chat(random.randrange(4, 9), j), 'laugh': laugh,
+         'bye': bye, 'chat': lambda j: chat(random.randrange(4, 9), j), 'laugh': laugh, 'off': off,
          'story': lambda j: story(3, j), 'boop': boop}
 
 
@@ -297,9 +310,12 @@ def main():
         return 2
     out = os.path.expanduser(sys.argv[1])
     play = '--play' in sys.argv
+    only = [a for a in sys.argv[2:] if not a.startswith('--')]      # make_voice ~/sounds off: just these
     os.makedirs(out, exist_ok=True)
     random.seed(7)
     for mood, fn in MOODS.items():
+        if only and mood not in only:
+            continue
         for take in range(3):
             jitter = random.uniform(-1.5, 1.5) if take else 0.0     # semitones
             path = os.path.join(out, f'{mood}{take + 1}.wav')
@@ -307,7 +323,8 @@ def main():
             if play and take == 0:
                 print(mood)
                 subprocess.run(['aplay', '-q', path], check=False)
-    print(f'{len(MOODS) * 3} sounds in {out}: ' + ', '.join(MOODS))
+    made = only or list(MOODS)
+    print(f'{len(made) * 3} sounds in {out}: ' + ', '.join(made))
     return 0
 
 

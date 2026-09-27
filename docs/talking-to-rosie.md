@@ -7,7 +7,8 @@ learn whose voice is whose (below): once someone has her ear she follows that
 voice, and another voice has to say her name to cut in.
 
 She answers in English. Her system sounds - starting up, errors, the
-emergency stop, the "huh?" when she hears a clap - are her own beeps.
+emergency stop, the "huh?" when she hears a clap, the long slide down as
+the very last thing before her power goes - are her own beeps.
 
 ## Everyday
 
