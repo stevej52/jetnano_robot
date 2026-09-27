@@ -29,6 +29,12 @@ SLAM map as a PNG:
 * CPU, GPU, temperatures, memory; the map and where she is on it.
 
 Nothing here is needed for driving: a failure only blanks a tile.
+
+Cost: standing Python subscriptions to fast streams are expensive (a first
+version cost 64 % of a core, 2026-09-27), so the lidar, the camera's cloud, the
+odometry and /tf are subscribed only while a dashboard has asked for data in the
+last ``LIVE_S`` seconds, and read with numpy. The map pose comes from
+slam_toolbox's map->odom on /tf and the EKF's odom pose, not a tf2 buffer.
 """
 
 from __future__ import annotations
@@ -53,12 +59,10 @@ try:
     from sensor_msgs_py import point_cloud2 as pc2
 except ImportError:  # pragma: no cover
     pc2 = None
-try:
-    import tf2_ros
-except ImportError:  # pragma: no cover
-    tf2_ros = None
+from tf2_msgs.msg import TFMessage
 
 LOCKS = ('e_stop', 'e_stop_web', 'e_stop_joy', 'e_stop_motion')
+LIVE_S = 6.0            # keep the fast subscriptions this long after the last dashboard poll
 LATCHED = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
 GPU_LOAD = '/sys/devices/platform/bus@0/17000000.gpu/load'
 
@@ -115,10 +119,7 @@ class Dashboard:
         sub(String, 'motion_check/state', self._on_motion_check, 10)
         sub(String, 'motion/mode_state', lambda m: setattr(self, 'mode', m.data), LATCHED)
         sub(PointStamped, 'motion/mover', self._on_mover, 10)
-        sub(Odometry, 'odometry/filtered', self._on_odom, 10)
         sub(Twist, 'cmd_vel', self._on_cmd, 10)
-        sub(LaserScan, 'scan', self._on_scan, qos_profile_sensor_data)
-        sub(PointCloud2, '/nvblox_node/obstacle_points', self._on_points, 2)
         sub(String, 'speech/text', lambda m: self._event('heard', m.data, 'heard'), 10)
         sub(String, 'speech/speaker', self._on_speaker, 10)
         sub(String, 'speech/state', lambda m: setattr(self, 'speech_state', m.data), 10)
@@ -127,11 +128,33 @@ class Dashboard:
         sub(Float32, 'sound/level', lambda m: setattr(self, 'level', round(m.data, 1)), 10)
         sub(Float32, 'steering/buzz', lambda m: setattr(self, 'buzz', round(m.data, 1)), 10)
         sub(OccupancyGrid, 'map', self._on_map, LATCHED)
-        self.tf = None
-        if tf2_ros is not None:
-            self.tf_buffer = tf2_ros.Buffer()
-            self.tf = tf2_ros.TransformListener(self.tf_buffer, node)
+        self.map_odom = None                 # slam_toolbox's map -> odom (x, y, yaw)
+        self.polled = 0.0                    # last dashboard request
+        self.live = []                       # the fast subscriptions, while watched
         node.create_timer(2.0, self._system)
+        node.create_timer(1.0, self._manage)
+
+    def _manage(self) -> None:
+        """Subscribe to the fast streams only while someone is looking."""
+        watched = time.monotonic() - self.polled < LIVE_S
+        if watched and not self.live:
+            sub = self.node.create_subscription
+            self.live = [sub(Odometry, 'odometry/filtered', self._on_odom, 5),
+                         sub(LaserScan, 'scan', self._on_scan, qos_profile_sensor_data),
+                         sub(PointCloud2, '/nvblox_node/obstacle_points', self._on_points, 1),
+                         sub(TFMessage, '/tf', self._on_tf, 20)]
+            self.node.get_logger().info('dashboard: someone is watching, following the sensors')
+        elif not watched and self.live:
+            for handle in self.live:
+                self.node.destroy_subscription(handle)
+            self.live = []
+            self.node.get_logger().info('dashboard: nobody watching, sensors dropped')
+
+    def _on_tf(self, msg) -> None:
+        for t in msg.transforms:
+            if t.header.frame_id == 'map' and t.child_frame_id == 'odom':
+                tr = t.transform
+                self.map_odom = (tr.translation.x, tr.translation.y, _yaw(tr.rotation))
 
     # ------------------------------------------------------------ inputs --
     def _event(self, kind: str, text: str, attr: str | None = None) -> None:
@@ -177,15 +200,14 @@ class Dashboard:
     def _on_scan(self, msg) -> None:
         # one range per degree of her own frame (0 = nose, left positive); the lidar is mounted backwards
         off = float(self.node.get_parameter('dash_scan_yaw_offset').value)
-        bins = [None] * 360
-        for i, r in enumerate(msg.ranges):
-            if not (msg.range_min < r < msg.range_max):
-                continue
-            a = math.degrees(msg.angle_min + i * msg.angle_increment + off)
-            k = int(round(a)) % 360
-            if bins[k] is None or r < bins[k]:
-                bins[k] = round(r, 2)
-        self.scan, self.scan_t = bins, time.monotonic()
+        r = np.asarray(msg.ranges, dtype=np.float32)
+        a = np.degrees(msg.angle_min + np.arange(len(r)) * msg.angle_increment + off)
+        ok = (r > msg.range_min) & (r < msg.range_max)
+        k = np.round(a[ok]).astype(int) % 360
+        near = np.full(360, np.inf, dtype=np.float32)
+        np.minimum.at(near, k, r[ok])
+        self.scan = [None if not np.isfinite(v) else round(float(v), 2) for v in near]
+        self.scan_t = time.monotonic()
 
     def _on_points(self, msg) -> None:
         if pc2 is None or self.odom is None or self._pc_busy:
@@ -195,12 +217,13 @@ class Dashboard:
             p = self.odom.pose.pose
             yaw = _yaw(p.orientation)
             c, s = math.cos(-yaw), math.sin(-yaw)
-            out = []
-            for x, y, _z in pc2.read_points(msg, field_names=('x', 'y', 'z'), skip_nans=True):
-                dx, dy = x - p.position.x, y - p.position.y
-                if dx * dx + dy * dy < 25.0:
-                    out.append((round(c * dx - s * dy, 2), round(s * dx + c * dy, 2)))
-            self.obstacles, self.obstacles_t = out[::max(1, len(out) // 500)], time.monotonic()
+            xy = pc2.read_points_numpy(msg, field_names=('x', 'y'), skip_nans=True).astype(np.float32)
+            dx, dy = xy[:, 0] - p.position.x, xy[:, 1] - p.position.y
+            near = dx * dx + dy * dy < 25.0
+            rx, ry = c * dx[near] - s * dy[near], s * dx[near] + c * dy[near]
+            step = max(1, len(rx) // 500)
+            self.obstacles = np.round(np.stack([rx[::step], ry[::step]], axis=1), 2).tolist()
+            self.obstacles_t = time.monotonic()
         finally:
             self._pc_busy = False
 
@@ -244,16 +267,19 @@ class Dashboard:
                 s['gpu'] = round(int(f.read().strip()) / 10)
         except (OSError, ValueError):
             pass
-        try:
-            for zone in os.listdir('/sys/class/thermal'):
-                if not zone.startswith('thermal_zone'):
-                    continue
+        for zone in sorted(os.listdir('/sys/class/thermal')):
+            if not zone.startswith('thermal_zone'):
+                continue
+            try:
                 with open(f'/sys/class/thermal/{zone}/type') as f:
                     kind = f.read().strip().replace('-thermal', '')
                 with open(f'/sys/class/thermal/{zone}/temp') as f:
                     t = int(f.read().strip()) / 1000.0
-                if -40 < t < 150:
-                    s.setdefault('temps', {})[kind] = round(t, 1)
+            except (OSError, ValueError):
+                continue                           # some zones refuse to be read
+            if -40 < t < 150:
+                s.setdefault('temps', {})[kind] = round(t, 1)
+        try:
             with open('/proc/meminfo') as f:
                 mem = {ln.split(':')[0]: int(ln.split()[1]) for ln in f}
             s['mem_used_pct'] = round(100 * (1 - mem['MemAvailable'] / mem['MemTotal']))
@@ -265,17 +291,19 @@ class Dashboard:
 
     # ------------------------------------------------------------ output --
     def _pose_on_map(self):
-        if self.tf is None or self.map_info is None:
+        """map -> base: slam_toolbox's map -> odom composed with the EKF's odom -> base."""
+        if self.map_info is None or self.map_odom is None or self.odom is None:
             return None
-        try:
-            t = self.tf_buffer.lookup_transform('map', 'base_footprint', rclpy_time_zero())
-        except Exception:  # noqa: B902 - no map yet, or no transform
-            return None
-        tr = t.transform
-        return {'x': round(tr.translation.x, 2), 'y': round(tr.translation.y, 2), 'yaw': round(_yaw(tr.rotation), 3)}
+        mx, my, myaw = self.map_odom
+        p = self.odom.pose.pose
+        c, s = math.cos(myaw), math.sin(myaw)
+        return {'x': round(mx + c * p.position.x - s * p.position.y, 2),
+                'y': round(my + s * p.position.x + c * p.position.y, 2),
+                'yaw': round(myaw + _yaw(p.orientation), 3)}
 
     def snapshot(self, page_status: dict) -> dict:
         now = time.monotonic()
+        self.polled = now
         o = self.odom if now - self.odom_t < 2.0 else None
         motion = None
         if o is not None:
@@ -312,7 +340,3 @@ class Dashboard:
         with self.lock:
             return self.map_png
 
-
-def rclpy_time_zero():
-    from rclpy.time import Time
-    return Time()
