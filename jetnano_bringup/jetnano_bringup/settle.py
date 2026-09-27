@@ -38,7 +38,7 @@ class Settle(Node):
     def __init__(self) -> None:
         super().__init__('settle')
         self.declare_parameter('band_hz', [1400.0, 1800.0])   # where the servo buzz lives
-        self.declare_parameter('buzz_db', 10.0)               # prominence that counts as buzzing
+        self.declare_parameter('buzz_db', 8.0)                # prominence that counts as buzzing (room 3-6, faint buzz 8-10)
         self.declare_parameter('hits', 2)                      # ... in this many of the last
         self.declare_parameter('windows', 6)                   # ... half-second windows
         self.declare_parameter('after_stop_s', 1.5)            # still this long before listening
