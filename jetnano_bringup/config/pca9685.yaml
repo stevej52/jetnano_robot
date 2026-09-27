@@ -53,8 +53,13 @@
         # travel: ~25 us either side of neutral. The driver names sides by
         # PULSE direction - its "reverse" is toward min_pulse_us, which with
         # linear_x -1.0 is the ROBOT'S FORWARD.
-        reverse_start: 0.12    # robot forward: 25 / (1375 - 1172)
-        forward_start: 0.09    # robot backward: 25 / (1665 - 1375)
+        # FLOOR values from throttle_calibration on 2026-09-27 00:50 (hard floor,
+        # battery, real odometry): she first rolls at output 0.337 both ways; the
+        # tool keeps 0.01 under that. The bench (wheels up) values were 0.12 / 0.09.
+        # Speeds with these in: page slider 25 % = 0.28 m/s fwd / 0.21 back,
+        # 50 % = 0.51 / 0.33, 75 % = 0.65 / 0.45.
+        reverse_start: 0.327   # robot forward
+        forward_start: 0.327   # robot backward
 
     steering:
       channel: 1

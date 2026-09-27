@@ -191,11 +191,11 @@ class Calibrate(Node):
 
     def ready(self, direction: int):
         c = self.clearance(direction)
-        if c < self.clear_m:
+        if c < self.clear_m - 0.1:
             raise Abort(f'not enough room {"ahead" if direction > 0 else "behind"}: {c:.2f} m, '
                         f'needs {self.clear_m} m')
 
-    def make_room(self, direction: int, output: float):
+    def make_room(self, direction: int, output: float = None, command: float = None):
         """Not enough floor in ``direction`` for the runs: drive the other way,
         gently (the start point just found plus a little), until there is -
         only while the lidar shows room that way (Steve, 2026-09-26: 3.4 m
@@ -209,7 +209,9 @@ class Calibrate(Node):
                         f'{"behind" if direction < 0 else "ahead"} and {self.clearance(other):.2f} m the other way')
         print(f'making room {"behind" if direction < 0 else "ahead"}: driving '
               f'{"forward" if other > 0 else "backward"} a little')
-        cmd = DEADBAND + min(0.6, output + 0.05) * (1.0 - DEADBAND)   # starts are 0: output = shaped command
+        if command is None:                                          # starts are 0: output = shaped command
+            command = DEADBAND + min(0.6, output + 0.05) * (1.0 - DEADBAND)
+        cmd = command
         x0, y0 = self.x, self.y
         self.cmd = other * cmd
         t0 = time.monotonic()
@@ -249,6 +251,8 @@ class Calibrate(Node):
                     'is the motor rail on and the ESC armed?')
 
     def speed(self, direction: int, command: float) -> float:
+        if self.clearance(direction) < self.clear_m:
+            self.make_room(direction, command=MAX_LINEAR * 0.25)
         self.ready(direction)
         x0, y0 = self.x, self.y
         self.cmd = direction * command
@@ -293,6 +297,7 @@ class Calibrate(Node):
             self.set_starts(*new)
             print(f'new start points: forward {new[0]}, backward {new[1]}')
             rows = []
+            self._partial = (fwd, back, new, rows)
             for pct in SLIDER:
                 command = MAX_LINEAR * pct / 100.0
                 f = self.speed(+1, command)
@@ -310,6 +315,9 @@ class Calibrate(Node):
             except Abort as exc:
                 print(f'COULD NOT RESTORE the start points ({exc}): set {FWD_START}={keep[0]} '
                       f'and {BACK_START}={keep[1]} by hand')
+        self._write(fwd, back, new, rows)
+
+    def _write(self, fwd, back, new, rows):
         out = os.path.expanduser(f'~/calibration/throttle-{time.strftime("%Y%m%d-%H%M")}.yaml')
         os.makedirs(os.path.dirname(out), exist_ok=True)
         with open(out, 'w') as fh:
@@ -334,6 +342,8 @@ def main(args=None):
     except Abort as exc:
         print(f'STOPPED: {exc}')
         code = 1
+        if getattr(node, '_partial', None) and node._partial[3]:
+            node._write(*node._partial)             # the runs that did finish are still worth keeping
     except KeyboardInterrupt:
         print('STOPPED by hand')
         code = 1
