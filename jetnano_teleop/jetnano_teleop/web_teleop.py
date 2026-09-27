@@ -79,6 +79,10 @@ def default_page() -> str:
     return os.path.join(share, 'web', 'index.html')
 
 
+def default_dash() -> str:
+    return os.path.join(os.path.dirname(default_page()), 'dash.html')
+
+
 class State:
     """What the page last asked for, shared between the HTTP threads and the node."""
 
@@ -147,6 +151,16 @@ def make_handler(node: 'WebTeleop'):
             path = self.path.split('?', 1)[0]
             if path in ('/', '/index.html'):
                 self._send(HTTPStatus.OK, node.page, 'text/html; charset=utf-8')
+            elif path in ('/dash', '/ipad', '/dash.html'):
+                self._send(HTTPStatus.OK, node.dash_page(), 'text/html; charset=utf-8')
+            elif path == '/dash/state':
+                self._json(node.dash.snapshot(node.status()) if node.dash else {'error': 'no dashboard'})
+            elif path == '/dash/map.png':
+                png = node.dash.map_image() if node.dash else None
+                if png:
+                    self._send(HTTPStatus.OK, png, 'image/png')
+                else:
+                    self._send(HTTPStatus.NO_CONTENT, b'', 'image/png')
             elif path == '/config':
                 self._json({
                     'video_url': node.video_url,
@@ -222,6 +236,9 @@ class WebTeleop(Node):
         # on at every start of the guard, so a reboot never leaves it off.
         self.declare_parameter('guard_node', 'collision_guard')
         self.declare_parameter('guard_zones', ['stop_zone', 'slow_zone'])
+        # The iPad dashboard (Steve, 2026-09-27): /dash - cameras, sensors, everything
+        # she knows, a STOP and no driving. Its data: dash.py.
+        self.declare_parameter('dash_page', default_dash())
 
         self.max_linear = float(self.get_parameter('max_linear').value)
         self.max_angular = float(self.get_parameter('max_angular').value)
@@ -268,6 +285,13 @@ class WebTeleop(Node):
         self._set_params = self.create_client(SetParameters, f'/{guard_node}/set_parameters')
         self._poll_future = None
         self.create_timer(3.0, self._poll_guard)
+
+        self.dash = None
+        try:
+            from jetnano_teleop.dash import Dashboard
+            self.dash = Dashboard(self)
+        except Exception as exc:  # noqa: B902 - the driving page must come up regardless
+            self.get_logger().error(f'no dashboard: {type(exc).__name__}: {exc}')
 
         port = int(self.get_parameter('port').value)
         self.server = ThreadingHTTPServer(('0.0.0.0', port), make_handler(self))
@@ -368,6 +392,10 @@ class WebTeleop(Node):
         except OSError as exc:
             self.get_logger().error(f'cannot read the page {path}: {exc}')
             return b'<h1>jetnano web_teleop: page missing</h1>'
+
+    def dash_page(self) -> bytes:
+        # read each time, so the page can be edited without a restart
+        return self._read_page(str(self.get_parameter('dash_page').value))
 
     def monotonic(self) -> float:
         return self.get_clock().now().nanoseconds / 1e9

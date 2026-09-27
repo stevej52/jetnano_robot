@@ -120,6 +120,12 @@ TOPICS = {
         ('docker_restart', None, 120.0)]),
     'nvblox': ('3D map', '/nvblox_node/static_occupancy_grid', 5.0, 2.0, 'soon', 'vo', [
         ('container_launch', None, 75.0)]),
+    # What the collision guard reads from the camera (grid_to_points): on 2026-09-27 it
+    # dropped off the DDS graph while its process lived on, and the guard - rightly -
+    # refused to drive on a stale source; nothing noticed until Steve tried to drive.
+    'obstacles': ('camera obstacles for the guard', '/nvblox_node/obstacle_points', 3.0, 2.0, 'soon', 'nvblox', [
+        ('signal', proc('jetnano_bringup/grid_to_points'), 10.0),
+        ('signal', proc('jetnano_bringup/grid_to_points'), 20.0)]),
     'mic': ('microphone', '/sound/audio', 3.0, 5.0, 'seen', None, [
         ('signal', proc('jetnano_bringup/ears'), 12.0),
         ('signal', proc('jetnano_bringup/ears'), 30.0)]),
@@ -213,7 +219,8 @@ class Watchdog(Node):
         self.topics = {}                 # topic -> (hz, age) from topic_watch
         self.topics_at = 0.0
         self.items = {k: Item(k, v[0], v[6], v[4], v[5]) for k, v in TOPICS.items()}
-        for key, flag in (('vo', bool(p('expect_vo'))), ('nvblox', bool(p('expect_nvblox')))):
+        for key, flag in (('vo', bool(p('expect_vo'))), ('nvblox', bool(p('expect_nvblox'))),
+                          ('obstacles', bool(p('expect_nvblox')))):
             if not flag:
                 self.items[key].need = 'seen'
         self.http_items = {k: Item(k, k, v[1]) for k, v in HTTP.items()}

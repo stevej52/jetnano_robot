@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Rosie">
+<meta name="theme-color" content="#05070c">
+<title>Rosie · Dashboard</title>
+<!--
+  Rosie's iPad dashboard (Steve, 2026-09-27): every camera - the rear one as a
+  rear-view mirror in the main view - every sensor and everything she knows.
+  No driving here; STOP raises the same e_stop_web lock as the phone page.
+  Served by jetnano_teleop web_teleop at http://<robot>:8081/dash (or /ipad).
+  Cameras: the D435 from web_video_server (:8080), the two CSI cameras from
+  jetnano_bringup csi_cameras (:8082). Data: /dash/state, 4 times a second.
+  Add it to the iPad's home screen for a full-screen app.
+-->
+<style>
+  :root {
+    --bg: #05070c; --panel: rgba(14, 20, 32, 0.78); --edge: rgba(94, 242, 255, 0.16);
+    --edge-hi: rgba(94, 242, 255, 0.45); --text: #d9e7f5; --dim: #7f93ab; --faint: #3b4a60;
+    --cyan: #5ef2ff; --green: #3dffa8; --amber: #ffc048; --red: #ff4d6d; --pink: #ff6bd6; --violet: #9b8cff;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    --gap: 10px;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 15px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    -webkit-user-select: none; user-select: none; overflow: hidden; }
+  body::before { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background:
+      radial-gradient(1200px 700px at 20% -10%, rgba(94,242,255,0.10), transparent 60%),
+      radial-gradient(900px 600px at 110% 110%, rgba(155,140,255,0.10), transparent 60%),
+      repeating-linear-gradient(0deg, rgba(94,242,255,0.035) 0 1px, transparent 1px 44px),
+      repeating-linear-gradient(90deg, rgba(94,242,255,0.035) 0 1px, transparent 1px 44px); }
+
+  #app { position: relative; z-index: 1; height: 100%; display: grid; gap: var(--gap);
+    padding: calc(env(safe-area-inset-top) + 10px) calc(env(safe-area-inset-right) + 10px)
+             calc(env(safe-area-inset-bottom) + 10px) calc(env(safe-area-inset-left) + 10px); }
+  @media (orientation: landscape) {
+    #app { grid-template-columns: 1fr 1fr 0.98fr; grid-template-rows: 58px 1fr 1fr 272px;
+      grid-template-areas: "hdr hdr hdr" "cam cam pan" "cam cam nav" "sys voice log"; }
+  }
+  @media (orientation: portrait) {
+    #app { grid-template-columns: 1fr 1fr; grid-template-rows: 58px minmax(0, 1.9fr) minmax(0, 1fr) 258px 150px;
+      grid-template-areas: "hdr hdr" "cam cam" "pan nav" "sys voice" "log log"; }
+  }
+
+  .panel { position: relative; background: var(--panel); border: 1px solid var(--edge); border-radius: 16px;
+    overflow: hidden; -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+    box-shadow: 0 0 0 1px rgba(0,0,0,0.4), 0 14px 40px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.04); }
+  .panel > h2 { margin: 0; padding: 9px 14px 0; font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase;
+    color: var(--dim); font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .panel > h2 .tag { margin-left: auto; letter-spacing: 0.08em; color: var(--faint); font-family: var(--mono); }
+
+  /* ---------------------------------------------------------------- header */
+  #hdr { grid-area: hdr; display: flex; align-items: center; gap: 14px; padding: 0 8px 0 16px; }
+  .logo { font-weight: 800; letter-spacing: 0.34em; font-size: 20px; color: #fff;
+    text-shadow: 0 0 18px rgba(94,242,255,0.55); }
+  .logo small { font-weight: 500; letter-spacing: 0.2em; font-size: 10px; color: var(--cyan); margin-left: 6px; }
+  #overall { font-family: var(--mono); font-size: 13px; padding: 6px 12px; border-radius: 999px;
+    border: 1px solid var(--edge); color: var(--green); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    max-width: 38vw; }
+  #overall.warn { color: var(--amber); border-color: rgba(255,192,72,0.4); }
+  #overall.bad { color: var(--red); border-color: rgba(255,77,109,0.5); }
+  .hstat { font-family: var(--mono); font-size: 13px; color: var(--dim); white-space: nowrap; }
+  .hstat b { color: var(--text); font-weight: 600; }
+  .spacer { flex: 1; }
+  #clock { font-family: var(--mono); font-size: 18px; color: var(--text); letter-spacing: 0.06em; }
+  #stop { position: relative; height: 44px; min-width: 150px; border: 0; border-radius: 12px; cursor: pointer;
+    font: 800 16px/1 -apple-system, sans-serif; letter-spacing: 0.2em; color: #fff;
+    background: linear-gradient(180deg, #ff5a78, #d7193f); box-shadow: 0 0 22px rgba(255,77,109,0.55); overflow: hidden; }
+  #stop.stopped { background: linear-gradient(180deg, #3a1520, #22090f); color: var(--red);
+    box-shadow: 0 0 0 2px var(--red), 0 0 26px rgba(255,77,109,0.5); animation: pulse 1.4s infinite; letter-spacing: 0.08em; font-size: 13px; }
+  #stop .fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: rgba(61,255,168,0.35); }
+  @keyframes pulse { 50% { box-shadow: 0 0 0 2px var(--red), 0 0 6px rgba(255,77,109,0.2); } }
+
+  /* ----------------------------------------------------------- cameras */
+  #cam { grid-area: cam; }
+  .feed { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
+  #cam .feed { object-fit: cover; }
+  .nofeed { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: var(--faint); font-family: var(--mono); letter-spacing: 0.2em; font-size: 12px; }
+  .hud { position: absolute; inset: 0; pointer-events: none; }
+  .hud .corner { position: absolute; width: 34px; height: 34px; border: 2px solid rgba(94,242,255,0.7); }
+  .hud .tl { top: 12px; left: 12px; border-right: 0; border-bottom: 0; border-radius: 10px 0 0 0; }
+  .hud .tr { top: 12px; right: 12px; border-left: 0; border-bottom: 0; border-radius: 0 10px 0 0; }
+  .hud .bl { bottom: 12px; left: 12px; border-right: 0; border-top: 0; border-radius: 0 0 0 10px; }
+  .hud .br { bottom: 12px; right: 12px; border-left: 0; border-top: 0; border-radius: 0 0 10px 0; }
+  .hud .cross { position: absolute; left: 50%; top: 55%; width: 46px; height: 46px; margin: -23px 0 0 -23px;
+    border: 1px solid rgba(94,242,255,0.35); border-radius: 50%; }
+  .hud .cross::before, .hud .cross::after { content: ""; position: absolute; background: rgba(94,242,255,0.55); }
+  .hud .cross::before { left: 50%; top: -10px; bottom: -10px; width: 1px; }
+  .hud .cross::after { top: 50%; left: -10px; right: -10px; height: 1px; }
+  .badges { position: absolute; top: 18px; left: 22px; display: flex; gap: 6px; flex-wrap: wrap; max-width: 30%; }
+  .badge { font: 700 10px/1 var(--mono); letter-spacing: 0.14em; padding: 5px 8px; border-radius: 6px;
+    background: rgba(5,7,12,0.7); border: 1px solid var(--edge); color: var(--cyan); text-transform: uppercase; }
+  .badge.red { color: var(--red); border-color: rgba(255,77,109,0.6); }
+  .badge.amber { color: var(--amber); border-color: rgba(255,192,72,0.5); }
+  .badge.green { color: var(--green); border-color: rgba(61,255,168,0.45); }
+  .badge.violet { color: var(--violet); border-color: rgba(155,140,255,0.5); }
+  .readout { position: absolute; bottom: 20px; font-family: var(--mono); text-shadow: 0 1px 3px #000; }
+  .readout .big { font-size: 42px; font-weight: 700; color: #fff; line-height: 1; }
+  .readout .unit { font-size: 12px; color: var(--cyan); letter-spacing: 0.2em; }
+  #speedbox { left: 26px; }
+  #headbox { right: 26px; text-align: right; }
+  #cmdbars { position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); width: 220px; }
+  .bar { position: relative; height: 6px; background: rgba(255,255,255,0.12); border-radius: 3px; margin-top: 7px; }
+  .bar i { position: absolute; top: 0; bottom: 0; left: 50%; width: 0; border-radius: 3px; background: var(--cyan); }
+  .bar::after { content: ""; position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: rgba(255,255,255,0.5); }
+  .barlabel { font: 600 9px/1 var(--mono); letter-spacing: 0.2em; color: var(--dim); text-align: center; }
+
+  /* the rear-view mirror */
+  #mirror { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); width: 34%; aspect-ratio: 16 / 6;
+    border-radius: 18px / 40%; overflow: hidden; background: #000;
+    box-shadow: 0 0 0 3px #10151f, 0 0 0 5px rgba(94,242,255,0.35), 0 10px 26px rgba(0,0,0,0.7); }
+  #mirror img { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); display: block; }
+  #mirror::after { content: ""; position: absolute; inset: 0; pointer-events: none;
+    background: linear-gradient(160deg, rgba(255,255,255,0.14), transparent 40%); }
+  #mirror .lbl { position: absolute; bottom: 5px; right: 10px; font: 700 9px/1 var(--mono); letter-spacing: 0.2em;
+    color: rgba(255,255,255,0.7); text-shadow: 0 1px 2px #000; }
+
+  #pan { grid-area: pan; }
+  #pan .feed { top: 30px; height: calc(100% - 30px); }
+
+  /* ------------------------------------------------------------- radar / map */
+  #nav { grid-area: nav; }
+  .tabs { position: absolute; top: 6px; right: 8px; display: flex; gap: 4px; z-index: 2; }
+  .tabs button { font: 700 10px/1 var(--mono); letter-spacing: 0.14em; padding: 6px 9px; border-radius: 7px;
+    border: 1px solid var(--edge); background: rgba(5,7,12,0.6); color: var(--dim); }
+  .tabs button.on { color: var(--bg); background: var(--cyan); border-color: var(--cyan); }
+  #radar, #mapwrap { position: absolute; left: 0; right: 0; top: 30px; bottom: 0; }
+  #radar { width: 100%; height: calc(100% - 30px); }
+  #mapwrap { display: none; }
+  #mapimg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
+  #mapcv { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+  /* ---------------------------------------------------------- bottom row */
+  #sys { grid-area: sys; }
+  #voice { grid-area: voice; }
+  #log { grid-area: log; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; padding: 8px 12px 0; }
+  .tile { border: 1px solid var(--edge); border-radius: 9px; padding: 6px 8px 5px; background: rgba(5,7,12,0.45); }
+  .tile .k { font: 600 9px/1.2 var(--mono); letter-spacing: 0.12em; color: var(--dim); text-transform: uppercase;
+    display: flex; align-items: center; gap: 5px; white-space: nowrap; overflow: hidden; }
+  .tile .v { font: 700 16px/1.2 var(--mono); color: var(--text); margin-top: 3px; white-space: nowrap; }
+  .tile .v small { font-size: 10px; color: var(--dim); font-weight: 500; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: none; }
+  .dot.ok { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .dot.warn { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+  .dot.bad { background: var(--red); box-shadow: 0 0 8px var(--red); animation: blink 0.9s infinite; }
+  @keyframes blink { 50% { opacity: 0.35; } }
+  .machine { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; padding: 8px 12px 10px; }
+
+  .vrow { padding: 6px 14px 0; }
+  .vlabel { font: 600 9px/1 var(--mono); letter-spacing: 0.2em; color: var(--dim); text-transform: uppercase; }
+  .vtext { font-size: 15px; margin-top: 3px; min-height: 20px; color: #fff; overflow: hidden; display: -webkit-box;
+    -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .vtext.said { color: var(--cyan); }
+  .who { font: 700 10px/1 var(--mono); letter-spacing: 0.1em; padding: 3px 6px; border-radius: 5px; margin-left: 6px;
+    background: rgba(155,140,255,0.15); color: var(--violet); vertical-align: 2px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; padding: 8px 14px 0; }
+  .meters { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 8px 14px 0; }
+  .meter { height: 6px; border-radius: 3px; background: rgba(255,255,255,0.1); overflow: hidden; margin-top: 5px; }
+  .meter i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--green), var(--amber), var(--red)); }
+
+  #logl { list-style: none; margin: 0; padding: 6px 12px; position: absolute; top: 26px; bottom: 0; left: 0; right: 0;
+    overflow: hidden; font-size: 13px; -webkit-mask-image: linear-gradient(180deg, #000 75%, transparent); }
+  #logl li { display: flex; gap: 8px; padding: 3px 0; border-bottom: 1px solid rgba(94,242,255,0.06); white-space: nowrap; }
+  #logl .t { font-family: var(--mono); color: var(--faint); font-size: 11px; padding-top: 2px; }
+  #logl .x { overflow: hidden; text-overflow: ellipsis; }
+  #logl .k-heard .x { color: #fff; } #logl .k-said .x { color: var(--cyan); } #logl .k-sound .x { color: var(--dim); }
+  #logl .k-stop .x, #logl .k-problem .x { color: var(--red); } #logl .k-go .x { color: var(--green); }
+  #logl .k-mover .x { color: var(--pink); }
+
+  #lost { position: fixed; left: 50%; top: 76px; transform: translateX(-50%); z-index: 9; display: none;
+    padding: 10px 18px; border-radius: 10px; background: rgba(255,77,109,0.18); border: 1px solid var(--red);
+    color: var(--red); font: 700 13px/1 var(--mono); letter-spacing: 0.2em; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header id="hdr" class="panel">
+    <div class="logo">ROSIE<small>DASHBOARD</small></div>
+    <div id="overall">connecting…</div>
+    <div class="hstat">BAT <b id="hbat">—</b></div>
+    <div class="hstat">WIFI <b id="hwifi">—</b></div>
+    <div class="hstat">UP <b id="hup">—</b></div>
+    <div class="spacer"></div>
+    <div id="clock">--:--:--</div>
+    <button id="stop">STOP</button>
+  </header>
+
+  <section id="cam" class="panel">
+    <div class="nofeed">FRONT CAMERA · CONNECTING</div>
+    <img id="camimg" class="feed" alt="">
+    <div id="mirror"><img id="rearimg" alt=""><span class="lbl">REAR</span></div>
+    <div class="hud">
+      <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
+      <div class="cross"></div>
+      <div class="badges" id="badges"></div>
+      <div class="readout" id="speedbox"><div class="big" id="speed">0.00</div><div class="unit">M / S</div></div>
+      <div class="readout" id="headbox"><div class="big" id="heading">---°</div><div class="unit">HEADING</div></div>
+      <div id="cmdbars">
+        <div class="barlabel">THROTTLE</div><div class="bar"><i id="thr"></i></div>
+        <div class="barlabel" style="margin-top:8px">STEER</div><div class="bar"><i id="str"></i></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="pan" class="panel">
+    <h2>Pan-tilt camera <span class="tag" id="pantag">IMX219 · A</span></h2>
+    <div class="nofeed" style="top:30px">CONNECTING</div>
+    <img id="panimg" class="feed" alt="">
+  </section>
+
+  <section id="nav" class="panel">
+    <h2>Surroundings <span class="tag" id="navtag"></span></h2>
+    <div class="tabs"><button id="tradar" class="on">RADAR</button><button id="tmap">MAP</button><button id="tzoom">4 M</button></div>
+    <canvas id="radar"></canvas>
+    <div id="mapwrap"><img id="mapimg" alt=""><canvas id="mapcv"></canvas></div>
+  </section>
+
+  <section id="sys" class="panel">
+    <h2>Systems <span class="tag" id="systag"></span></h2>
+    <div class="tiles" id="tiles"></div>
+    <div class="machine" id="machine"></div>
+  </section>
+
+  <section id="voice" class="panel">
+    <h2>Voice &amp; senses <span class="tag" id="vtag"></span></h2>
+    <div class="vrow"><div class="vlabel">Heard <span id="who"></span></div><div class="vtext" id="heard">—</div></div>
+    <div class="vrow"><div class="vlabel">She said</div><div class="vtext said" id="said">—</div></div>
+    <div class="meters">
+      <div><div class="vlabel">Room <span id="lvl"></span></div><div class="meter"><i id="lvlbar"></i></div></div>
+      <div><div class="vlabel">Steering buzz <span id="buzz"></span></div><div class="meter"><i id="buzzbar"></i></div></div>
+    </div>
+    <div class="chips" id="chips"></div>
+  </section>
+
+  <section id="log" class="panel">
+    <h2>Events</h2>
+    <ul id="logl"></ul>
+  </section>
+</div>
+<div id="lost">LINK LOST · RETRYING</div>
+
+<script>
+(function () {
+  'use strict';
+  var host = location.hostname;
+  var $ = function (id) { return document.getElementById(id); };
+  var S = null;                 // the last /dash/state
+  var zoom = 4;                 // radar half-width in metres
+  var view = 'radar';
+
+  // ---------------------------------------------------------------- cameras
+  function stream(img, url, gone) {
+    var retry = null;
+    function go() { img.src = url + (url.indexOf('?') < 0 ? '?' : '&') + 't=' + Date.now(); }
+    img.onload = function () { img.style.opacity = 1; if (gone) gone.style.display = 'none'; };
+    img.onerror = function () {
+      img.style.opacity = 0; if (gone) gone.style.display = 'flex';
+      clearTimeout(retry); retry = setTimeout(go, 2500);
+    };
+    go();
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) go(); });
+  }
+  stream($('camimg'), 'http://' + host + ':8080/stream?topic=/camera/color/image_raw&type=ros_compressed',
+         document.querySelector('#cam .nofeed'));
+  stream($('rearimg'), 'http://' + host + ':8082/rear.mjpg');
+  stream($('panimg'), 'http://' + host + ':8082/front.mjpg', document.querySelector('#pan .nofeed'));
+
+  // ------------------------------------------------------------------- STOP
+  var stopBtn = $('stop'), holdT = null, holdStart = 0;
+  function post(path) { return fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); }
+  function stopped() { return S && S.page && S.page.e_stop; }
+  function paintStop() {
+    if (stopped()) { stopBtn.classList.add('stopped'); stopBtn.innerHTML = '<span class="fill" id="fill"></span>STOPPED · HOLD TO GO'; }
+    else { stopBtn.classList.remove('stopped'); stopBtn.textContent = 'STOP'; }
+  }
+  function press(e) {
+    e.preventDefault();
+    if (!stopped()) { post('/stop').then(poll); if (navigator.vibrate) navigator.vibrate(60); return; }
+    holdStart = performance.now();
+    holdT = setInterval(function () {
+      var f = Math.min(1, (performance.now() - holdStart) / 1200), fill = $('fill');
+      if (fill) fill.style.width = (f * 100) + '%';
+      if (f >= 1) { clearInterval(holdT); holdT = null; post('/go').then(poll); }
+    }, 30);
+  }
+  function release() { if (holdT) { clearInterval(holdT); holdT = null; var fill = $('fill'); if (fill) fill.style.width = 0; } }
+  stopBtn.addEventListener('touchstart', press, { passive: false });
+  stopBtn.addEventListener('mousedown', press);
+  ['touchend', 'touchcancel', 'mouseup', 'mouseleave'].forEach(function (ev) { stopBtn.addEventListener(ev, release); });
+
+  // ------------------------------------------------------------------- tabs
+  function setView(v) {
+    view = v; $('tradar').classList.toggle('on', v === 'radar'); $('tmap').classList.toggle('on', v === 'map');
+    $('radar').style.display = v === 'radar' ? 'block' : 'none'; $('mapwrap').style.display = v === 'map' ? 'block' : 'none';
+    $('tzoom').style.display = v === 'radar' ? '' : 'none';
+  }
+  $('tradar').onclick = function () { setView('radar'); };
+  $('tmap').onclick = function () { setView('map'); };
+  $('tzoom').onclick = function () { zoom = zoom === 2 ? 4 : zoom === 4 ? 8 : 2; this.textContent = zoom + ' M'; };
+
+  // ------------------------------------------------------------------ helpers
+  function fmtUp(s) { if (s == null) return '—'; var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
+    return h ? h + 'h ' + (m < 10 ? '0' : '') + m + 'm' : m + 'm'; }
+  function hhmm(t) { var d = new Date(t * 1000); return d.toTimeString().slice(0, 8); }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function badge(text, cls) { return '<span class="badge ' + (cls || '') + '">' + esc(text) + '</span>'; }
+  var LABEL = { lidar: 'Lidar', scan_filter: 'Lidar filt', imu: 'IMU', odometry: 'EKF', vo: 'Visual odo',
+    nvblox: '3D map', mic: 'Mic', listening: 'Listening', battery: 'Battery', cliff: 'Cliff', map: 'SLAM map' };
+
+  // ------------------------------------------------------------------ render
+  function render() {
+    if (!S) return;
+    var wd = S.watchdog || {}, sys = S.system || {}, page = S.page || {}, streams = wd.streams || {};
+    // header
+    var probs = wd.problems || [];
+    var ov = $('overall');
+    ov.className = S.watchdog ? (probs.length ? 'bad' : (wd.grace ? 'warn' : '')) : 'warn';
+    ov.textContent = !S.watchdog ? 'watchdog quiet' : probs.length ? probs.length + ' problem' + (probs.length > 1 ? 's' : '') + ' · ' + probs[0]
+      : wd.grace ? 'starting up' : 'ALL SYSTEMS GO';
+    var b = page.battery;
+    $('hbat').textContent = b ? (b[1] != null ? b[1] + '% · ' : '') + b[0].toFixed(1) + ' V' : 'wall power';
+    $('hwifi').textContent = sys.wifi_dbm != null ? sys.wifi_dbm + ' dBm' : '—';
+    $('hup').textContent = fmtUp(sys.uptime_s);
+    paintStop();
+
+    // main camera HUD
+    var m = S.motion;
+    $('speed').textContent = m ? m.speed.toFixed(2) : '—';
+    $('heading').textContent = m ? ((m.heading + 360) % 360) + '°' : '—';
+    var thr = S.cmd ? S.cmd[0] : 0, st = S.cmd ? S.cmd[1] : 0;
+    function bar(el, v, max) { var f = Math.max(-1, Math.min(1, v / max)); el.style.left = (f < 0 ? 50 + f * 50 : 50) + '%'; el.style.width = Math.abs(f) * 50 + '%'; }
+    bar($('thr'), thr, 1.0); bar($('str'), -st, 2.4);
+    var locks = S.locks || {}, badges = [];
+    if (locks.e_stop_web) badges.push(badge('Web stop', 'red'));
+    if (locks.e_stop_joy) badges.push(badge('Stick stop', 'red'));
+    if (locks.e_stop) badges.push(badge('Battery stop', 'red'));
+    if (locks.e_stop_motion) badges.push(badge('Motion check stop', 'red'));
+    if (page.guard === 'blocked') badges.push(badge('Blocked', 'red'));
+    else if (page.guard === 'slowed') badges.push(badge('Slowed', 'amber'));
+    if (page.guard_enabled === false) badges.push(badge('Guard off', 'amber'));
+    if (sys.slam) badges.push(badge('Mapping', 'violet'));
+    if (streams.vo) badges.push(badge('VO ' + streams.vo.hz + ' Hz', streams.vo.state === 'ok' ? 'green' : 'amber'));
+    $('badges').innerHTML = badges.join('');
+
+    // systems tiles
+    var html = '';
+    Object.keys(LABEL).forEach(function (k) {
+      var s = streams[k]; if (!s) return;
+      var cls = s.state === 'ok' ? (s.hz > 0 ? 'ok' : '') : (/start|grace|wait/.test(s.state) ? 'warn' : 'bad');
+      var v = s.hz > 0 ? s.hz.toFixed(s.hz < 10 ? 1 : 0) + '<small> Hz</small>' : (s.state === 'ok' ? '<small>idle</small>' : '<small>' + esc(s.state) + '</small>');
+      html += '<div class="tile"><div class="k"><span class="dot ' + cls + '"></span>' + LABEL[k] + '</div><div class="v">' + v + '</div></div>';
+    });
+    $('tiles').innerHTML = html;
+    var t = sys.temps || {}, hot = Math.max.apply(null, Object.keys(t).map(function (k) { return t[k]; }).concat([0]));
+    function mt(k, v, u, bad) { return '<div class="tile"><div class="k"><span class="dot ' + (v == null ? '' : bad ? 'warn' : 'ok') + '"></span>' + k + '</div><div class="v">' + (v == null ? '—' : v) + '<small>' + u + '</small></div></div>'; }
+    $('machine').innerHTML = mt('CPU', sys.cpu, ' %', sys.cpu > 85) + mt('GPU', sys.gpu, ' %', sys.gpu > 90)
+      + mt('Hottest', hot ? hot.toFixed(0) : null, ' °C', hot > 80) + mt('Memory', sys.mem_used_pct, ' %', sys.mem_used_pct > 90);
+    $('systag').textContent = (sys.disk_free_gb != null ? sys.disk_free_gb + ' GB free · ' : '') + (sys.container === false ? 'GPU container DOWN' : 'container up');
+
+    // voice
+    var sp = S.speech || {}, who = sp.speaker;
+    $('heard').textContent = sp.heard || '—';
+    $('said').textContent = sp.said || (sp.sound ? '♪ ' + sp.sound : '—');
+    $('who').innerHTML = who ? '<span class="who">' + esc(who.name || ('unknown' + (who.nearest ? ' · nearest ' + who.nearest : ''))) + ' ' + who.percent + '%</span>' : '';
+    var lv = S.level; $('lvl').textContent = lv != null ? lv.toFixed(0) + ' dBFS' : '';
+    $('lvlbar').style.width = lv != null ? Math.max(0, Math.min(100, (lv + 70) * 2)) + '%' : 0;
+    var bz = S.buzz; $('buzz').textContent = bz != null ? bz.toFixed(0) + ' dB' : '';
+    $('buzzbar').style.width = bz != null ? Math.max(0, Math.min(100, bz * 5)) + '%' : 0;
+    var chips = [];
+    var state = sp.state || '';
+    chips.push(badge(state === 'voice off' ? 'Talking off' : state === 'muted' ? 'Muted' : state === 'chat' ? 'In conversation' : 'Listening',
+      state === 'voice off' || state === 'muted' ? 'amber' : state === 'chat' ? 'green' : ''));
+    chips.push(badge(S.mode === 'watch' ? 'On watch' : S.mode === 'off' ? 'Motion watch off' : 'Approach watch', S.mode === 'watch' ? 'violet' : ''));
+    chips.push(badge(S.motion_check === 'ok' || !S.motion_check ? 'Motion check ok' : 'Motion check STOP', S.motion_check && S.motion_check !== 'ok' ? 'red' : 'green'));
+    chips.push(badge(page.guard_enabled === false ? 'Guard OFF' : 'Guard on', page.guard_enabled === false ? 'red' : 'green'));
+    $('chips').innerHTML = chips.join('');
+    $('vtag').textContent = sp.sound ? '♪ ' + sp.sound : '';
+
+    // log
+    $('logl').innerHTML = (S.log || []).map(function (e) {
+      return '<li class="k-' + e.kind + '"><span class="t">' + hhmm(e.t) + '</span><span class="x">' + esc(e.text) + '</span></li>';
+    }).join('');
+
+    $('navtag').textContent = S.scan ? '' : 'no lidar';
+  }
+
+  // ------------------------------------------------------------------ radar
+  var radar = $('radar'), rctx = radar.getContext('2d'), sweep = 0;
+  function fit(cv) {
+    var r = cv.getBoundingClientRect(), d = window.devicePixelRatio || 1;
+    if (cv.width !== Math.round(r.width * d) || cv.height !== Math.round(r.height * d)) { cv.width = Math.round(r.width * d); cv.height = Math.round(r.height * d); }
+    return { w: r.width, h: r.height, d: d };
+  }
+  // guard zones from collision_guard.yaml (robot frame, metres)
+  var ZONES = { stopF: [0.20, 0.37, 0.16], slowF: [0.20, 1.00, 0.22], stopB: [-0.37, -0.20, 0.16], slowB: [-0.80, -0.20, 0.22] };
+  function drawRadar() {
+    var f = fit(radar); if (!f.w) return;
+    var c = rctx; c.setTransform(f.d, 0, 0, f.d, 0, 0); c.clearRect(0, 0, f.w, f.h);
+    var cx = f.w / 2, cy = f.h * 0.56, sc = Math.min(f.w, f.h) / 2 / zoom * 0.95;
+    function P(x, y) { return [cx - y * sc, cy - x * sc]; }
+    // rings
+    c.lineWidth = 1;
+    for (var r = 1; r <= zoom; r++) {
+      c.strokeStyle = r % 2 ? 'rgba(94,242,255,0.10)' : 'rgba(94,242,255,0.18)';
+      c.beginPath(); c.arc(cx, cy, r * sc, 0, Math.PI * 2); c.stroke();
+      c.fillStyle = 'rgba(127,147,171,0.6)'; c.font = '10px ui-monospace, monospace'; c.fillText(r + ' m', cx + 4, cy - r * sc + 12);
+    }
+    c.strokeStyle = 'rgba(94,242,255,0.08)'; c.beginPath(); c.moveTo(cx, 0); c.lineTo(cx, f.h); c.moveTo(0, cy); c.lineTo(f.w, cy); c.stroke();
+    // sweep
+    sweep = (sweep + 0.035) % (Math.PI * 2);
+    var g = c.createRadialGradient(cx, cy, 0, cx, cy, zoom * sc);
+    g.addColorStop(0, 'rgba(94,242,255,0.10)'); g.addColorStop(1, 'rgba(94,242,255,0)');
+    c.fillStyle = g; c.beginPath(); c.moveTo(cx, cy); c.arc(cx, cy, zoom * sc, sweep, sweep + 0.5); c.closePath(); c.fill();
+    if (S) {
+      // guard zones: the one in the direction of travel brighter
+      var fwd = S.cmd && S.cmd[0] > 0.01, back = S.cmd && S.cmd[0] < -0.01;
+      function box(z, fill, stroke) { var a = P(z[1], z[2]), b = P(z[0], -z[2]); c.fillStyle = fill; c.strokeStyle = stroke;
+        c.fillRect(a[0], a[1], b[0] - a[0], b[1] - a[1]); c.strokeRect(a[0], a[1], b[0] - a[0], b[1] - a[1]); }
+      box(ZONES.slowF, fwd ? 'rgba(255,192,72,0.12)' : 'rgba(255,192,72,0.04)', 'rgba(255,192,72,' + (fwd ? 0.6 : 0.2) + ')');
+      box(ZONES.slowB, back ? 'rgba(255,192,72,0.12)' : 'rgba(255,192,72,0.04)', 'rgba(255,192,72,' + (back ? 0.6 : 0.2) + ')');
+      box(ZONES.stopF, fwd ? 'rgba(255,77,109,0.25)' : 'rgba(255,77,109,0.08)', 'rgba(255,77,109,' + (fwd ? 0.8 : 0.3) + ')');
+      box(ZONES.stopB, back ? 'rgba(255,77,109,0.25)' : 'rgba(255,77,109,0.08)', 'rgba(255,77,109,' + (back ? 0.8 : 0.3) + ')');
+      // nvblox obstacles
+      c.fillStyle = 'rgba(255,192,72,0.8)';
+      (S.obstacles || []).forEach(function (p) { var q = P(p[0], p[1]); c.fillRect(q[0] - 1.5, q[1] - 1.5, 3, 3); });
+      // lidar
+      if (S.scan) {
+        c.fillStyle = '#5ef2ff'; c.shadowColor = '#5ef2ff'; c.shadowBlur = 6;
+        for (var k = 0; k < 360; k++) {
+          var rr = S.scan[k]; if (rr == null || rr > zoom * 1.5) continue;
+          var a = k * Math.PI / 180, q = P(rr * Math.cos(a), rr * Math.sin(a));
+          c.beginPath(); c.arc(q[0], q[1], 2.2, 0, Math.PI * 2); c.fill();
+        }
+        c.shadowBlur = 0;
+      }
+      // someone moving
+      if (S.mover && S.mover.age < 4) {
+        var mv = P(S.mover.x, S.mover.y), pr = 8 + 6 * Math.sin(performance.now() / 180);
+        c.strokeStyle = 'rgba(255,107,214,0.9)'; c.lineWidth = 2; c.beginPath(); c.arc(mv[0], mv[1], pr, 0, Math.PI * 2); c.stroke(); c.lineWidth = 1;
+      }
+    }
+    // Rosie herself: 0.40 x 0.18 m, nose up
+    var p1 = P(0.20, 0.09), p2 = P(-0.20, -0.09);
+    c.fillStyle = 'rgba(94,242,255,0.25)'; c.strokeStyle = '#5ef2ff'; c.lineWidth = 1.5;
+    c.beginPath(); c.rect(p1[0], p1[1], p2[0] - p1[0], p2[1] - p1[1]); c.fill(); c.stroke();
+    var n1 = P(0.30, 0), n2 = P(0.20, 0.07), n3 = P(0.20, -0.07);
+    c.fillStyle = '#5ef2ff'; c.beginPath(); c.moveTo(n1[0], n1[1]); c.lineTo(n2[0], n2[1]); c.lineTo(n3[0], n3[1]); c.closePath(); c.fill();
+  }
+
+  // --------------------------------------------------------------------- map
+  var mapimg = $('mapimg'), mapcv = $('mapcv'), mctx = mapcv.getContext('2d'), mapV = -1;
+  function drawMap() {
+    if (!S) return;
+    var mi = S.map;
+    if (!mi) { var f0 = fit(mapcv); mctx.setTransform(f0.d, 0, 0, f0.d, 0, 0); mctx.clearRect(0, 0, f0.w, f0.h);
+      mctx.fillStyle = '#3b4a60'; mctx.font = '12px ui-monospace, monospace'; mctx.textAlign = 'center';
+      mctx.fillText('NO MAP · say "Rosie, start mapping"', f0.w / 2, f0.h / 2); mctx.textAlign = 'left'; return; }
+    if (mi.v !== mapV) { mapV = mi.v; mapimg.src = '/dash/map.png?v=' + mi.v; }
+    var f = fit(mapcv), c = mctx; c.setTransform(f.d, 0, 0, f.d, 0, 0); c.clearRect(0, 0, f.w, f.h);
+    var s = Math.min(f.w / mi.w, f.h / mi.h), ox = (f.w - mi.w * s) / 2, oy = (f.h - mi.h * s) / 2;
+    var p = S.pose; if (!p) return;
+    var px = ox + (p.x - mi.x0) / mi.res * s, py = oy + (mi.h - (p.y - mi.y0) / mi.res) * s;
+    c.save(); c.translate(px, py); c.rotate(-p.yaw);
+    c.fillStyle = '#ff6bd6'; c.shadowColor = '#ff6bd6'; c.shadowBlur = 10;
+    c.beginPath(); c.moveTo(12, 0); c.lineTo(-7, 7); c.lineTo(-3, 0); c.lineTo(-7, -7); c.closePath(); c.fill();
+    c.restore();
+    $('navtag').textContent = (mi.w * mi.res).toFixed(1) + ' × ' + (mi.h * mi.res).toFixed(1) + ' m';
+  }
+
+  function frame() { if (view === 'radar') drawRadar(); else drawMap(); requestAnimationFrame(frame); }
+  requestAnimationFrame(frame);
+
+  // ------------------------------------------------------------------- data
+  var failures = 0;
+  function poll() {
+    return fetch('/dash/state', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
+      S = j; failures = 0; $('lost').style.display = 'none'; render();
+    }).catch(function () { if (++failures > 3) $('lost').style.display = 'block'; });
+  }
+  setInterval(poll, 250); poll();
+  setInterval(function () { $('clock').textContent = new Date().toTimeString().slice(0, 8); }, 500);
+
+  // keep the iPad's screen on while the dashboard is open
+  var lock = null;
+  function wake() { if (navigator.wakeLock && !lock) navigator.wakeLock.request('screen').then(function (l) { lock = l; l.onrelease = function () { lock = null; }; }).catch(function () {}); }
+  document.addEventListener('touchstart', wake, { once: false, passive: true });
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) wake(); });
+  wake();
+})();
+</script>
+</body>
+</html>

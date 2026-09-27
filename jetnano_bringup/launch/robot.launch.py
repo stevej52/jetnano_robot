@@ -112,6 +112,9 @@ def generate_launch_description():
             description='where "local news" and "the weather" are: "City,State" (set in /etc/default/jetnano-robot); '
                         'empty = wherever the internet connection appears to be'),
         DeclareLaunchArgument(
+            'use_csi_cameras', default_value='true',
+            description='the two Pi cameras (pan-tilt front, rear) as MJPEG on port 8082, only while watched'),
+        DeclareLaunchArgument(
             'use_web_teleop', default_value='true',
             description='serve the driving web page (camera + arrows) on port 8081'),
 
@@ -192,6 +195,18 @@ def generate_launch_description():
             condition=IfCondition(LaunchConfiguration('use_ears')),
         ),
 
+        # The two CSI cameras for the iPad dashboard (web_teleop /dash): MJPEG on
+        # :8082, each pipeline running only while someone watches.
+        Node(
+            package='jetnano_bringup',
+            executable='csi_cameras',
+            name='csi_cameras',
+            output='screen',
+            respawn=True,
+            respawn_delay=10.0,
+            condition=IfCondition(LaunchConfiguration('use_csi_cameras')),
+        ),
+
         # Settles buzzing steering servos after a stop by ear: listens to the
         # ears' audio for the servo chatter and wiggles the wheels through
         # twist_mux until it stops (Steve, 2026-09-27).
@@ -230,7 +245,8 @@ def generate_launch_description():
             respawn=True,
             respawn_delay=3.0,
             parameters=[{'topics': ['/scan_raw', '/scan', '/imu/data', '/vo', '/odometry/filtered',
-                                    '/nvblox_node/static_occupancy_grid', '/sound/audio', '/speech/heartbeat',
+                                    '/nvblox_node/static_occupancy_grid', '/nvblox_node/obstacle_points',
+                                    '/sound/audio', '/speech/heartbeat',
                                     '/map', '/battery', '/cliff/ranges']}],
             condition=IfCondition(LaunchConfiguration('use_watchdog')),
         ),
