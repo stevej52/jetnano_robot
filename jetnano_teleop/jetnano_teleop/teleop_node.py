@@ -26,16 +26,19 @@ are all present. Unplug one and plug in the other and it follows, because it
 rescans whenever it has no usable profile.
 
 It publishes ``geometry_msgs/Twist`` on ``cmd_vel_teleop`` and a
-``std_msgs/Bool`` on ``e_stop``. Both go to twist_mux: the Twist as the
+``std_msgs/Bool`` on ``e_stop_joy``. Both go to twist_mux: the Twist as the
 high-priority input, the Bool as a lock that blocks *everything* including
 Nav2.
 
 Safety, in the order it is applied every tick:
 
-1. No profile matched, or a required device vanished  -> zero + e_stop true
-2. No event from a device within ``timeout``          -> zero + e_stop true
-3. E-stop button held                                 -> zero + e_stop true
-4. Dead-man ("arm") button not held                   -> zero, e_stop false
+1. A required device vanished while in use            -> one zero, lock for ``vanish_hold`` s
+2. No event within ``timeout`` (0 = off; a stick held -> the same
+   still sends no events, so the default is off)
+3. E-stop button held                                 -> zero + lock
+4. Dead-man ("arm") button not held, or no controller -> nothing published: the
+   phone and Nav2 have the robot (review 2026-09-26: an idle joystick used to
+   block them, and its stream of "false" cancelled the web page's STOP)
 5. Otherwise                                          -> the commanded Twist
 
 The zero Twist is published continuously rather than simply stopping, so the
@@ -204,14 +207,15 @@ class TeleopNode(Node):
 
         self.declare_parameter('profiles_file', default_profiles)
         self.declare_parameter('cmd_vel_topic', 'cmd_vel_teleop')
-        self.declare_parameter('e_stop_topic', 'e_stop')
+        self.declare_parameter('e_stop_topic', 'e_stop_joy')
         self.declare_parameter('turbo_scale', 2.0)
 
         path = self.get_parameter('profiles_file').value
         self.config = self._load(path)
 
         self.publish_rate = float(self.config.get('publish_rate', 50.0))
-        self.timeout = float(self.config.get('timeout', 0.5))
+        self.timeout = float(self.config.get('timeout', 0.0))
+        self.vanish_hold = float(self.config.get('vanish_hold', 3.0))
         self.max_linear = float(self.config.get('max_linear', 1.0))
         self.max_angular = float(self.config.get('max_angular', 3.0))
         self.turbo_scale = float(self.get_parameter('turbo_scale').value)
@@ -228,6 +232,10 @@ class TeleopNode(Node):
         self.active: Profile | None = None
         self.open_devices: dict[str, OpenDevice] = {}
         self._last_reason = ''
+        self.lock_until = 0.0            # a vanished device holds the lock until then
+        self.was_armed = False
+        self.locked = None               # what the lock topic last said (None: say it once at start)
+        self.last_lock_publish = 0.0
 
         if evdev is None:
             self.get_logger().fatal(
@@ -328,34 +336,44 @@ class TeleopNode(Node):
         now = self.now_seconds()
         twist = Twist()
         e_stop = False
+        drive = False                       # publish a command this tick?
 
-        if self.active is None:
-            e_stop = True
-        else:
+        if self.active is not None:
             alive = True
             for role, dev in list(self.open_devices.items()):
                 if not dev.pump(now):
                     self._say_once(f'{role} disappeared; stopping')
                     alive = False
                     break
-                if dev.last_event and (now - dev.last_event) > self.timeout:
+                if self.timeout > 0 and dev.last_event and (now - dev.last_event) > self.timeout:
                     self._say_once(f'{role} silent for {self.timeout:g}s; stopping')
                     alive = False
                     break
-
             if not alive:
                 self._close_all()
-                e_stop = True
+                self.lock_until = now + self.vanish_hold
+                drive = True                                   # one zero, so the mixer sees the stop
+                self.was_armed = False
             else:
-                e_stop, twist = self._command()
+                e_stop, twist, armed = self._command()
+                drive = armed or self.was_armed                # one zero after the arm button is let go
+                self.was_armed = armed
 
-        self.cmd_pub.publish(twist)
-        message = Bool()
-        message.data = e_stop
-        self.stop_pub.publish(message)
+        if drive:
+            self.cmd_pub.publish(twist)
+        # The lock: its changes, and a reminder once a second while it is on.
+        # Never a stream of "false": the web page has its own lock (e_stop_web)
+        # and this one must not cancel it (review, 2026-09-26).
+        locked = e_stop or now < self.lock_until
+        if locked != self.locked or (locked and now - self.last_lock_publish >= 1.0):
+            message = Bool()
+            message.data = locked
+            self.stop_pub.publish(message)
+            self.locked, self.last_lock_publish = locked, now
 
     def _command(self):
-        """Fold every attached device's axes and buttons into one command."""
+        """Fold every attached device's axes and buttons into one command.
+        Returns (e_stop, twist, armed): armed = a command is being given."""
         steer = 0.0
         throttle = 0.0
         armed = None
@@ -383,18 +401,18 @@ class TeleopNode(Node):
         twist = Twist()
         if stop:
             self._say_once('e-stop pressed')
-            return True, twist
+            return True, twist, True
 
         # No arm button configured anywhere means "always live".
         if armed is False:
             self._last_reason = ''
-            return False, twist
+            return False, twist, False
 
         self._last_reason = ''
         limit = self.max_linear * (self.turbo_scale if turbo else 1.0)
         twist.linear.x = throttle * limit
         twist.angular.z = steer * self.max_angular
-        return False, twist
+        return False, twist, True
 
     def now_seconds(self) -> float:
         return self.get_clock().now().nanoseconds / 1e9

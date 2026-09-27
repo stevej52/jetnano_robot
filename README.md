@@ -262,7 +262,7 @@ teleop    ──/cmd_vel_teleop (priority 100)──┐
 web page  ──/cmd_vel_web    (priority 90)───┼─ twist_mux ──/cmd_vel_mux──▶ collision_guard ──/cmd_vel──▶ ros2_pca9685 ──I²C──▶ ESC + servos
 Nav2      ──/cmd_vel_nav    (priority 10)───┘        ▲                          ▲
                                                      │                    /scan, nvblox points
-                                          /e_stop ───┘  (lock, priority 255)
+                  /e_stop_web, /e_stop_joy ───┘  (locks, priority 255: any one stops her)
 ```
 
 (`tilt_guard` also has an input, `cmd_vel_tilt` at priority 150, that it uses

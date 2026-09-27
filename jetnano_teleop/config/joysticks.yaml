@@ -27,7 +27,9 @@
 #             one end and only ever means "more" - not used by this robot.
 
 publish_rate: 50.0          # Hz, how often cmd_vel goes out
-timeout: 0.5                # s without any event: treat the device as gone
+timeout: 0.0                # s without any event before a device counts as gone; 0 = off
+                            # (a stick held still sends no events, 2026-09-26)
+vanish_hold: 3.0            # s the lock stays raised after a device vanishes mid-use
 
 # Scaling from the -1..+1 axis values to real robot units.
 max_linear: 1.0             # m/s at full throttle

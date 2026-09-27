@@ -126,7 +126,8 @@ class Sounds(Node):
         self._battery_state = 'ok'
         self._drop = False
         self.create_subscription(String, 'say', lambda m: self.say(m.data, force=m.data.endswith('.wav')), 10)
-        self.create_subscription(Bool, 'e_stop', self._on_e_stop, 10)
+        for topic in ('e_stop', 'e_stop_web', 'e_stop_joy'):      # one lock per source since 2026-09-26
+            self.create_subscription(Bool, topic, self._on_e_stop, 10)
         self.create_subscription(Bool, 'cliff/drop', self._on_drop, 10)
         self.create_subscription(BatteryState, 'battery', self._on_battery, 10)
         if CollisionMonitorState is not None:

@@ -28,6 +28,7 @@ ROS_DOMAIN_ID must match on both machines; it is 7 for this robot.
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription, LogInfo
 from launch.conditions import IfCondition
+from launch_ros.parameter_descriptions import ParameterValue
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
@@ -222,7 +223,14 @@ def generate_launch_description():
             output='screen',
             respawn=True,
             respawn_delay=5.0,
-            parameters=[{'act': LaunchConfiguration('watchdog_act')}],
+            parameters=[{'act': LaunchConfiguration('watchdog_act'),
+                         # which optional parts this launch switched on (watchdog.py 'soon')
+                         'expect_vo': ParameterValue(PythonExpression(["'", vo_source, "' != 'none'"]),
+                                                     value_type=bool),
+                         'expect_nvblox': ParameterValue(
+                             PythonExpression(["'", vo_source, "' == 'cuvslam' and '",
+                                               LaunchConfiguration('nvblox'), "' == 'true'"]),
+                             value_type=bool)}],
             condition=IfCondition(LaunchConfiguration('use_watchdog')),
         ),
 

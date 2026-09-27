@@ -30,9 +30,9 @@ zero for a moment and then goes quiet, so twist_mux lets Nav2 drive again
 (``cmd_vel_web`` sits between the joystick and Nav2 in priority) and the
 driver's own 0.5 s timeout is the last line of defence.
 
-STOP raises the ``e_stop`` lock, which blocks everything including Nav2, and
-stays raised until GO is pressed on the page; the joystick node uses the same
-lock. Speeds are fractions of full throttle, like the joystick's.
+STOP raises the ``e_stop_web`` lock, which blocks everything including Nav2,
+and stays raised until GO is pressed on the page. The joystick has its own
+lock (``e_stop_joy``), so neither can cancel the other (review, 2026-09-26). Speeds are fractions of full throttle, like the joystick's.
 
 The page also shows what the collision guard (drive.launch.py) did with the
 last command and has a switch for it: off sets the guard's zones' ``enabled``
@@ -203,7 +203,7 @@ class WebTeleop(Node):
         self.declare_parameter('port', 8081)
         self.declare_parameter('page', default_page())
         self.declare_parameter('cmd_vel_topic', 'cmd_vel_web')
-        self.declare_parameter('e_stop_topic', 'e_stop')
+        self.declare_parameter('e_stop_topic', 'e_stop_web')
         # Fractions of full throttle / full steering lock, like joysticks.yaml.
         self.declare_parameter('max_linear', 0.5)
         self.declare_parameter('max_angular', 2.4)      # rad/s; 44 deg of lock / 18.33

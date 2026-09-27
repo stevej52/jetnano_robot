@@ -185,6 +185,11 @@ class Watchdog(Node):
         # deliberate restarts of listen in an hour and gave up on it.
         self.declare_parameter('young_process_s', 40.0)
         self.declare_parameter('expect_boot_parts_after_s', 180.0)
+        # what the launch switched on (robot.launch.py vo:= and nvblox:=): a part
+        # that is off is only watched once seen (review 2026-09-26: with nvblox
+        # off, 'soon' restarted the camera pipeline for nothing)
+        self.declare_parameter('expect_vo', True)
+        self.declare_parameter('expect_nvblox', True)
         self.declare_parameter('gpu_reboot_within_s', 900.0)   # a GPU dead later than this is not the boot bug
         self.declare_parameter('announce', 'failures')         # failures | all | none
         self.declare_parameter('act', True)                    # false: watch and report only
@@ -208,6 +213,9 @@ class Watchdog(Node):
         self.topics = {}                 # topic -> (hz, age) from topic_watch
         self.topics_at = 0.0
         self.items = {k: Item(k, v[0], v[6], v[4], v[5]) for k, v in TOPICS.items()}
+        for key, flag in (('vo', bool(p('expect_vo'))), ('nvblox', bool(p('expect_nvblox')))):
+            if not flag:
+                self.items[key].need = 'seen'
         self.http_items = {k: Item(k, k, v[1]) for k, v in HTTP.items()}
         self.node_items = {n: Item(n, NODE_LABELS.get(n, n.replace('_', ' ')), []) for n in NODES}
         self.node_seen = {}
@@ -288,7 +296,8 @@ class Watchdog(Node):
                 self._bad(self.node_items['topic_watch'], 'no summary from topic_watch', act=False)
             return
         for key, item in self.items.items():
-            label, topic, stale, min_hz, need, depends, _ = TOPICS[key]
+            label, topic, stale, min_hz, _need, depends, _ = TOPICS[key]
+            need = item.need
             hz, age = self.topics.get(topic, (0.0, -1.0))
             if age >= 0:
                 item.seen = True
@@ -475,17 +484,7 @@ class Watchdog(Node):
                 up = float(f.read().split()[0])
         except (OSError, ValueError):
             up = float('inf')
-        why = ''
-        if not self.act:
-            why = 'acting is switched off'
-        elif up > self.gpu_reboot_within:
-            why = 'it stopped long after boot'
-        elif os.path.exists(self.gpu_flag):
-            why = 'a reboot for it already did not help'
-        elif self.slam_active:
-            why = 'mapping is running'
-        elif time.monotonic() - self.last_move < 60.0:
-            why = 'she is driving'
+        why = self._gpu_reboot_blocker(up, first=True)
         if why:
             if why != self.gpu_hold:
                 self.gpu_hold = why
@@ -502,7 +501,46 @@ class Watchdog(Node):
         item.note = 'failed to start; rebooting'
         self._event('act', item.label, 'rebooting in 20 s: nothing else brings it back')
         self._announce("My graphics processor didn't start. Restarting myself to fix it.", 'hm')
-        threading.Timer(20.0, self._run, args=(['sudo', '-n', 'systemctl', 'reboot'],)).start()
+        threading.Timer(20.0, self._gpu_reboot_fire).start()
+
+    def _gpu_reboot_blocker(self, up: float, first: bool) -> str:
+        """Why not to reboot for the GPU right now ('' = go ahead)."""
+        if not self.act:
+            return 'acting is switched off'
+        if up > self.gpu_reboot_within:
+            return 'it stopped long after boot'
+        if first and os.path.exists(self.gpu_flag):
+            return 'a reboot for it already did not help'
+        if self.slam_active:
+            return 'mapping is running'
+        if time.monotonic() - self.last_move < 60.0:
+            return 'she is driving'
+        return ''
+
+    def _gpu_reboot_fire(self) -> None:
+        """The 20 s are up: check everything again first (review 2026-09-26: driving
+        or mapping that began during the countdown used to be ignored)."""
+        try:
+            with open('/proc/uptime') as f:
+                up = float(f.read().split()[0])
+        except (OSError, ValueError):
+            up = float('inf')
+        why = self._gpu_reboot_blocker(up, first=False)
+        try:
+            if len(os.listdir('/dev/nvgpu/igpu0')) >= 5:
+                why = 'the GPU came back'
+        except OSError:
+            pass
+        if why:
+            self.gpu_rebooting = False
+            try:
+                os.remove(self.gpu_flag)
+            except OSError:
+                pass
+            self._event('gave_up', 'graphics processor', f'reboot cancelled: {why}')
+            return
+        self._event('act', 'graphics processor', 'rebooting now')
+        self._run(['sudo', '-n', 'systemctl', 'reboot'])
 
     # ---------------------------------------------------------------- state --
 

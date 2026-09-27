@@ -46,8 +46,18 @@ twist_mux:
 
     locks:
       # While this is true, everything is blocked and the output is zero.
-      # jetnano_teleop raises it on e-stop and when the dead-man is released.
-      e_stop:
+      # jetnano_teleop raises its own on e-stop and for a few seconds after a controller vanishes.
+      # One lock per source, so no source can cancel another's stop (2026-09-26:
+      # the joystick's stream of "false" used to clear the web page's STOP in 20 ms).
+      e_stop_web:
+        topic: e_stop_web
+        timeout: 0.0
+        priority: 255
+      e_stop_joy:
+        topic: e_stop_joy
+        timeout: 0.0
+        priority: 255
+      e_stop:                 # anything else (the battery monitor)
         topic: e_stop
         timeout: 0.0
         priority: 255
