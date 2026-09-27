@@ -24,6 +24,10 @@
 # wall and 30 % in the far zone was as good as stopped (40 % throttle does
 # not move her at all) - now 15 cm to stop and 90 % within 80 cm. Tune with
 # the robot moving, not on the bench.
+# 2026-09-27: the throttle is now calibrated (pca9685.yaml esc starts 0.327),
+# so every command above the dead band moves her and a lower slowdown_ratio
+# (0.3-0.5) would now mean really slow rather than stopped; 0.9 barely slows
+# her. Left at 0.9 until Steve has tried it on the floor.
 #
 # If a source goes quiet for longer than source_timeout, the guard stops the
 # robot: a dead lidar means driving blind, and stopping is the right answer

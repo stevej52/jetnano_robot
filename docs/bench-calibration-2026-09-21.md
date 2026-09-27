@@ -4,6 +4,14 @@ What was measured on the real robot the night it came out of storage, how,
 and what it changed. Every number here replaced a guess in the config; the
 guesses that are still guesses are listed at the end.
 
+> **Superseded since (this page is kept as the record of 2026-09-21/22):** the
+> throttle start points are now 0.327 both ways (measured on the floor on
+> 2026-09-27; the bench's 0.12 / 0.09 were far too small under load), the
+> steering homes are front 81 / rear 87 (a floor trim, 2026-09-27), the camera
+> was remounted (10.5° down, 0.191 m, 2026-09-24) and the lidar turned out to
+> be mounted backwards (`lidar_rpy` yaw π). Current values: `pca9685.yaml` and
+> the URDF; the story: the main `README.md`, "What is measured".
+
 ## Setup
 
 - The robot on a bin, **wheels off the ground**, on its own battery (a 3S

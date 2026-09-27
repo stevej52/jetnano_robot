@@ -7,8 +7,9 @@ learn whose voice is whose (below): once someone has her ear she follows that
 voice, and another voice has to say her name to cut in.
 
 She answers in English. Her system sounds - starting up, errors, the
-emergency stop, the "huh?" when she hears a clap, the long slide down as
-the very last thing before her power goes - are her own beeps.
+emergency stop, the "huh?" when she hears a clap or someone walks right up
+to her, the long slide down as the very last thing before her power goes -
+are her own beeps.
 
 ## Everyday
 
@@ -36,7 +37,8 @@ the very last thing before her power goes - are her own beeps.
 
 For when her name keeps coming up in the room, or you just want the robot
 without the conversation. These code words work only when said on their own -
-"Over and out." - not inside a longer sentence.
+"Over and out." - not inside a longer sentence. Near misses count ("rising
+shine" is what she often hears).
 
 | Say | She does |
 |---|---|
@@ -51,6 +53,21 @@ She hums up as soon as her speaker has power, about twenty seconds after
 you switch her on and well before her software is up; the three rising notes
 of her hello come when everything has started. The long slide down is the
 very last thing she does before the power goes on a shutdown (not a reboot).
+
+## Keeping watch
+
+Her lidar notices people moving while she is parked. Normally she keeps
+quiet about that and reacts - a "huh?" and, once the pan-tilt is switched on,
+a look - only when someone comes right at her: closer by most of a metre in
+a few seconds, straight towards her, and now within about 2 feet of her nose.
+
+| Say | She does |
+|---|---|
+| "Rosie, keep watch" (or "watchdog mode", "guard mode", "stand guard") | "I'm on watch." - then a "huh?" and a look for every mover |
+| "Rosie, stand down" (or "stop watching", "at ease") | "Standing down." - back to the normal quiet |
+
+She always starts in the normal mode after a restart. The clap "huh?" is
+separate and works in both.
 
 ## Thinking
 

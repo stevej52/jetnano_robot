@@ -7,12 +7,13 @@ Jetson Nano on ROS 2 Eloquent to an Orin Nano on Jazzy.
 
 | | |
 |---|---|
-| Motors | Adafruit PCA9685, ESC on ch 0, front steering ch 1, rear steering ch 2 |
+| Motors | Adafruit PCA9685: ESC ch 0, front steering ch 1, rear steering ch 2, headlight relay ch 5, camera pan ch 8, tilt ch 9 |
 | Lidar | RPLidar A1M8 |
-| Camera | Intel RealSense D435 |
+| Cameras | Intel RealSense D435 (odometry, depth, the video feed); two Raspberry-Pi-style IMX219 CSI cameras, one on the pan-tilt (streaming, not yet in ROS) |
 | IMU | BNO055 |
+| Audio | USB microphone (ALSA card `Device`) and USB speaker (card `UACDemoV10`) |
 | Odometry | visual (NVIDIA cuVSLAM on the GPU at 89 Hz, or rtabmap on the CPU) + IMU, fused by robot_localization — **no wheel encoders** |
-| Teleop | Thrustmaster HOTAS or Xbox pad, auto-detected |
+| Driving | the phone page (below); a Thrustmaster HOTAS or Xbox pad is supported by `jetnano_teleop` but not started at boot |
 
 ## Packages
 
@@ -22,6 +23,8 @@ Jetson Nano on ROS 2 Eloquent to an Orin Nano on Jazzy.
 | `jetnano_bringup` | Launch files and config that tie everything together, plus a fake-sensor rig for bench testing |
 | `jetnano_teleop` | One joystick node that detects which controller is plugged in |
 | `jetnano_navigation` | slam_toolbox and Nav2, set up for a car-like chassis |
+| `jetnano_watchdog` | `topic_watch`, a small C++ node that counts the important streams for the watchdog |
+| `jetnano_gazebo` | the Gazebo simulator (run on the host PC, `ROS_DOMAIN_ID=77`) |
 
 Setup for the machines themselves (Ubuntu 24.04 + ROS 2 Jazzy) lives in
 [robot-environment](https://github.com/stevej52/robot-environment). The
@@ -73,9 +76,14 @@ source builds.**
 ### 4. Build
 
 ```bash
-colcon build --symlink-install
+colcon build
 source install/setup.bash
 ```
+
+The robot's workspace is a plain (copy) install. Do not switch an existing
+workspace to `--symlink-install`: on 2026-09-26 a half-converted install
+made every respawning node die with `PackageNotFoundError`. Rebuild with
+`--packages-select <package>` after pulling.
 
 ### 5. Permissions
 
@@ -138,14 +146,18 @@ under it, served by the robot itself (`jetnano_teleop web_teleop`, started by
 `robot.launch.py`). Drag the knob: up and down is throttle, left and right is
 steering, further from the centre is more, and anywhere in between is the mix
 (upper right = forward and turning right). It springs back to nothing when let
-go. The slider is the throttle limit (the default caps the page at half of full
-throttle, `web_teleop.launch.py max_linear`). The page posts a command ten
+go. The slider is the throttle limit, a percentage of the page's maximum
+(`max_linear` 0.5, half of full throttle); it starts at 40 %. Measured on
+the hard floor on 2026-09-27: slider 25 % = 0.28 m/s forward / 0.21 m/s
+back, 50 % = 0.51 / 0.33, 75 % = 0.65 / 0.45 (100 % not yet measured), so
+the 40 % default is about 0.45 m/s forward. The page posts a command ten
 times a second while the knob is held and the node publishes `cmd_vel_web` only
 while those keep coming, so a closed page, a sleeping phone or a lost Wi-Fi
 link stops the robot within half a second and hands control back to Nav2. The
 EMERGENCY STOP bar across the bottom (it stays on screen when the page scrolls)
-raises the same `e_stop` lock the joystick uses, which blocks everything
-including Nav2 until it is tapped again for GO. On a laptop the arrow keys /
+raises the page's own `e_stop_web` lock (the joystick has `e_stop_joy`, so
+neither can cancel the other's stop), which blocks everything including Nav2
+until it is tapped again for GO. On a laptop the arrow keys /
 WASD (full deflection) and space do the same. No login: it is for the robot's
 own network.
 
@@ -224,15 +236,15 @@ costmap - steps, low rocks and table edges the lidar's single plane cannot
 see. Without `nvblox:=true`, `robot.launch.py` runs the odometry alone at
 89 Hz. Both are in `ros2_gpu_robot/cuvslam_d435/README.md`.
 
-`jetnano-slam.service` (add it to the `enable` line above) keeps **one
-persistent map of the house**: 20 s after the robot stack, `slam_boot.sh`
-starts slam_toolbox in `continue` mode on `~/maps/home` if that map exists,
-or `mapping` mode if it does not, autosaves it every five minutes and once
-more when the service stops. So the map grows every time the robot drives,
-and loop closure keeps correcting it. The one rule: **power the robot up in
-the same spot each time** - a continued map starts the robot at the map's
-origin, which is wherever the first session began. To start over, stop the
-service and delete `~/maps/home.*`. RViz's `nav` view shows the map; the
+`jetnano-slam.service` keeps **one persistent map of the house**. It is not
+started at boot (see above); when it is started, `slam_boot.sh` runs
+slam_toolbox in `continue` mode on `~/maps/home` if that map exists, or
+`mapping` mode if it does not, autosaves it every five minutes and once more
+when the service stops. So the map grows every time she maps, and loop
+closure keeps correcting it. The one rule: **start mapping at the parking
+spot** - a continued map starts the robot at the map's origin, which is
+wherever the first session began. To start over, stop the service and delete
+`~/maps/home.*`. RViz's `nav` view shows the map; the
 `drive` view draws it too, under the lidar.
 
 Stopping or restarting the service takes about 5 s: the odometry wrapper
@@ -258,15 +270,17 @@ needing a USB reset.
 ## How commands reach the wheels
 
 ```
-teleop    ──/cmd_vel_teleop (priority 100)──┐
-web page  ──/cmd_vel_web    (priority 90)───┼─ twist_mux ──/cmd_vel_mux──▶ collision_guard ──/cmd_vel──▶ ros2_pca9685 ──I²C──▶ ESC + servos
-Nav2      ──/cmd_vel_nav    (priority 10)───┘        ▲                          ▲
-                                                     │                    /scan, nvblox points
-                  /e_stop_web, /e_stop_joy ───┘  (locks, priority 255: any one stops her)
+tilt_guard ──/cmd_vel_tilt  (priority 150)──┐
+teleop     ──/cmd_vel_teleop (priority 100)─┤
+web page   ──/cmd_vel_web    (priority 90)──┼─ twist_mux ──/cmd_vel_mux──▶ collision_guard ──/cmd_vel──▶ ros2_pca9685 ──I²C──▶ ESC + servos
+Nav2       ──/cmd_vel_nav    (priority 10)──┤        ▲                          ▲
+settle     ──/cmd_vel_settle (priority 5)───┘        │                    /scan, nvblox points
+       /e_stop_web, /e_stop_joy, /e_stop ────────────┘  (locks, priority 255: any one stops her)
 ```
 
-(`tilt_guard` also has an input, `cmd_vel_tilt` at priority 150, that it uses
-only while backing the robot off a tilt.)
+`tilt_guard` uses its input only while backing the robot off a tilt; `settle`
+only for a small steering wiggle after a stop, when her microphone hears a
+steering servo buzzing (below). `/e_stop` is the battery monitor's.
 
 ### Recording a drive
 
@@ -294,9 +308,18 @@ instead of only inside Nav2's own chain. It looks at the lidar and, with
 `nvblox:=true`, at the camera's 3D map (`grid_to_points` turns nvblox's grid
 into points), in the direction of the commanded throttle:
 
-- anything within **30 cm** of the bumper ahead (or behind, when reversing):
+- anything within **15 cm** of the bumper ahead (or behind, when reversing):
   the command becomes zero - the robot will not drive into it;
-- anything within **80 cm**: the command is scaled to 30 %.
+- anything within about **80 cm** ahead (60 cm behind): the command is
+  scaled to 90 %.
+
+Steve set these on 2026-09-25 after the first drives: the original 30 cm
+stop kept him away from everything, and the original slow-down to 30 % was
+as good as a stop, because back then 40 % throttle did not move her at all.
+Since the throttle calibration of 2026-09-27 (`pca9685.yaml`, the ESC's
+start points) every command above the dead band moves her, so a slow-down
+to 30-50 % would now really mean slow, and 90 % barely slows her. The ratio
+is `slowdown_ratio` in `config/collision_guard.yaml`; tune it on the floor.
 
 The web page says "blocked: obstacle" / "slowed: obstacle near" while this is
 happening, and has an ON/OFF switch for it: OFF sets the zones' `enabled`
@@ -307,13 +330,14 @@ for a second the guard stops the robot, like the tilt guard does without its
 IMU; it also needs the EKF's `odom → base_footprint` transform to place the
 scans, so without odometry nothing drives (the guard says "invalid source").
 `guard:=false` on `drive.launch.py` wires twist_mux straight to the driver for
-bench work without it. The distances are guesses in throttle units until the
-robot has been driven; tune them on the floor, not the bench.
+bench work without it. The zones are measured from the robot's centre, and
+the body box they assume is still an estimate; tune them on the floor, not
+the bench.
 
-For this to work the lidar must not see the robot: it does - the front-left
-Wi-Fi antenna, 25 cm away, every turn - so `sensors.launch.py` runs the raw
-scan through a `laser_filters` box filter (`config/scan_filter.yaml`) and
-publishes the result as `/scan`; the driver's own output is `/scan_raw`.
+For this to work the lidar must not see the robot itself (it did: a Wi-Fi
+antenna 25 cm away, every turn), so `sensors.launch.py` runs the raw scan
+through a `laser_filters` box filter around the body (`config/scan_filter.yaml`)
+and publishes the result as `/scan`; the driver's own output is `/scan_raw`.
 
 Three rules hold this together, and each was a bug before it was a rule:
 
@@ -322,8 +346,10 @@ Three rules hold this together, and each was a bug before it was a rule:
 2. **Nav2 never publishes to `/cmd_vel`.** Its outputs are remapped to
    `cmd_vel_nav_raw` and `cmd_vel_nav`, so it cannot bypass twist_mux — which
    would mean bypassing the joystick override and the e-stop.
-3. **Only the EKF publishes `odom → base_footprint`.** `rgbd_odometry` runs
-   with `publish_tf:=false` and feeds it as a measurement on `/vo`.
+3. **Only the EKF publishes `odom → base_footprint`.** The visual odometry
+   (cuVSLAM in the container, or `rgbd_odometry` on the CPU) publishes no
+   transform and feeds the EKF as a measurement on `/vo` - velocities only,
+   so a restart of the odometry cannot yank the robot's position.
 
 Tested in simulate mode: teleop overrides Nav2 mid-run and Nav2 resumes when
 teleop lets go; the e-stop lock blocks a full-throttle command; every channel
@@ -338,13 +364,15 @@ and the full rebuild in robot-environment `REBUILD.md`.
 | Node | What it does |
 |---|---|
 | `ears` | owns the USB mic (ALSA card `Device`): the room's level on `sound/level`, the raw audio on `sound/audio`, "huh?" at a clap |
-| `listen` | speech detection and speech-to-text on the CPU (sherpa-onnx, Moonshine); decides what was meant; her name wakes her, a conversation then runs without it |
+| `listen` | speech detection and speech-to-text on the CPU (sherpa-onnx, Moonshine); decides what was meant; her name wakes her, a conversation then runs without it; knows voices apart (`speaker.py`, WeSpeaker via sherpa-onnx) |
+| `motion_watch` | the lidar sees someone move while she is parked: by default she reacts only to someone coming right at her; "Rosie, keep watch" turns on watchdog mode (a "huh?" and a look at every mover), "Rosie, stand down" turns it off. Aims the pan-tilt only with `aim:=true` |
+| `settle` | listens for the front steering servo buzzing after a stop (a tone near 1.6 kHz) and wiggles the steering a few degrees until it is quiet |
 | `brain` | answers: small talk on the local model upstairs (llama.cpp, Qwen 2.5 14B), everything real handed to Claude Opus 5.5; "think hard" gets full thinking; a daily budget |
 | `speak` | text to her English voice (Piper), sentence by sentence, cached |
 | `sounds` | plays everything on the USB speaker (card `UACDemoV10`), one sound at a time; `mute` |
 | `health` (in listen) | her real status for "how are you" and the spoken report |
 | `topic_watch` (jetnano_watchdog, C++) | a cheap live count of the important streams |
-| `watchdog` | restarts whatever goes silent, step by step and within limits; shows problems on the driving page; `~/watchdog/events.jsonl` |
+| `watchdog` | restarts whatever goes silent, step by step and within limits; shows problems on the driving page; `~/watchdog/events.jsonl`; checks the GPU every 30 s and, if it failed to start at boot, reboots her once (never while driving or mapping) |
 
 Her voice nodes run in `~/venv-voice` (robot-environment
 `scripts/install_voice.sh`); the Claude key sits in
@@ -429,8 +457,12 @@ sensors were brought up on the Orin on 2026-09-22 - see
 [docs/bench-calibration-2026-09-21.md](docs/bench-calibration-2026-09-21.md)
 for the methods, the numbers and the lessons. **Measured**: the ESC's
 neutral (1375 us - it runs the opposite of RC convention, shorter is
-forward), both throttle endpoints, the steering centre (84) and limits
-(40-125), the rear mirror and the twist signs (all in `pca9685.yaml`); the
+forward), both throttle endpoints, the steering limits (40-125), the rear
+mirror and the twist signs; on the floor on 2026-09-27, the throttle start
+points (she first rolls at 0.337 output both ways; `throttle_calibration`),
+the speeds above and the steering trim (front 81 / rear 87, straight within
+the linkage's play, about ±4°/m) - all in `pca9685.yaml`; the pan-tilt's
+centre and reach (pan 1425 µs dead ahead, both servos run backwards); the
 I2C bus and both addresses; the lidar's zero (the nose) and direction
 (counter-clockwise); the camera's orientation (upright); and the IMU's
 mount - upside down, turned 90 degrees, 10 degrees of bracket tilt -
@@ -447,9 +479,10 @@ Still guesses:
 - **`minimum_turning_radius: 0.30`** (`nav2.yaml`): geometry gives 0.29 m for
   both axles at 30 deg, but tyre scrub on a crawler makes the real figure
   larger. Drive a full-lock circle and measure it.
-- **Throttle to ground speed**: `cmd_vel` is not in m/s until a taped-out run
-  is timed. **Servo to wheel angle**: the `-18.33` gain is a guess until a
-  protractor meets a tyre.
+- **Throttle to ground speed**: measured at 25/50/75 % of the page (above),
+  not at 100 %, and `cmd_vel` is still a throttle fraction, not m/s.
+  **Servo to wheel angle**: the `-18.33` gain is a guess until a protractor
+  meets a tyre.
 - **Joystick axis and button numbers** (`joysticks.yaml`): run
   `ros2 run jetnano_teleop list_devices --watch` and replace them with what
   you actually see.
