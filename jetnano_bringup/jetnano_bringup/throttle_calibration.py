@@ -191,6 +191,33 @@ class Calibrate(Node):
             raise Abort(f'not enough room {"ahead" if direction > 0 else "behind"}: {c:.2f} m, '
                         f'needs {self.clear_m} m')
 
+    def make_room(self, direction: int, output: float):
+        """Not enough floor in ``direction`` for the runs: drive the other way,
+        gently (the start point just found plus a little), until there is -
+        only while the lidar shows room that way (Steve, 2026-09-26: 3.4 m
+        ahead, 0.65 m behind at her parking spot)."""
+        need = self.clear_m + 0.3
+        other = -direction
+        if self.clearance(direction) >= need:
+            return
+        if self.clearance(other) < self.clear_m:
+            raise Abort(f'no room to make room: {self.clearance(direction):.2f} m '
+                        f'{"behind" if direction < 0 else "ahead"} and {self.clearance(other):.2f} m the other way')
+        print(f'making room {"behind" if direction < 0 else "ahead"}: driving '
+              f'{"forward" if other > 0 else "backward"} a little')
+        cmd = DEADBAND + min(0.6, output + 0.05) * (1.0 - DEADBAND)   # starts are 0: output = shaped command
+        x0, y0 = self.x, self.y
+        self.cmd = other * cmd
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < 15.0:
+            self.check(other, moving=True)
+            if (self.clearance(direction) >= need or self.clearance(other) < self.clear_m
+                    or math.hypot(self.x - x0, self.y - y0) > 2.5):
+                break
+            time.sleep(0.05)
+        self.stop_and_settle(other)
+        print(f'room now: {self.clearance(1):.2f} m ahead, {self.clearance(-1):.2f} m behind')
+
     def find_start(self, direction: int) -> float:
         """Creep up from standstill until she moves; returns the output fraction."""
         self.ready(direction)
@@ -245,10 +272,15 @@ class Calibrate(Node):
         new = old
         try:
             self.set_starts(0.0, 0.0)
-            fwd = self.find_start(+1)
-            print(f'forward: moves at output {fwd:.3f}')
-            back = self.find_start(-1)
-            print(f'backward: moves at output {back:.3f}')
+            # creep the way with more room first, then use that start point to
+            # make room the other way if it is short
+            first = 1 if self.clearance(1) >= self.clearance(-1) else -1
+            starts = {first: self.find_start(first)}
+            print(f'{"forward" if first > 0 else "backward"}: moves at output {starts[first]:.3f}')
+            self.make_room(-first, starts[first])
+            starts[-first] = self.find_start(-first)
+            print(f'{"forward" if first < 0 else "backward"}: moves at output {starts[-first]:.3f}')
+            fwd, back = starts[1], starts[-1]
             new = (round(max(0.0, fwd - 0.01), 3), round(max(0.0, back - 0.01), 3))
             self.set_starts(*new)
             print(f'new start points: forward {new[0]}, backward {new[1]}')
@@ -300,9 +332,13 @@ def main(args=None):
     finally:
         node.cmd = 0.0
         time.sleep(0.3)
-        node.destroy_node()
         if rclpy.ok():
-            rclpy.shutdown()
+            rclpy.shutdown()        # end the spin thread first: destroying the node under it aborted the process
+        spin.join(timeout=2.0)
+        try:
+            node.destroy_node()
+        except Exception:      # noqa: BLE001 - already shut down
+            pass
     sys.exit(code)
 
 
