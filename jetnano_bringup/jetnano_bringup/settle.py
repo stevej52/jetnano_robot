@@ -62,6 +62,9 @@ class Settle(Node):
         self.reported = True
         self.plan: list[float] = []
         self.step_timer = None
+        self.talking = False                    # someone speaking (listen), or her own voice
+        self.speaking = False
+        self.hush_until = 0.0                   # ... and a second after, or after a bang
 
         self.buzz_pub = self.create_publisher(Float32, 'steering/buzz', 10)
         self.cmd_pub = self.create_publisher(Twist, 'cmd_vel_settle', 10)
@@ -69,6 +72,11 @@ class Settle(Node):
         self.create_subscription(Twist, 'cmd_vel', self._on_cmd, 10)
         for topic in self.locked:
             self.create_subscription(Bool, topic, self._on_lock(topic), 10)
+        # Voices and bangs have energy in the buzz band too: on 2026-09-27 people
+        # talking beside her set off four wiggles in a minute with no buzz at all.
+        self.create_subscription(Bool, 'speech/active', self._on_talking, 10)
+        self.create_subscription(Bool, 'sound/speaking', self._on_speaking, 10)
+        self.create_subscription(Bool, 'sound/loud', self._on_loud, 10)
         self.get_logger().info(
             f'listening for steering buzz at {lo:g}-{hi:g} Hz over {self.get_parameter("buzz_db").value:g} dB; '
             f'wiggles {", ".join(f"{d:g}" for d in self.get_parameter("wiggle_deg").value)} deg')
@@ -81,6 +89,20 @@ class Settle(Node):
         def callback(msg: Bool) -> None:
             self.locked[topic] = msg.data
         return callback
+
+    def _on_talking(self, msg: Bool) -> None:
+        if self.talking and not msg.data:
+            self.hush_until = self._now() + 1.0
+        self.talking = msg.data
+
+    def _on_speaking(self, msg: Bool) -> None:
+        if self.speaking and not msg.data:
+            self.hush_until = self._now() + 1.0
+        self.speaking = msg.data
+
+    def _on_loud(self, msg: Bool) -> None:
+        if msg.data:
+            self.hush_until = self._now() + 1.0
 
     def _on_cmd(self, msg: Twist) -> None:
         if self.plan or self.step_timer is not None:
@@ -109,6 +131,9 @@ class Settle(Node):
         self.buzz_pub.publish(Float32(data=buzz))
         if self.step_timer is not None or self._now() < self.quiet_from:
             self.recent.clear()                             # her own motion is not a buzz
+            return
+        if self.talking or self.speaking or self._now() < self.hush_until:
+            self.recent.clear()                             # a voice or a bang is not a buzz
             return
         windows = int(self.get_parameter('windows').value)
         self.recent = (self.recent + [buzz])[-windows:]

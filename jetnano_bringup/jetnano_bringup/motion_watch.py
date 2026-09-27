@@ -131,7 +131,10 @@ class MotionWatch(Node):
     # ---------------------------------------------------------------- input --
 
     def _on_cmd(self, msg: Twist) -> None:
-        if msg.linear.x != 0.0 or msg.angular.z != 0.0:
+        # Only throttle moves her. Steering alone (the settle node's wiggle after
+        # a stop) turns the wheels in place; counting it as motion made her forget
+        # the room and greet the same people with a fresh "huh" (2026-09-27).
+        if msg.linear.x != 0.0 or msg.linear.y != 0.0:
             self.last_cmd = time.monotonic()
 
     def _still(self) -> bool:
