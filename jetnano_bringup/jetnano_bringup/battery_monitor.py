@@ -123,7 +123,14 @@ class BatteryMonitor(Node):
             self.bus = None
             now = time.monotonic()
             if now - self._last_error > 30:
-                self.get_logger().warning(f'no INA219 at 0x{self.address:02x}: {exc} (retrying)')
+                # the first time a warning, then a quiet note every 10 min: the board
+                # may simply not be fitted yet (2026-09-27: 165 warnings in 80 minutes)
+                if not self._last_error:
+                    self.get_logger().warning(f'no INA219 at 0x{self.address:02x}: {exc} (retrying quietly)')
+                elif now - self._last_error > 600:
+                    self.get_logger().info(f'still no INA219 at 0x{self.address:02x}')
+                else:
+                    return False
                 self._last_error = now
             return False
 

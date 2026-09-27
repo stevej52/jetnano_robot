@@ -151,12 +151,14 @@
   // the link is slow and climbs back only after five clean seconds. Full is
   // reached only on a very fast link (the house Wi-Fi); over the road AUTO
   // tops out at low.
-  var host = 'http://' + location.hostname + ':8080';
+  // The robot's own relay (jetnano_bringup csi_cameras, port 8082) since 2026-09-27:
+  // NVIDIA's web_video_server on 8080 hung under the snapshot fallback.
+  var host = 'http://' + location.hostname + ':8082';
   var LEVELS = {
-    full: { stream: '&type=ros_compressed', note: '640x480 at 30 fps, ~18 Mbit/s - good Wi-Fi only' },
-    low:  { stream: '&type=mjpeg&width=320&height=240&quality=50', note: '320x240, ~2 Mbit/s' },
-    tiny: { stream: '&type=mjpeg&width=160&height=120&quality=30', note: '160x120, ~0.7 Mbit/s' },
-    min:  { snapshot: '&width=160&height=120&quality=30', note: 'one small picture a second' }
+    full: { stream: '/d435.mjpg?fps=30', note: '640x480 at 30 fps, ~12 Mbit/s - good Wi-Fi only' },
+    low:  { stream: '/d435.mjpg?fps=12&w=320&q=50', note: '320x240 at 12 fps, ~1.5 Mbit/s' },
+    tiny: { stream: '/d435.mjpg?fps=6&w=160&q=35', note: '160x120 at 6 fps, ~0.3 Mbit/s' },
+    min:  { snapshot: '/d435.jpg?w=160&q=35', note: 'one small picture a second' }
   };
   var AUTO_ORDER = ['full', 'low', 'tiny', 'min'];
   // ms; above the last one -> min. Full only on a link that answers in tens of
@@ -192,10 +194,10 @@
     level = next;
     if (snapshotTimer) { clearInterval(snapshotTimer); snapshotTimer = null; }
     if (LEVELS[next].snapshot) {
-      var snap = function () { video.src = host + '/snapshot?topic=/camera/color/image_raw' + LEVELS[next].snapshot + '&t=' + Date.now(); };
+      var snap = function () { video.src = host + LEVELS[next].snapshot + '&t=' + Date.now(); };
       snap(); snapshotTimer = setInterval(snap, 1000);
     } else {
-      video.src = host + '/stream?topic=/camera/color/image_raw' + LEVELS[next].stream + '&t=' + Date.now();
+      video.src = host + LEVELS[next].stream + '&t=' + Date.now();
     }
     showQuality();
   }

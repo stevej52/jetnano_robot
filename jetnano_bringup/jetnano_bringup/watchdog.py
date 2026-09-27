@@ -149,7 +149,10 @@ NODE_LABELS = {'pca9685': 'motor driver', 'twist_mux': 'command mixer', 'collisi
 
 HTTP = {
     'web page': ('http://127.0.0.1:8081/status', [('signal', proc('jetnano_teleop/web_teleop'), 12.0)]),
-    'video': ('http://127.0.0.1:8080/', [('container_pkill', 'web_video_server', 20.0)]),
+    # the browsers' video (all three cameras) since 2026-09-27; NVIDIA's web_video_server on
+    # 8080 is no longer on their path (it hung under load and ignored SIGINT)
+    'video': ('http://127.0.0.1:8082/', [('signal', proc('jetnano_bringup/csi_cameras'), 15.0),
+                                         ('signal', proc('jetnano_bringup/csi_cameras'), 30.0)]),
 }
 
 GIVE_UP_HINT = {

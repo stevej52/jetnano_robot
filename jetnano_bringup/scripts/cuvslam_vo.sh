@@ -45,6 +45,8 @@ else
     LAUNCH=/workspaces/isaac_ros-dev/cuvslam_d435_stereo.launch.py
     SOURCE_WS=''
 fi
+# web_video:=false: browsers get the camera from jetnano_bringup csi_cameras (:8082) since
+# 2026-09-27; web_video_server hung under load, spinning 76 % of a core on stuck connections.
 DDS_PROFILE=/workspaces/isaac_ros-dev/fastdds_udp_only.xml
 DOMAIN=${ROS_DOMAIN_ID:-0}
 
@@ -139,9 +141,9 @@ trap 'stop; exit 0' INT TERM
 
 say "starting $(basename "${LAUNCH}" .launch.py) in ${CONTAINER}: IR ${PROFILE}, jitter ${JITTER} ms, base_frame ${BASE_FRAME}, nvblox ${NVBLOX}, ROS_DOMAIN_ID ${DOMAIN}"
 if [ "${NVBLOX}" = "true" ] || [ "${NVBLOX}" = "1" ]; then
-    LAUNCH_ARGS="profile:=${PROFILE} image_jitter_threshold_ms:=${JITTER} base_frame:=${BASE_FRAME}"
+    LAUNCH_ARGS="profile:=${PROFILE} image_jitter_threshold_ms:=${JITTER} base_frame:=${BASE_FRAME} web_video:=false"
 else
-    LAUNCH_ARGS="infra_profile:=${PROFILE} emitter:=0 image_jitter_threshold_ms:=${JITTER} base_frame:=${BASE_FRAME}"
+    LAUNCH_ARGS="infra_profile:=${PROFILE} emitter:=0 image_jitter_threshold_ms:=${JITTER} base_frame:=${BASE_FRAME} web_video:=false"
 fi
 docker exec -u root \
     -e FASTRTPS_DEFAULT_PROFILES_FILE="${DDS_PROFILE}" -e ROS_DOMAIN_ID="${DOMAIN}" \
