@@ -129,8 +129,8 @@ NEWS = (
 # nothing and says nothing in English; her own sounds (hello, the clap's huh,
 # alarms) carry on (Steve, 2026-09-26). They count only as the entire
 # utterance, fillers aside.
-VOICE_OFF = ('over and out',)
-VOICE_ON = ('rise and shine',)
+VOICE_OFF = ('over and out', 'over and how', 'over an out')
+VOICE_ON = ('rise and shine', 'rising shine', 'rise n shine', 'rise and shine rosie', 'rise in shine')
 FILLERS = {'um', 'uh', 'erm', 'hmm', 'okay', 'ok', 'so', 'hey', 'alright', 'now', 'please', 'rosie'}
 VOICE_OFF_FLAG = os.path.expanduser('~/voice/voice_off')
 
