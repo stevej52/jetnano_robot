@@ -67,8 +67,10 @@ class Ears(Node):
         # a foam pad six inches out and Steve found it "considerably more
         # sensitive": one more notch, 20 dB over the room and above -27. Room
         # floor there -43.5 dBFS (-50.5 above 100 Hz).
-        self.declare_parameter('loud_above_db', 20.0)
-        self.declare_parameter('loud_min_dbfs', -27.0)
+        # 2026-09-26 Steve: still a touch too sensitive, 5 % less - 20 -> 21 dB over
+        # the background and -27 -> -26 dBFS (the mic moved onto foam on the 25th)
+        self.declare_parameter('loud_above_db', 21.0)
+        self.declare_parameter('loud_min_dbfs', -26.0)
         self.declare_parameter('still_after_s', 2.0)
         self.declare_parameter('say_min_gap_s', 6.0)
         # Steve, 2026-09-25: an instant reply is too fast - "a clap, then a
