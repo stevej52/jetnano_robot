@@ -86,6 +86,7 @@ class Calibrate(Node):
         self.x = self.y = 0.0
         self.odom_at = 0.0
         self.scan = None
+        self.scans = []
         self.e_stop = False
         self.guard_stop = False
         self.cmd = 0.0
@@ -108,6 +109,9 @@ class Calibrate(Node):
 
     def _on_scan(self, msg):
         self.scan = msg
+        self.scans.append(msg)          # the last ~1 s: her tail blinds part of the rear
+        if len(self.scans) > 8:         # view, so one scan can read clear when it is not
+            self.scans.pop(0)
 
     def _on_guard(self, msg):
         self.guard_stop = msg.action_type == CollisionMonitorState.STOP
@@ -120,18 +124,18 @@ class Calibrate(Node):
     def clearance(self, direction: int) -> float:
         """Nearest lidar return within +-15 deg of the direction of travel,
         in base_link (the lidar is mounted backwards: yaw pi)."""
-        s = self.scan
-        if s is None:
+        if not self.scans:
             return 0.0
         best = math.inf
-        for i, r in enumerate(s.ranges):
-            if not (s.range_min < r < s.range_max):
-                continue
-            a = s.angle_min + i * s.angle_increment + math.pi        # into the robot's frame
-            a = math.atan2(math.sin(a), math.cos(a))
-            ahead = a if direction > 0 else math.atan2(math.sin(a - math.pi), math.cos(a - math.pi))
-            if abs(ahead) <= math.radians(15):
-                best = min(best, r)
+        for s in list(self.scans):                                    # worst case over the last second
+            for i, r in enumerate(s.ranges):
+                if not (s.range_min < r < s.range_max):
+                    continue
+                a = s.angle_min + i * s.angle_increment + math.pi    # into the robot's frame
+                a = math.atan2(math.sin(a), math.cos(a))
+                ahead = a if direction > 0 else math.atan2(math.sin(a - math.pi), math.cos(a - math.pi))
+                if abs(ahead) <= math.radians(15):
+                    best = min(best, r)
         return best
 
     # ---------------------------------------------------------- parameters --
