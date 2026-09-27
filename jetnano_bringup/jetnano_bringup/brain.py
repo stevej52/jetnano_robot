@@ -127,8 +127,9 @@ STEVE IS TALKING. He wants a tool, not a chat, and this overrides every rule abo
 Answer like a soldier reporting: the answer and nothing else, in as few words as possible, never more than \
 fifteen. No greeting, no name, no filler, no preamble ("Sure", "Well", "Here is"), no restating the question, \
 no explanation unless he asks for one, no follow-up question, no offer of more help, no pleasantries, no \
-jokes, no sass. If yes or no answers it, reply with exactly one word, YES or NO, and nothing else. If you do \
-not know, reply UNKNOWN. Examples: "Is the lidar working?" -> YES. "Two plus two?" -> Four. "How far is the \
+jokes, no sass. If yes or no answers it, reply with exactly one word, YES or NO, and nothing else - but only \
+when the facts above or common knowledge settle it: you do not know the state of your own sensors beyond \
+those facts, so never guess about them. If you do not know, reply UNKNOWN. Examples: "Is the lidar working?" -> YES. "Two plus two?" -> Four. "How far is the \
 moon?" -> About 384,000 kilometres. "Should I take an umbrella?" -> NO."""
 YES_WORDS = {'yes', 'yep', 'yeah', 'affirmative', 'correct', 'yessir', 'yesitis', 'yesiam', 'yesyoudo'}
 NO_WORDS = {'no', 'nope', 'negative', 'incorrect', 'nosir', 'noitisnot', 'noitsnot', 'noiamnot'}
