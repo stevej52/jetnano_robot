@@ -136,13 +136,17 @@ VOICE_OFF_FLAG = os.path.expanduser('~/voice/voice_off')
 
 
 def code_word(text: str):
-    """'off', 'on' or None - only when the code word is all that was said."""
+    """'off', 'on' or None - only when the code word is all that was said.
+    Near misses count: the recognizer makes "rising shine" or "rise in shine"
+    of it (2026-09-27, Steve said it three times to a deaf robot)."""
     words = [w for w in normalize(text).split() if w not in FILLERS]
     said = ' '.join(words)
-    if said in VOICE_OFF:
-        return 'off'
-    if said in VOICE_ON:
-        return 'on'
+    if not said:
+        return None
+    for phrases, answer in ((VOICE_OFF, 'off'), (VOICE_ON, 'on')):
+        for phrase in phrases:
+            if said == phrase or difflib.SequenceMatcher(None, said, phrase).ratio() >= 0.8:
+                return answer
     return None
 
 
@@ -671,6 +675,8 @@ def _node_main(args):
                 text = transcribe(self.recognizer, samples)
                 if text and code_word(text) == 'on':
                     self._voice(True, text)
+                elif text:
+                    self.get_logger().info(f'talking is off; heard "{text[:60]}" and let it pass')
                 return
             # level as it came off the mic, before the boost
             rms = float(np.sqrt(np.mean(samples * samples))) / self.gain if len(samples) else 0.0
