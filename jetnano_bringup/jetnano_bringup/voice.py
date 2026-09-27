@@ -181,14 +181,16 @@ def sleepy(j):
 
 
 def on(j):
-    """Power arriving: a low hum that climbs, brightening, into a clear note
-    with a small lift - the mirror of ``off`` (Steve, 2026-09-26)."""
+    """Power arriving: one smooth climb from low to high, brightening as it
+    goes, and at the top three short beeps - "I'm online" (Steve, 2026-09-26:
+    nice and smooth, no stop at the end, then beep beep beep)."""
     k = 2 ** (j / 12)
-    return np.concatenate([tone(glide(BASE * k * 0.3, BASE * k * 1.4, 0.7), 1.1, vibrato_hz=2.5,
-                                vibrato_depth=0.03, bright=0.25),
-                           rest(0.04),
-                           tone(glide(BASE * k * 1.5, BASE * k * 1.7, 0.5), 0.3, vibrato_hz=4.5,
-                                vibrato_depth=0.02, bright=0.5)])
+    top = BASE * k * 1.6
+    beep = tone(flat(top), 0.09, vibrato_depth=0.0, bright=0.5)
+    gap = rest(0.07)
+    return np.concatenate([tone(glide(BASE * k * 0.3, top, 0.8), 1.25, vibrato_hz=2.5, vibrato_depth=0.02,
+                                bright=0.35),
+                           beep, gap, beep, gap, beep])
 
 
 def off(j):
