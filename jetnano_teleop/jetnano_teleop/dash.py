@@ -32,9 +32,10 @@ Nothing here is needed for driving: a failure only blanks a tile.
 
 Cost: standing Python subscriptions to fast streams are expensive (a first
 version cost 64 % of a core, 2026-09-27), so the lidar, the camera's cloud, the
-odometry and /tf are subscribed only while a dashboard has asked for data in the
-last ``LIVE_S`` seconds, and read with numpy. The map pose comes from
-slam_toolbox's map->odom on /tf and the EKF's odom pose, not a tf2 buffer.
+odometry are subscribed only while a dashboard has asked for data in the last
+``LIVE_S`` seconds, and read with numpy. The map pose comes from slam_toolbox's
+own ``/pose`` (published when it matches a scan) carried forward with the EKF,
+not from /tf (90 Hz - too dear to read in Python for a picture).
 """
 
 from __future__ import annotations
@@ -59,7 +60,7 @@ try:
     from sensor_msgs_py import point_cloud2 as pc2
 except ImportError:  # pragma: no cover
     pc2 = None
-from tf2_msgs.msg import TFMessage
+from geometry_msgs.msg import PoseWithCovarianceStamped
 
 LOCKS = ('e_stop', 'e_stop_web', 'e_stop_joy', 'e_stop_motion')
 LIVE_S = 6.0            # keep the fast subscriptions this long after the last dashboard poll
@@ -128,7 +129,8 @@ class Dashboard:
         sub(Float32, 'sound/level', lambda m: setattr(self, 'level', round(m.data, 1)), 10)
         sub(Float32, 'steering/buzz', lambda m: setattr(self, 'buzz', round(m.data, 1)), 10)
         sub(OccupancyGrid, 'map', self._on_map, LATCHED)
-        self.map_odom = None                 # slam_toolbox's map -> odom (x, y, yaw)
+        self.map_odom = None                 # map -> odom (x, y, yaw), from slam_toolbox's /pose
+        self.odom_hist = deque(maxlen=120)   # (stamp, x, y, yaw) of the EKF, ~4 s
         self.polled = 0.0                    # last dashboard request
         self.live = []                       # the fast subscriptions, while watched
         node.create_timer(2.0, self._system)
@@ -142,7 +144,7 @@ class Dashboard:
             self.live = [sub(Odometry, 'odometry/filtered', self._on_odom, 5),
                          sub(LaserScan, 'scan', self._on_scan, qos_profile_sensor_data),
                          sub(PointCloud2, '/nvblox_node/obstacle_points', self._on_points, 1),
-                         sub(TFMessage, '/tf', self._on_tf, 20)]
+                         sub(PoseWithCovarianceStamped, '/pose', self._on_pose, 5)]
             self.node.get_logger().info('dashboard: someone is watching, following the sensors')
         elif not watched and self.live:
             for handle in self.live:
@@ -150,11 +152,17 @@ class Dashboard:
             self.live = []
             self.node.get_logger().info('dashboard: nobody watching, sensors dropped')
 
-    def _on_tf(self, msg) -> None:
-        for t in msg.transforms:
-            if t.header.frame_id == 'map' and t.child_frame_id == 'odom':
-                tr = t.transform
-                self.map_odom = (tr.translation.x, tr.translation.y, _yaw(tr.rotation))
+    def _on_pose(self, msg) -> None:
+        """slam_toolbox's pose on the map, paired with the EKF's odom pose of the
+        same moment: that is map -> odom until the next one."""
+        t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        if not self.odom_hist:
+            return
+        _, ox, oy, oyaw = min(self.odom_hist, key=lambda h: abs(h[0] - t))
+        p = msg.pose.pose
+        yaw = _yaw(p.orientation) - oyaw
+        c, s = math.cos(yaw), math.sin(yaw)
+        self.map_odom = (p.position.x - (c * ox - s * oy), p.position.y - (s * ox + c * oy), yaw)
 
     # ------------------------------------------------------------ inputs --
     def _event(self, kind: str, text: str, attr: str | None = None) -> None:
@@ -193,6 +201,9 @@ class Dashboard:
 
     def _on_odom(self, msg) -> None:
         self.odom, self.odom_t = msg, time.monotonic()
+        p = msg.pose.pose
+        self.odom_hist.append((msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9,
+                               p.position.x, p.position.y, _yaw(p.orientation)))
 
     def _on_cmd(self, msg) -> None:
         self.cmd, self.cmd_t = (round(msg.linear.x, 3), round(msg.angular.z, 3)), time.monotonic()
