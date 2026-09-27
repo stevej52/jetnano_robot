@@ -281,12 +281,19 @@ settle     ──/cmd_vel_settle (priority 5)───┘        │            
 `tilt_guard` uses its input only while backing the robot off a tilt; `settle`
 only for a small steering wiggle after a stop, when her microphone hears a
 steering servo buzzing (below). `/e_stop` is the battery monitor's;
-`/e_stop_motion` is `motion_check`'s: if she has been told to drive for 1.5 s
+`/e_stop_motion` is the motion check's (in `safety_monitor`, below): if she has been told to drive for 1.5 s
 (a command of at least 0.08 reaching the driver) and the visual odometry has
 moved less than 4 cm - or not published at all - it stops her and says "nope",
 until every driver lets go. That is the check that was missing on 2026-09-26,
 when a blind camera reported "all fine" and she drove into the curtains. On the
-bench with the wheels in the air: `ros2 param set /motion_check enabled false`.
+bench with the wheels in the air: `ros2 param set /safety_monitor motion.enabled false`.
+
+The tilt guard, this motion check and the visual-odometry watchdog run as one
+C++ node, `jetnano_watchdog safety_monitor` (2026-09-27: as three Python nodes
+they cost ~19 % of a core, as one C++ node 3 %). Same topics, thresholds and
+behaviour; `cpp_safety:=false` on `robot.launch.py` or `drive.launch.py` brings
+back the Python originals (`tilt_guard`, `motion_check`, `vo_watchdog` in
+jetnano_bringup).
 
 ### Recording a drive
 
