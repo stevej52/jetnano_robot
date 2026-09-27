@@ -67,3 +67,9 @@ twist_mux:
         topic: e_stop
         timeout: 0.0
         priority: 255
+      # motion_check: told to drive but the odometry does not see her move
+      # (blind camera, stuck or lifted wheels); lifts when every driver lets go.
+      e_stop_motion:
+        topic: e_stop_motion
+        timeout: 0.0
+        priority: 255

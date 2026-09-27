@@ -92,12 +92,14 @@ class Calibrate(Node):
         self.cmd = 0.0
         self.create_subscription(Odometry, 'odometry/filtered', self._on_odom, qos_profile_sensor_data)
         self.create_subscription(LaserScan, 'scan', self._on_scan, qos_profile_sensor_data)
-        for topic in ('e_stop', 'e_stop_web', 'e_stop_joy'):      # one lock per source since 2026-09-26
+        for topic in ('e_stop', 'e_stop_web', 'e_stop_joy', 'e_stop_motion'):   # one lock per source
             self.create_subscription(Bool, topic, lambda m: setattr(self, 'e_stop', self.e_stop or m.data), 10)
         if CollisionMonitorState is not None:
             self.create_subscription(CollisionMonitorState, 'collision_guard/state', self._on_guard, 10)
         self.get_client = self.create_client(GetParameters, '/pca9685/get_parameters')
         self.set_client = self.create_client(SetParameters, '/pca9685/set_parameters')
+        # it creeps below the motor's start on purpose: motion_check must not call that blind
+        self.pause_pub = self.create_publisher(Bool, 'motion_check/pause', 10)
         self.create_timer(0.05, self._publish)         # 20 Hz, like a hand on the stick
 
     # ------------------------------------------------------------- inputs --
@@ -167,6 +169,7 @@ class Calibrate(Node):
 
     def check(self, direction: int, moving: bool):
         now = time.monotonic()
+        self.pause_pub.publish(Bool(data=True))
         if self.e_stop:
             raise Abort('EMERGENCY STOP pressed')
         if now - self.odom_at > 0.5:

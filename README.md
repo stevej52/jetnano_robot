@@ -275,12 +275,18 @@ teleop     ──/cmd_vel_teleop (priority 100)─┤
 web page   ──/cmd_vel_web    (priority 90)──┼─ twist_mux ──/cmd_vel_mux──▶ collision_guard ──/cmd_vel──▶ ros2_pca9685 ──I²C──▶ ESC + servos
 Nav2       ──/cmd_vel_nav    (priority 10)──┤        ▲                          ▲
 settle     ──/cmd_vel_settle (priority 5)───┘        │                    /scan, nvblox points
-       /e_stop_web, /e_stop_joy, /e_stop ────────────┘  (locks, priority 255: any one stops her)
+  /e_stop_web, /e_stop_joy, /e_stop, /e_stop_motion ┘  (locks, priority 255: any one stops her)
 ```
 
 `tilt_guard` uses its input only while backing the robot off a tilt; `settle`
 only for a small steering wiggle after a stop, when her microphone hears a
-steering servo buzzing (below). `/e_stop` is the battery monitor's.
+steering servo buzzing (below). `/e_stop` is the battery monitor's;
+`/e_stop_motion` is `motion_check`'s: if she has been told to drive for 1.5 s
+(a command of at least 0.08 reaching the driver) and the visual odometry has
+moved less than 4 cm - or not published at all - it stops her and says "nope",
+until every driver lets go. That is the check that was missing on 2026-09-26,
+when a blind camera reported "all fine" and she drove into the curtains. On the
+bench with the wheels in the air: `ros2 param set /motion_check enabled false`.
 
 ### Recording a drive
 

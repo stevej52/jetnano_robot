@@ -98,6 +98,19 @@ def generate_launch_description():
             }],
         ),
 
+        # Told to drive but the odometry does not see her move: stop (the
+        # 2026-09-26 blind-camera drive into the curtains). jetnano_bringup
+        # motion_check; its lock is e_stop_motion in twist_mux.yaml.
+        Node(
+            package='jetnano_bringup',
+            executable='motion_check',
+            name='motion_check',
+            respawn=True,
+            respawn_delay=3.0,
+            output='screen',
+            parameters=[{'use_sim_time': use_sim_time}],
+        ),
+
         # twist_mux publishes cmd_vel_out; with the guard in the chain that is
         # cmd_vel_mux, which the guard turns into cmd_vel. Without it, the
         # driver listens to twist_mux directly.
