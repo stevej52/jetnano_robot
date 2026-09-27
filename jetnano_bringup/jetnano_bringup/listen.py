@@ -187,6 +187,11 @@ SPEND_WORDS = ('how much have you spent', 'spent today', 'how much money', 'what
 # differently with him.
 LEARN_VOICE = ('learn my voice', 'remember my voice', 'learn this voice', 'this is my voice', 'memorize my voice',
                'memorise my voice')
+# Any learn/remember + voice counts: on 2026-09-27 "Can we do the Rosie learns
+# my voice thing now?" went to the brain, which played along and pretended to
+# learn his voice for three minutes.
+LEARN_VOICE_RE = re.compile(r"(learn|learns|learning|remember|memori[sz]e|train on|record)\s+"
+                            r"(?:my|this|our|me and my|his|her)?\s*voice")
 FORGET_VOICE = ('forget my voice', 'forget this voice')
 WHO_WORDS = ('who am i', 'who is this', "who's this", 'who is talking', "who's talking", 'who is speaking',
              "who's speaking", 'know my voice', 'do you know who i am', 'recognize me', 'recognise me',
@@ -284,7 +289,7 @@ def decide(text: str, mode: str):
         return 'watch_on', mode
     if _has(t, FORGET_VOICE):
         return 'forget_voice', mode
-    if _has(t, LEARN_VOICE):
+    if _has(t, LEARN_VOICE) or LEARN_VOICE_RE.search(t):
         return 'learn_voice', 'chat'
     if _has(t, WHO_WORDS):
         return 'who', 'chat'
@@ -913,7 +918,9 @@ def _node_main(args):
                 addressed = re.search(rf'\b{NAME}\b', normalize(text)) is not None
                 if addressed or self.mode != 'chat' or self.chat_voice is None:
                     self.chat_voice = who.emb
-                elif self.voices.cosine(who.emb, self.chat_voice) < self.voices.same:
+                elif who.seconds >= 2.0 and self.voices.cosine(who.emb, self.chat_voice) < self.voices.same:
+                    # (a word or two is too short to judge: Steve's own "Hello" was
+                    # taken for another voice with nobody enrolled yet, 2026-09-27)
                     self.get_logger().info(f'another voice ({who.label}), not talking to me: "{text[:60]}"')
                     return False
             if action in OWNER_ONLY and self._guest(who):
