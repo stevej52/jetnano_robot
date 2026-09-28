@@ -30,8 +30,10 @@ latched) for the dashboard, which also calls ~/locate (std_srvs/Trigger) - its
 WHERE AM I? button. accept_score and margin are provisional until measured on the
 floor (2026-09-28: to be tested).
 
-Stillness and "has she moved" come from the lidar odometry (8 Hz, cheap); set
-odom_topic to odometry/filtered if the lidar odometry is off.
+Stillness and "has she moved" come from the lidar odometry (8 Hz, cheap; set
+odom_topic to odometry/filtered if the lidar odometry is off), followed only while
+she is not placed. The lidar itself is subscribed only for the moment of a search:
+reading every scan while waiting cost 2.5 % of a core for nothing (2026-09-28).
 """
 
 import json
@@ -101,9 +103,8 @@ class WhereAmI(Node):
                                  QoSProfile(depth=100, durability=DurabilityPolicy.TRANSIENT_LOCAL))
         self.pub_state = self.create_publisher(String, 'where_am_i/state', LATCHED)
         self.pub_initial = self.create_publisher(PoseWithCovarianceStamped, '/initialpose', 10)
-        self.create_subscription(LaserScan, 'scan', lambda m: setattr(self, 'scan', m),
-                                 qos_profile_sensor_data)
-        self.create_subscription(Odometry, odom_topic, self._on_odom, 10)
+        self.odom_topic, self.odom_sub = odom_topic, None
+        self._follow_odom(True)
         self.create_service(Trigger, '~/locate', self._on_locate)
         self.create_timer(1.0, self._tick)
         self._publish()
@@ -115,6 +116,30 @@ class WhereAmI(Node):
     def _on_tf_static(self, msg) -> None:
         for t in msg.transforms:
             self.buf.set_transform_static(t, 'tf_static')
+
+    def _follow_odom(self, on: bool) -> None:
+        """Follow the odometry only while it matters (not placed yet)."""
+        if on and self.odom_sub is None:
+            self.odom_sub = self.create_subscription(Odometry, self.odom_topic, self._on_odom, 10)
+        elif not on and self.odom_sub is not None:
+            self.destroy_subscription(self.odom_sub)
+            self.odom_sub, self.odom = None, None
+            self.recent.clear()
+
+    def _fresh_scan(self, timeout: float = 3.0):
+        """One lidar scan taken now: subscribed for the moment, then dropped."""
+        got = threading.Event()
+
+        def keep(m):
+            self.scan = m
+            got.set()
+        self.scan = None
+        sub = self.create_subscription(LaserScan, 'scan', keep, qos_profile_sensor_data)
+        try:
+            got.wait(timeout)
+        finally:
+            self.destroy_subscription(sub)
+        return self.scan
 
     def _on_odom(self, m) -> None:
         p = m.pose.pose
@@ -150,7 +175,7 @@ class WhereAmI(Node):
     def _tick(self) -> None:
         if not self._load_map() or self.busy.locked() or self.done or not self.auto:
             return
-        if time.monotonic() - self.t_start < self.settle_s or self.scan is None:
+        if time.monotonic() - self.t_start < self.settle_s:
             return
         if self.odom is not None and not self._still():
             return
@@ -181,7 +206,7 @@ class WhereAmI(Node):
         return True
 
     def _scan_points(self):
-        m = self.scan
+        m = self._fresh_scan()
         if m is None or not self.buf.can_transform(self.base_frame, m.header.frame_id,
                                                    rclpy.time.Time()):
             return None
@@ -220,8 +245,10 @@ class WhereAmI(Node):
             if verdict == 'placed':
                 result['action'] = self._act(cands[0])
                 self.done, self.attempt_odom = True, None
+                self._follow_odom(False)
             else:
                 self.done = False
+                self._follow_odom(True)
                 if self.odom is not None:
                     self.attempt_odom = self.odom[:4]
                 else:
