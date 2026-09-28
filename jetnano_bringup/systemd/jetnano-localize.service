@@ -1,0 +1,30 @@
+[Unit]
+Description=jetnano robot: localization on the saved map (slam_toolbox), where where_am_i found her
+# NOT started at boot by systemd. where_am_i (robot.launch.py where_am_i:=true)
+# matches a lidar scan against ~/maps/home once she is still after boot; only
+# on a clear match does it write ~/.ros/where_am_i.env (START_POSE=x,y,yaw) and
+# start this unit (sudo -n systemctl start jetnano-localize). On the bench, or
+# anywhere the map cannot place her, nothing is started.
+# Navigation on top of it: navigation.launch.py mode:=external.
+Documentation=https://github.com/stevej52/jetnano_robot
+# Needs /scan and the EKF's odom -> base_footprint from the robot stack.
+After=jetnano-robot.service
+BindsTo=jetnano-robot.service
+# One slam_toolbox at a time: starting mapping stops this, and the other way round.
+Conflicts=jetnano-slam.service
+
+[Service]
+Type=simple
+User=jeston
+Group=jeston
+WorkingDirectory=/home/jeston
+Environment=ROS_DOMAIN_ID=7
+Environment=HOME=/home/jeston
+Environment=START_POSE=
+EnvironmentFile=-/home/jeston/.ros/where_am_i.env
+# start_pose empty = the map origin (the parking spot), as before where_am_i
+ExecStart=/bin/bash -lc 'source /opt/ros/jazzy/setup.bash && source /home/jeston/ros2_ws/install/setup.bash && exec ros2 launch jetnano_navigation slam.launch.py mode:=localization map:=/home/jeston/maps/home start_pose:="$START_POSE"'
+KillSignal=SIGINT
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=10

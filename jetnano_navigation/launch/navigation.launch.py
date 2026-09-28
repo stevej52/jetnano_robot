@@ -13,6 +13,10 @@ Three ways to run, matching the three mapping modes:
     ros2 launch jetnano_navigation navigation.launch.py \\
         mode:=localization map:=~/maps/home
 
+    # 4. She has already placed herself (where_am_i started
+    #    jetnano-localize.service): use that slam_toolbox, start no other
+    ros2 launch jetnano_navigation navigation.launch.py mode:=external
+
 All three use slam_toolbox, so map -> odom always comes from the same place and
 behaves the same way. AMCL is not used; it cannot extend a map, which is the
 whole point of mode 2.
@@ -83,7 +87,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument(
             'mode', default_value='mapping',
-            description='mapping | continue | localization'),
+            description='mapping | continue | localization | external (slam_toolbox already running)'),
         DeclareLaunchArgument(
             'map', default_value='',
             description='Serialised pose-graph, no extension (continue/localization)'),

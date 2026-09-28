@@ -205,6 +205,12 @@ def make_handler(node: 'WebTeleop'):
                     self._json({'error': 'pan and tilt must be numbers'}, HTTPStatus.BAD_REQUEST)
                     return
                 self._json({'look': node.look_at})
+            elif path == '/dash/locate':
+                # the dashboard's WHERE AM I? button: where_am_i searches; the answer
+                # arrives on where_am_i/state and shows in /dash/state
+                ok, why = node.dash.locate() if node.dash else (False, 'no dashboard')
+                self._json({'ok': ok, 'why': why},
+                           HTTPStatus.OK if ok else HTTPStatus.SERVICE_UNAVAILABLE)
             elif path == '/guard':
                 ok, why = node.set_guard(bool(body.get('enabled', True)))
                 if ok:

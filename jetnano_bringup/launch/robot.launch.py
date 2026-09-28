@@ -85,6 +85,10 @@ def generate_launch_description():
             'lidar_odom', default_value='false',
             description='also MOLA lidar odometry on /scan as a second EKF source '
                         '(needs ros-jazzy-mola-lidar-odometry)'),
+        DeclareLaunchArgument(
+            'where_am_i', default_value='false',
+            description='after boot, find her on the saved map (~/maps/home) from the lidar and, '
+                        'on a clear match, start localization there (jetnano-localize.service)'),
         DeclareLaunchArgument('use_teleop', default_value='false'),
         DeclareLaunchArgument(
             'use_cliff', default_value='false',
@@ -178,6 +182,22 @@ def generate_launch_description():
 
         _include('web_teleop.launch.py',
                  condition=IfCondition(LaunchConfiguration('use_web_teleop'))),
+
+        # Where am I on the saved map? (jetnano_navigation/where_am_i.py). The search
+        # takes one core for ~6 s: behind everything else.
+        Node(
+            package='jetnano_navigation',
+            executable='where_am_i',
+            name='where_am_i',
+            output='screen',
+            prefix='nice -n 10',
+            respawn=True,
+            respawn_delay=10.0,
+            parameters=[{'odom_topic': PythonExpression(
+                ["'lidar_odom' if '", LaunchConfiguration('lidar_odom'),
+                 "' == 'true' else 'odometry/filtered'"])}],
+            condition=IfCondition(LaunchConfiguration('where_am_i')),
+        ),
 
         Node(
             package='jetnano_bringup',

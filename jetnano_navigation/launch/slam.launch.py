@@ -17,6 +17,12 @@ had.
     mode:=localization  map:=~/maps/home
         Load an existing map and only localise in it. The map is never
         modified. This is the safe choice for a finished, trusted map.
+        start_pose:=x,y,yaw starts her there instead of at the map origin
+        (where_am_i finds it from the lidar; see jetnano-localize.service).
+
+    mode:=external
+        Start nothing: slam_toolbox already runs (jetnano-localize.service or
+        jetnano-slam.service). For navigation.launch.py on top of those.
 
 `map` is the serialised pose-graph WITHOUT an extension. slam_toolbox writes
 two files, <name>.posegraph and <name>.data; give it <name>.
@@ -48,10 +54,15 @@ def _slam_node(context, *args, **kwargs):
     map_path = context.launch_configurations.get('map', '')
     params_file = context.launch_configurations.get('params_file', default_params)
     use_sim_time = context.launch_configurations.get('use_sim_time', 'false')
+    start_pose = context.launch_configurations.get('start_pose', '').strip()
 
+    if mode == 'external':
+        # slam_toolbox is already running elsewhere (jetnano-localize.service, started
+        # by where_am_i, or jetnano-slam.service): start nothing, so Nav2 uses it
+        return []
     if mode not in ('mapping', 'continue', 'localization'):
         raise RuntimeError(
-            f"mode must be mapping, continue or localization - got '{mode}'")
+            f"mode must be mapping, continue, localization or external - got '{mode}'")
 
     if mode in ('continue', 'localization') and not map_path:
         raise RuntimeError(f"mode:={mode} needs map:=<serialised map, no extension>")
@@ -72,9 +83,14 @@ def _slam_node(context, *args, **kwargs):
         executable = 'localization_slam_toolbox_node'
         overrides['mode'] = 'localization'
         overrides['map_file_name'] = map_path
-        # Start where the map's origin is; override with map_start_pose if the
-        # robot is put down somewhere else.
-        overrides['map_start_at_dock'] = True
+        # Start where the map's origin is (the parking spot), unless start_pose
+        # says where she is - where_am_i finds that from the lidar at boot.
+        if start_pose:
+            x, y, yaw = (float(v) for v in start_pose.split(','))
+            overrides['map_start_at_dock'] = False
+            overrides['map_start_pose'] = [x, y, yaw]
+        else:
+            overrides['map_start_at_dock'] = True
     else:
         executable = 'async_slam_toolbox_node'
         overrides['mode'] = 'mapping'
@@ -116,12 +132,16 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument(
             'mode', default_value='mapping',
-            description='mapping | continue | localization'),
+            description='mapping | continue | localization | external (slam_toolbox already running)'),
         DeclareLaunchArgument(
             'map', default_value='',
             description='Serialised pose-graph, no extension (continue/localization)'),
         DeclareLaunchArgument('params_file', default_value=default_params),
         DeclareLaunchArgument('use_sim_time', default_value='false'),
+        DeclareLaunchArgument(
+            'start_pose', default_value='',
+            description="localization: 'x,y,yaw' in the map frame to start from "
+                        '(default: the map origin, the parking spot)'),
 
         OpaqueFunction(function=_slam_node),
     ])

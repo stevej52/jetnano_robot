@@ -60,6 +60,7 @@ from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
 from rclpy.serialization import deserialize_message
 from sensor_msgs.msg import LaserScan, PointCloud2
 from std_msgs.msg import Bool, Float32, String
+from std_srvs.srv import Trigger
 
 try:
     from sensor_msgs_py import point_cloud2 as pc2
@@ -193,6 +194,10 @@ class Dashboard:
         sub(Float32, 'sound/level', lambda m: setattr(self, 'level', round(m.data, 1)), 10)
         sub(Float32, 'steering/buzz', lambda m: setattr(self, 'buzz', round(m.data, 1)), 10)
         sub(OccupancyGrid, 'map', self._on_map, LATCHED)
+        # where_am_i's verdict on where she is (JSON), and its WHERE AM I? service
+        self.wami = None
+        sub(String, 'where_am_i/state', self._on_wami, LATCHED)
+        self._locate = node.create_client(Trigger, 'where_am_i/locate')
         self.map_odom = None                 # map -> odom (x, y, yaw), from slam_toolbox's /pose
         self.pose_t = 0.0                    # when the last /pose came
         self.pending_pose = None             # a /pose that came while nobody watched
@@ -345,6 +350,32 @@ class Dashboard:
         name = os.path.basename(msg.data).rsplit('.', 1)[0] if msg.data.endswith('.wav') else msg.data
         self._event('sound', name, 'sound')
 
+    def _on_wami(self, msg) -> None:
+        try:
+            self.wami = json.loads(msg.data)
+        except ValueError:
+            self.wami = None
+            return
+        # a clear match is a fix of its own: slam_toolbox, started there, says nothing
+        # on /pose until she moves
+        c = self.wami.get('candidates') or []
+        if self.wami.get('state') == 'placed' and c and self.wami.get('time'):
+            fix = PoseWithCovarianceStamped()
+            t = float(self.wami['time'])
+            fix.header.stamp.sec, fix.header.stamp.nanosec = int(t), int((t % 1) * 1e9)
+            fix.header.frame_id = 'map'
+            fix.pose.pose.position.x, fix.pose.pose.position.y = c[0]['x'], c[0]['y']
+            fix.pose.pose.orientation.z = math.sin(c[0]['yaw'] / 2)
+            fix.pose.pose.orientation.w = math.cos(c[0]['yaw'] / 2)
+            self._on_pose(fix)
+
+    def locate(self):
+        """Ask where_am_i to search now; (sent, why). The answer comes on where_am_i/state."""
+        if not self._locate.service_is_ready():
+            return False, 'where_am_i is not running (robot.launch.py where_am_i:=true)'
+        self._locate.call_async(Trigger.Request())
+        return True, 'searching'
+
     def _on_map(self, msg) -> None:
         w, h = msg.info.width, msg.info.height
         grid = np.asarray(msg.data, dtype=np.int8).reshape(h, w)[::-1]     # the grid's origin is bottom-left
@@ -482,7 +513,7 @@ class Dashboard:
                        'speaker': self.speaker},
             'level': self.level, 'buzz': self.buzz,
             'system': {**(wd or {}).get('system', {}), **self.sys},
-            'map': map_info, 'pose': self._pose_on_map(),
+            'map': map_info, 'pose': self._pose_on_map(), 'wami': self.wami,
             'log': log,
             'time': time.time(),
         }

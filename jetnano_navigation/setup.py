@@ -28,6 +28,7 @@ setup(
         'console_scripts': [
             'save_map = jetnano_navigation.save_map:main',
             'nav_translator = jetnano_navigation.nav_translator:main',
+            'where_am_i = jetnano_navigation.where_am_i:main',
         ],
     },
 )

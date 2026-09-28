@@ -9,6 +9,8 @@ Documentation=https://github.com/stevej52/jetnano_robot
 After=jetnano-robot.service
 Wants=jetnano-robot.service
 BindsTo=jetnano-robot.service
+# One slam_toolbox at a time: starting this stops localization (jetnano-localize).
+Conflicts=jetnano-localize.service
 
 [Service]
 Type=simple

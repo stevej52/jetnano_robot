@@ -151,6 +151,8 @@
   #mapwrap { display: none; }
   #mapimg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
   #mapcv { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #wami { position: absolute; right: 8px; bottom: 8px; font: 700 10px/1 var(--mono); letter-spacing: 0.12em;
+    padding: 8px 10px; border-radius: 7px; border: 1px solid var(--cyan); color: var(--cyan); background: rgba(5,7,12,0.75); }
 
   /* ---------------------------------------------------------- bottom row */
   #sys { grid-area: sys; }
@@ -237,7 +239,7 @@
     <h2>Surroundings <span class="tag" id="navtag"></span></h2>
     <div class="tabs"><button id="tradar" class="on">RADAR</button><button id="tmap">MAP</button><button id="tboth">OVERLAY</button><button id="tzoom">4 M</button></div>
     <canvas id="radar"></canvas>
-    <div id="mapwrap"><img id="mapimg" alt=""><canvas id="mapcv"></canvas></div>
+    <div id="mapwrap"><img id="mapimg" alt=""><canvas id="mapcv"></canvas><button id="wami">WHERE AM I?</button></div>
   </section>
 
   <section id="sys" class="panel">
@@ -380,6 +382,13 @@
   $('tradar').onclick = function () { setView('radar'); };
   $('tmap').onclick = function () { setView('map'); };
   $('tboth').onclick = function () { setView('both'); };
+  $('wami').onclick = function () {
+    var b = this; b.textContent = 'ASKING...';
+    fetch('/dash/locate', { method: 'POST', body: '{}' }).then(function (r) { return r.json(); })
+      .then(function (j) { b.textContent = j.ok ? 'SEARCHING...' : 'NOT RUNNING'; })
+      .catch(function () { b.textContent = 'NO ANSWER'; })
+      .then(function () { setTimeout(function () { b.textContent = 'WHERE AM I?'; }, 6000); });
+  };
   // /dash#map, #overlay or #radar opens on that tab; otherwise the one last used here
   var HASH = { '#map': 'map', '#overlay': 'both', '#radar': 'radar' }, saved = null;
   try { saved = localStorage.getItem('dashView'); } catch (e) { /* private browsing */ }
@@ -559,10 +568,22 @@
     if (S.map.v !== mapV) { mapV = S.map.v; mapimg.src = '/dash/map.png?v=' + S.map.v; }
     return mapimg.complete && mapimg.naturalWidth > 0;
   }
+  // where_am_i's verdict, in words
+  function wamiText(w) {
+    if (!w) return 'her position: unknown until mapping or navigation places her';
+    var c = w.candidates || [], b = c[0] ? c[0].score.toFixed(2) : '';
+    return { waiting: 'where am I: waiting (' + (w.why || '') + ')',
+             searching: 'where am I: searching the map...',
+             placed: 'where am I: found (fit ' + b + ') · ' + (w.action || ''),
+             unsure: 'where am I: unsure, ' + c.length + ' places fit alike · move her and ask again',
+             not_on_map: 'where am I: not on the map (best fit ' + b + ', needs ' + (w.accept || '') + ')',
+             no_map: 'where am I: no saved map',
+             error: 'where am I: failed (' + (w.why || '') + ')' }[w.state] || ('where am I: ' + w.state);
+  }
   // a caption in the top-left corner: which map, and whether she is on it
   function caption(c, mi, p) {
     var lines = [mi.src === 'live' ? 'LIVE MAP (SLAM running)' : 'SAVED MAP · ' + mi.saved,
-                 !p ? 'her position: unknown until mapping or navigation places her'
+                 !p ? wamiText(S.wami)
                     : p.fix > 90 ? 'placed ' + Math.round(p.fix / 60) + ' min ago, odometry since' : 'her position: placed by SLAM'];
     c.textAlign = 'left'; c.font = '10px ui-monospace, monospace';
     var bw = Math.max(c.measureText(lines[0]).width, c.measureText(lines[1]).width) + 12;
@@ -583,7 +604,19 @@
     $('navtag').textContent = (mi.w * mi.res).toFixed(1) + ' × ' + (mi.h * mi.res).toFixed(1) + ' m';
     var p = S.pose;
     caption(c, mi, p);
-    if (!p) return;
+    if (!p) {
+      // where_am_i's candidate places: outlined, with their fit
+      var w = S.wami, cands = (w && w.candidates) || [];
+      if (w && /unsure|not_on_map|placed/.test(w.state)) cands.forEach(function (q, i) {
+        var m0 = M(q.x, q.y);
+        c.save(); c.translate(m0[0], m0[1]); c.rotate(-q.yaw);
+        c.strokeStyle = w.state === 'placed' && i === 0 ? '#ff6bd6' : '#ffc048'; c.lineWidth = 1.5;
+        c.beginPath(); c.moveTo(12, 0); c.lineTo(-7, 7); c.lineTo(-3, 0); c.lineTo(-7, -7); c.closePath(); c.stroke();
+        c.restore();
+        c.fillStyle = '#ffc048'; c.font = '10px ui-monospace, monospace'; c.fillText(q.score.toFixed(2), m0[0] + 10, m0[1] - 8);
+      });
+      return;
+    }
     var cy = Math.cos(p.yaw), sy = Math.sin(p.yaw);
     function R(x, y) { return M(p.x + cy * x - sy * y, p.y + sy * x + cy * y); }   // her frame -> the map
     // what she sees now, drawn where she is: camera obstacles, then the lidar
