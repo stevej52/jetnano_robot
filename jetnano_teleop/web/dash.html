@@ -458,6 +458,11 @@
     var fps = ipadPerf ? ipadPerf.fps : null;
     html += '<div class="tile"><div class="k"><span class="dot ' + (fps == null ? '' : fps >= 30 ? 'ok' : fps >= 15 ? 'warn' : 'bad')
       + '"></span>iPad</div><div class="v">' + (fps == null ? '<small>measuring</small>' : Math.round(fps) + '<small> fps</small>') + '</div></div>';
+    // TURBULENCE: how rough the iPad's view is - the worst of drawing, late frames, missed
+    // updates and the link, each as % of what it may use (the beacon below works it out)
+    var tb = ipadPerf ? ipadPerf.turbulence : null;
+    html += '<div class="tile"><div class="k"><span class="dot ' + (tb == null ? '' : tb < 25 ? 'ok' : tb < 50 ? 'warn' : 'bad')
+      + '"></span>Turbulence</div><div class="v">' + (tb == null ? '<small>measuring</small>' : tb + '<small> % ' + ipadPerf.turbulence_from + '</small>') + '</div></div>';
     $('tiles').innerHTML = html;
     var t = sys.temps || {}, hot = Math.max.apply(null, Object.keys(t).map(function (k) { return t[k]; }).concat([0]));
     function mt(k, v, u, bad) { return '<div class="tile"><div class="k"><span class="dot ' + (v == null ? '' : bad ? 'warn' : 'ok') + '"></span>' + k + '</div><div class="v">' + (v == null ? '—' : v) + '<small>' + u + '</small></div></div>'; }
@@ -659,9 +664,10 @@
 
   // What drawing costs this device (2026-09-28): frames per second, time per frame, and
   // frames that came late (a busy main thread) - sent to /dash/perf every 10 s with the
-  // time spent taking in each poll.
-  var perf = { t0: performance.now(), frames: 0, drawMs: 0, drawMax: 0, late: 0, last: 0,
-               polls: 0, pollMs: 0, bytes: 0 };
+  // time spent taking in each poll and how long each took to arrive.
+  function freshPerf(t0) { return { t0: t0, frames: 0, drawMs: 0, drawMax: 0, late: 0, last: 0,
+                                    polls: 0, pollMs: 0, bytes: 0, rttMs: 0, rttMax: 0 }; }
+  var perf = freshPerf(performance.now());
   function frame(ts) {
     var t = performance.now();
     if (view === 'map') drawMap(); else drawRadar();
@@ -676,8 +682,10 @@
   // ------------------------------------------------------------------- data
   var failures = 0;
   function poll() {
+    var sent = performance.now();
     return fetch('/dash/state', { cache: 'no-store' }).then(function (r) { return r.text(); }).then(function (txt) {
-      var t = performance.now(), j = JSON.parse(txt);
+      var t = performance.now(), j = JSON.parse(txt), rtt = t - sent;
+      perf.rttMs += rtt; if (rtt > perf.rttMax) perf.rttMax = rtt;
       if (j.page_v) { if (pageV === null) pageV = j.page_v; else if (j.page_v !== pageV) { location.reload(); return; } }
       S = j; failures = 0; $('lost').style.display = 'none'; render();
       perf.polls++; perf.pollMs += performance.now() - t; perf.bytes += txt.length;
@@ -693,10 +701,25 @@
                 polls_s: +(perf.polls / s).toFixed(2), poll_ms: +(perf.pollMs / q).toFixed(2),
                 poll_kb: +(perf.bytes / q / 1024).toFixed(1), dpr: window.devicePixelRatio,
                 radar: [radar.width, radar.height], map: [mapcv.width, mapcv.height],
-                screen: [screen.width, screen.height] };
+                screen: [screen.width, screen.height],
+                rtt_ms: +(perf.rttMs / q).toFixed(1), rtt_max_ms: +perf.rttMax.toFixed(0) };
+    // TURBULENCE, 0-100: the worst of four, each as a share of what it may take -
+    //   draw    drawing time per frame, of a 60 fps frame (16.7 ms)
+    //   late    frames that came more than 34 ms after the one before, of all frames
+    //   missed  data updates that never came, of the 4 a second asked for
+    //   link    how long an update took to arrive, of the 250 ms between them (the
+    //           delay STOP would see too)
+    var parts = { draw: perf.drawMs / n / 16.7, late: perf.late / n,
+                  missed: Math.max(0, 1 - perf.polls / Math.max(1, s * 4)), link: perf.rttMs / q / 250 };
+    var worst = 'draw';
+    Object.keys(parts).forEach(function (k) { if (parts[k] > parts[worst]) worst = k; });
+    rep.turbulence = Math.round(Math.min(1, parts[worst]) * 100);
+    rep.turbulence_from = worst;
+    rep.parts = {};
+    Object.keys(parts).forEach(function (k) { rep.parts[k] = Math.round(parts[k] * 100); });
     ipadPerf = rep;
     fetch('/dash/perf', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rep) }).catch(function () {});
-    perf = { t0: now, frames: 0, drawMs: 0, drawMax: 0, late: 0, last: 0, polls: 0, pollMs: 0, bytes: 0 };
+    perf = freshPerf(now);
   }, 10000);
   setInterval(function () { $('clock').textContent = new Date().toTimeString().slice(0, 8); }, 500);
 
