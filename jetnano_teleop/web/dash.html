@@ -404,6 +404,7 @@
   // no tile for the lidar filter: its rate only repeats the lidar's; its trouble shows on the lidar tile
   var LABEL = { lidar: 'Lidar', imu: 'IMU', odometry: 'EKF', vo: 'Visual odo',
     nvblox: '3D map', mic: 'Mic', listening: 'Listening', battery: 'Battery', cliff: 'Cliff', map: 'SLAM map' };
+  var ipadPerf = null;          // this page's own last 10 s (the perf beacon below)
 
   // ------------------------------------------------------------------ render
   function render() {
@@ -452,6 +453,11 @@
       var v = s.hz > 0 && !pre ? s.hz.toFixed(s.hz < 10 ? 1 : 0) + '<small> Hz</small>' : (s.state === 'ok' ? '<small>idle</small>' : '<small>' + pre + esc(s.state) + '</small>');
       html += '<div class="tile"><div class="k"><span class="dot ' + cls + '"></span>' + LABEL[k] + '</div><div class="v">' + v + '</div></div>';
     });
+    // the iPad itself: frames this page drew a second over the last 10 s (the perf beacon's
+    // last report); green from 30, amber below, red below 15 (Steve, 2026-09-28)
+    var fps = ipadPerf ? ipadPerf.fps : null;
+    html += '<div class="tile"><div class="k"><span class="dot ' + (fps == null ? '' : fps >= 30 ? 'ok' : fps >= 15 ? 'warn' : 'bad')
+      + '"></span>iPad</div><div class="v">' + (fps == null ? '<small>measuring</small>' : Math.round(fps) + '<small> fps</small>') + '</div></div>';
     $('tiles').innerHTML = html;
     var t = sys.temps || {}, hot = Math.max.apply(null, Object.keys(t).map(function (k) { return t[k]; }).concat([0]));
     function mt(k, v, u, bad) { return '<div class="tile"><div class="k"><span class="dot ' + (v == null ? '' : bad ? 'warn' : 'ok') + '"></span>' + k + '</div><div class="v">' + (v == null ? '—' : v) + '<small>' + u + '</small></div></div>'; }
@@ -688,6 +694,7 @@
                 poll_kb: +(perf.bytes / q / 1024).toFixed(1), dpr: window.devicePixelRatio,
                 radar: [radar.width, radar.height], map: [mapcv.width, mapcv.height],
                 screen: [screen.width, screen.height] };
+    ipadPerf = rep;
     fetch('/dash/perf', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rep) }).catch(function () {});
     perf = { t0: now, frames: 0, drawMs: 0, drawMax: 0, late: 0, last: 0, polls: 0, pollMs: 0, bytes: 0 };
   }, 10000);
