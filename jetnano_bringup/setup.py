@@ -33,6 +33,7 @@ setup(
             'vo_watchdog = jetnano_bringup.vo_watchdog:main',
             'lidar_odom_relay = jetnano_bringup.lidar_odom_relay:main',
             'drive_report = jetnano_bringup.drive_report:main',
+            'drive_log = jetnano_bringup.drive_log:main',
             'battery_monitor = jetnano_bringup.battery_monitor:main',
             'cliff_guard = jetnano_bringup.cliff_guard:main',
             'make_voice = jetnano_bringup.voice:main',

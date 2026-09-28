@@ -12,6 +12,9 @@
   ahead", the path was still valid on the global map, so nothing replanned and the goal
   aborted. Every 5 s leaves time to finish a manoeuvre and still replans from where she
   really is.
+  The recovery Wait is 1.5 s, not the stock 5 (2026-09-28): it is for something that
+  moves out of the way, a person or the dog, and 5 s of standing still at every third
+  failed attempt was most of the time lost in recoveries on the first drives.
 -->
 <root BTCPP_format="4" main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
@@ -48,7 +51,7 @@
               <ClearEntireCostmap name="ClearLocalCostmap-Subtree" service_name="local_costmap/clear_entirely_local_costmap"/>
               <ClearEntireCostmap name="ClearGlobalCostmap-Subtree" service_name="global_costmap/clear_entirely_global_costmap"/>
             </Sequence>
-            <Wait wait_duration="5.0"/>
+            <Wait wait_duration="1.5"/>
             <BackUp backup_dist="0.30" backup_speed="0.15" error_code_id="{backup_code_id}"/>
           </RoundRobin>
         </ReactiveFallback>
