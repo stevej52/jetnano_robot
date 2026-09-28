@@ -34,7 +34,9 @@ the steering went quiet and stayed quiet. A servo with no signal stops holding, 
 tyres unwind, and centre is then reached without the load. So the cure is now
 ``mode: release``: both steering servos' pulses off (pca9685 ``<name>/pulse_width``
 0) for ``release_s``, then a zero twist on ``cmd_vel_settle`` brings them back to
-centre through twist_mux (a driver still wins); 2, 4, then 6 s a round. ``mode:
+centre through twist_mux (a driver still wins); 1, 2, then 3 s a round - no longer
+(Steve: "we're going to be trying to drive this thing"). A drive command during a
+release takes the servos back at once anyway: pca9685 writes every command it gets. ``mode:
 wiggle`` keeps the old way.
 
 Publishes ``steering/buzz`` (dB per half second) for watching it live.
@@ -72,7 +74,7 @@ class Settle(Node):
         self.declare_parameter('deg_per_rad_s', 18.33)
         # release | wiggle: what to do about a buzz (see the docstring)
         self.declare_parameter('mode', 'release')
-        self.declare_parameter('release_s', [2.0, 4.0, 6.0])  # each try, signal off this long
+        self.declare_parameter('release_s', [1.0, 2.0, 3.0])  # each try, signal off this long
         self.declare_parameter('steering_channels', ['steering', 'rear_steering'])  # pca9685's
 
         lo, hi = self.get_parameter('band_hz').value
