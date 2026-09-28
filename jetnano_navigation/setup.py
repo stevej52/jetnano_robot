@@ -27,6 +27,7 @@ setup(
     entry_points={
         'console_scripts': [
             'save_map = jetnano_navigation.save_map:main',
+            'nav_translator = jetnano_navigation.nav_translator:main',
         ],
     },
 )

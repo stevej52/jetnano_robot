@@ -70,19 +70,19 @@ controller_server:
     general_goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
       stateful: true
-      xy_goal_tolerance: 0.20
+      xy_goal_tolerance: 0.10   # 2026-09-27: 0.20 stopped her 19 cm short every time; 0.10 -> 3-10 cm
       # Generous: a steering robot cannot fine-tune its final heading on the
       # spot, so demanding a tight yaw tolerance makes it shuffle forever.
       yaw_goal_tolerance: 0.50
 
     FollowPath:
       plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
-      desired_linear_vel: 0.45
+      desired_linear_vel: 0.30          # first autonomous tests 2026-09-27
       lookahead_dist: 0.45
-      min_lookahead_dist: 0.25
+      min_lookahead_dist: 0.50   # 2026-09-27: 0.25 flicked the steering near goals
       max_lookahead_dist: 0.80
       use_velocity_scaled_lookahead_dist: true
-      lookahead_time: 1.2
+      lookahead_time: 1.5   # 2026-09-27: 1.2 s weaved +-12 deg on a long diagonal; 1.5 s tracked straight
       transform_tolerance: 0.2
 
       # The whole point: this chassis steers, it does not pivot.
@@ -91,7 +91,7 @@ controller_server:
 
       use_regulated_linear_velocity_scaling: true
       regulated_linear_scaling_min_radius: 0.30
-      regulated_linear_scaling_min_speed: 0.15
+      regulated_linear_scaling_min_speed: 0.18   # her crawl
       use_cost_regulated_linear_velocity_scaling: true
       max_angular_accel: 2.0
       min_approach_linear_velocity: 0.08
@@ -194,7 +194,7 @@ planner_server:
       max_planning_time: 5.0
       motion_model_for_search: "REEDS_SHEPP"   # forward AND reverse
       angle_quantization_bins: 72
-      minimum_turning_radius: 0.30             # MEASURE ME
+      minimum_turning_radius: 0.40             # measured 2026-09-27: 0.33 right / 0.39 left at full lock
       reverse_penalty: 2.0
       change_penalty: 0.0
       non_straight_penalty: 1.2
@@ -232,8 +232,8 @@ velocity_smoother:
     smoothing_frequency: 20.0
     scale_velocities: false
     feedback: "OPEN_LOOP"
-    max_velocity: [0.50, 0.0, 3.0]
-    min_velocity: [-0.30, 0.0, -3.0]
+    max_velocity: [0.35, 0.0, 3.0]
+    min_velocity: [-0.25, 0.0, -3.0]
     max_accel: [1.0, 0.0, 3.0]
     max_decel: [-1.5, 0.0, -3.0]
     odom_topic: "/odometry/filtered"
@@ -250,7 +250,7 @@ collision_monitor:
     base_frame_id: "base_footprint"
     odom_frame_id: "odom"
     cmd_vel_in_topic: "cmd_vel_smoothed"
-    cmd_vel_out_topic: "cmd_vel_nav"
+    cmd_vel_out_topic: "cmd_vel_nav_mps"   # -> nav_translator -> cmd_vel_nav (throttle, steering)
     state_topic: "collision_monitor_state"
     transform_tolerance: 0.2
     source_timeout: 1.0

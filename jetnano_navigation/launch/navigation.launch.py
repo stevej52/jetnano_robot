@@ -46,8 +46,9 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
-from launch_ros.actions import SetRemap
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
+from launch_ros.actions import Node, SetRemap
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 from nav2_common.launch import ReplaceString
 
@@ -95,6 +96,27 @@ def generate_launch_description():
             'nvblox', default_value='false',
             description='Add the nvblox 3D-map layer to the local costmap (Jetson only: '
                         'needs ros-jazzy-nvblox-nav2 and the nvblox node running)'),
+
+        DeclareLaunchArgument(
+            'translate', default_value='true',
+            description="turn Nav2 m/s and rad/s into Rosie's throttle and steering "
+                        '(nav_translator); false passes them through (the simulator)'),
+
+        # Nav2's collision monitor publishes cmd_vel_nav_mps (nav2.yaml); this turns it
+        # into what the driver understands and hands it to twist_mux on cmd_vel_nav.
+        Node(
+            package='jetnano_navigation',
+            executable='nav_translator',
+            name='nav_translator',
+            output='screen',
+            respawn=True,
+            respawn_delay=2.0,
+            parameters=[{
+                'use_sim_time': ParameterValue(LaunchConfiguration('use_sim_time'), value_type=bool),
+                'passthrough': ParameterValue(
+                    PythonExpression(["'", LaunchConfiguration('translate'), "' != 'true'"]), value_type=bool),
+            }],
+        ),
 
         GroupAction([
             # Keep Nav2 off the driver's topic. See the docstring above.

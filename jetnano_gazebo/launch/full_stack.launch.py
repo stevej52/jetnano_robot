@@ -124,6 +124,7 @@ def generate_launch_description():
             # simulator: that needs the Jetson's GPU.
             include(navigation_pkg, 'navigation.launch.py',
                     condition=IfCondition(LaunchConfiguration('navigation')),
-                    arguments={'use_sim_time': 'true', 'mode': 'mapping', 'nvblox': 'false'}),
+                    arguments={'use_sim_time': 'true', 'mode': 'mapping', 'nvblox': 'false',
+                               'translate': 'false'}),
         ]),
     ])
