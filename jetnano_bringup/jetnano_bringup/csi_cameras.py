@@ -80,6 +80,12 @@ class Camera:
         self.frame, self.seq = None, 0
         self.viewers, self.last_viewer = 0, 0.0
         self.proc = None
+        # Capture at the rate we send (2026-09-27): capturing at 30 fps and dropping frames
+        # after the colour conversion cost the Argus daemon and each pipeline for every
+        # dropped frame - ~30 % of a core per camera - and that CPU came out of the camera
+        # odometry (29 -> 21 Hz with the dashboard open). If a sensor will not start at the
+        # low rate (twice in a row, no frame), fall back to 30 fps + videorate.
+        self.native, self.native_failures = True, 0
         threading.Thread(target=self._run, daemon=True, name=f'cam-{name}').start()
 
     def _wbmode(self) -> int:
@@ -91,13 +97,17 @@ class Camera:
         return 1 if day else 4
 
     def _command(self):
-        return ['gst-launch-1.0', '-q', 'nvarguscamerasrc', f'sensor-id={self.sensor}', f'wbmode={self._wbmode()}',
-                '!', 'video/x-raw(memory:NVMM),width=1280,height=720,framerate=30/1',
-                '!', 'nvvidconv', 'flip-method=2',
-                '!', f'video/x-raw(memory:NVMM),width={self.width},height={self.height},format=I420',
-                '!', 'videorate', 'drop-only=true',
-                '!', f'video/x-raw(memory:NVMM),framerate={self.fps}/1',
-                '!', 'nvjpegenc', f'quality={self.quality}', '!', 'fdsink', 'fd=1']
+        head = ['gst-launch-1.0', '-q', 'nvarguscamerasrc', f'sensor-id={self.sensor}', f'wbmode={self._wbmode()}']
+        tail = ['!', 'nvjpegenc', f'quality={self.quality}', '!', 'fdsink', 'fd=1']
+        if self.native:      # the sensor itself runs at the rate we send
+            return head + ['!', f'video/x-raw(memory:NVMM),width=1280,height=720,framerate={self.fps}/1',
+                           '!', 'nvvidconv', 'flip-method=2',
+                           '!', f'video/x-raw(memory:NVMM),width={self.width},height={self.height},format=I420'] + tail
+        return head + ['!', 'video/x-raw(memory:NVMM),width=1280,height=720,framerate=30/1',
+                       '!', 'nvvidconv', 'flip-method=2',
+                       '!', f'video/x-raw(memory:NVMM),width={self.width},height={self.height},format=I420',
+                       '!', 'videorate', 'drop-only=true',
+                       '!', f'video/x-raw(memory:NVMM),framerate={self.fps}/1'] + tail
 
     def _run(self):
         while True:
@@ -106,7 +116,9 @@ class Camera:
                     self.cond.wait(1.0)
             cmd = self._command()
             self.node.get_logger().info(f'{self.name}: starting (sensor {self.sensor}, '
-                                        f'{self.width}x{self.height} at {self.fps} fps, wbmode {cmd[4][7:]})')
+                                        f'{self.width}x{self.height} at {self.fps} fps, wbmode {cmd[4][7:]}, '
+                                        f'{"sensor at that rate" if self.native else "sensor at 30 fps, frames dropped"})')
+            got = ended_idle = False
             try:
                 self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
             except OSError as exc:
@@ -125,6 +137,7 @@ class Camera:
                         break
                     start = buf.find(b'\xff\xd8')
                     if 0 <= start < end:
+                        got = True
                         with self.cond:
                             self.frame, self.seq = buf[start:end + 2], self.seq + 1
                             self.cond.notify_all()
@@ -134,6 +147,7 @@ class Camera:
                 with self.cond:
                     idle = self.viewers == 0 and time.monotonic() - self.last_viewer > 5.0
                 if idle:
+                    ended_idle = True
                     break
             self.proc.terminate()
             try:
@@ -143,7 +157,22 @@ class Camera:
             self.proc = None
             with self.cond:
                 self.frame = None
-            self.node.get_logger().info(f'{self.name}: stopped (nobody watching)')
+            if got:
+                self.native_failures = 0
+                self.node.get_logger().info(f'{self.name}: stopped (nobody watching)')
+            elif ended_idle:
+                self.node.get_logger().info(f'{self.name}: stopped (nobody watching)')
+            elif self.native:
+                self.native_failures += 1
+                if self.native_failures >= 2:
+                    self.native = False
+                    self.node.get_logger().warning(
+                        f'{self.name}: sensor {self.sensor} gave no picture at {self.fps} fps twice; '
+                        'capturing at 30 fps and dropping frames instead')
+                else:
+                    self.node.get_logger().warning(f'{self.name}: pipeline ended without a picture; retrying')
+            else:
+                self.node.get_logger().warning(f'{self.name}: pipeline ended without a picture')
             time.sleep(1.0)
 
     def watch(self):
