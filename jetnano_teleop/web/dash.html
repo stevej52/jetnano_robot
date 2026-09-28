@@ -235,7 +235,7 @@
 
   <section id="nav" class="panel">
     <h2>Surroundings <span class="tag" id="navtag"></span></h2>
-    <div class="tabs"><button id="tradar" class="on">RADAR</button><button id="tmap">MAP</button><button id="tzoom">4 M</button></div>
+    <div class="tabs"><button id="tradar" class="on">RADAR</button><button id="tmap">MAP</button><button id="tboth">OVERLAY</button><button id="tzoom">4 M</button></div>
     <canvas id="radar"></canvas>
     <div id="mapwrap"><img id="mapimg" alt=""><canvas id="mapcv"></canvas></div>
   </section>
@@ -367,14 +367,23 @@
   $('lookctr').addEventListener('click', function () { look.pan = 0; look.tilt = 0; sendLook(true); });
 
   // ------------------------------------------------------------------- tabs
+  // RADAR: around her, heading up. MAP: the whole house, north up. OVERLAY: the radar
+  // over the house map, heading up (needs SLAM to have placed her).
   function setView(v) {
+    var radarLike = v === 'radar' || v === 'both';
     view = v; $('tradar').classList.toggle('on', v === 'radar'); $('tmap').classList.toggle('on', v === 'map');
-    $('radar').style.display = v === 'radar' ? 'block' : 'none'; $('mapwrap').style.display = v === 'map' ? 'block' : 'none';
-    $('tzoom').style.display = v === 'radar' ? '' : 'none';
+    $('tboth').classList.toggle('on', v === 'both');
+    $('radar').style.display = radarLike ? 'block' : 'none'; $('mapwrap').style.display = v === 'map' ? 'block' : 'none';
+    $('tzoom').style.display = radarLike ? '' : 'none';
+    try { localStorage.setItem('dashView', v); } catch (e) { /* private browsing */ }
   }
   $('tradar').onclick = function () { setView('radar'); };
   $('tmap').onclick = function () { setView('map'); };
-  if (location.hash === '#map') setView('map');      // /dash#map opens on the map
+  $('tboth').onclick = function () { setView('both'); };
+  // /dash#map, #overlay or #radar opens on that tab; otherwise the one last used here
+  var HASH = { '#map': 'map', '#overlay': 'both', '#radar': 'radar' }, saved = null;
+  try { saved = localStorage.getItem('dashView'); } catch (e) { /* private browsing */ }
+  setView(HASH[location.hash] || (/^(radar|map|both)$/.test(saved) ? saved : 'radar'));
   $('tzoom').onclick = function () { zoom = zoom === 2 ? 4 : zoom === 4 ? 8 : 2; this.textContent = zoom + ' M'; };
 
   // ------------------------------------------------------------------ helpers
@@ -495,11 +504,11 @@
     var g = c.createRadialGradient(cx, cy, 0, cx, cy, zoom * sc);
     g.addColorStop(0, 'rgba(94,242,255,0.10)'); g.addColorStop(1, 'rgba(94,242,255,0)');
     c.fillStyle = g; c.beginPath(); c.moveTo(cx, cy); c.arc(cx, cy, zoom * sc, sweep, sweep + 0.5); c.closePath(); c.fill();
-    // the house map underneath, turned to her heading - once SLAM has placed her on it
-    if (S && S.pose && S.map && mapReady()) {
+    // OVERLAY: the house map underneath, turned to her heading
+    if (view === 'both' && S && S.pose && S.map && mapReady()) {
       var mi = S.map, pz = S.pose, cs = Math.cos(pz.yaw), sn = Math.sin(pz.yaw), k = sc * mi.res;
       var A = mi.x0 - pz.x, B = mi.y0 + mi.res * mi.h - pz.y;   // image pixel (u, v) -> her frame -> screen
-      c.save(); c.globalAlpha = 0.5; c.imageSmoothingEnabled = false;
+      c.save(); c.globalAlpha = 0.6; c.imageSmoothingEnabled = false;
       c.setTransform(f.d * k * sn, -f.d * k * cs, f.d * k * cs, f.d * k * sn,
                      f.d * (cx - sc * (cs * B - sn * A)), f.d * (cy - sc * (cs * A + sn * B)));
       c.drawImage(mapimg, 0, 0);
@@ -539,6 +548,7 @@
     c.beginPath(); c.rect(p1[0], p1[1], p2[0] - p1[0], p2[1] - p1[1]); c.fill(); c.stroke();
     var n1 = P(0.30, 0), n2 = P(0.20, 0.07), n3 = P(0.20, -0.07);
     c.fillStyle = '#5ef2ff'; c.beginPath(); c.moveTo(n1[0], n1[1]); c.lineTo(n2[0], n2[1]); c.lineTo(n3[0], n3[1]); c.closePath(); c.fill();
+    if (view === 'both' && S && S.map) caption(c, S.map, S.pose);   // on top of everything
   }
 
   // --------------------------------------------------------------------- map
@@ -548,6 +558,16 @@
     if (!S || !S.map) return false;
     if (S.map.v !== mapV) { mapV = S.map.v; mapimg.src = '/dash/map.png?v=' + S.map.v; }
     return mapimg.complete && mapimg.naturalWidth > 0;
+  }
+  // a caption in the top-left corner: which map, and whether she is on it
+  function caption(c, mi, p) {
+    var lines = [mi.src === 'live' ? 'LIVE MAP (SLAM running)' : 'SAVED MAP · ' + mi.saved,
+                 !p ? 'her position: unknown until mapping or navigation places her'
+                    : p.fix > 90 ? 'placed ' + Math.round(p.fix / 60) + ' min ago, odometry since' : 'her position: placed by SLAM'];
+    c.textAlign = 'left'; c.font = '10px ui-monospace, monospace';
+    var bw = Math.max(c.measureText(lines[0]).width, c.measureText(lines[1]).width) + 12;
+    c.fillStyle = 'rgba(5,7,12,0.75)'; c.fillRect(4, 4, bw, 30);
+    c.fillStyle = '#7f93ab'; c.fillText(lines[0], 10, 16); c.fillStyle = p ? '#ff6bd6' : '#ffc048'; c.fillText(lines[1], 10, 29);
   }
   function drawMap() {
     if (!S) return;
@@ -562,14 +582,7 @@
     function M(x, y) { return [ox + (x - mi.x0) / mi.res * s, oy + (mi.h - (y - mi.y0) / mi.res) * s]; }
     $('navtag').textContent = (mi.w * mi.res).toFixed(1) + ' × ' + (mi.h * mi.res).toFixed(1) + ' m';
     var p = S.pose;
-    // a caption in the top-left corner: which map, and whether she is on it
-    var lines = [mi.src === 'live' ? 'LIVE MAP (SLAM running)' : 'SAVED MAP · ' + mi.saved,
-                 !p ? 'her position: unknown until mapping or navigation places her'
-                    : p.fix > 90 ? 'placed ' + Math.round(p.fix / 60) + ' min ago, odometry since' : 'her position: placed by SLAM'];
-    c.textAlign = 'left'; c.font = '10px ui-monospace, monospace';
-    var bw = Math.max(c.measureText(lines[0]).width, c.measureText(lines[1]).width) + 12;
-    c.fillStyle = 'rgba(5,7,12,0.75)'; c.fillRect(4, 4, bw, 30);
-    c.fillStyle = '#7f93ab'; c.fillText(lines[0], 10, 16); c.fillStyle = p ? '#ff6bd6' : '#ffc048'; c.fillText(lines[1], 10, 29);
+    caption(c, mi, p);
     if (!p) return;
     var cy = Math.cos(p.yaw), sy = Math.sin(p.yaw);
     function R(x, y) { return M(p.x + cy * x - sy * y, p.y + sy * x + cy * y); }   // her frame -> the map
@@ -591,7 +604,7 @@
     c.restore();
   }
 
-  function frame() { if (view === 'radar') drawRadar(); else drawMap(); requestAnimationFrame(frame); }
+  function frame() { if (view === 'map') drawMap(); else drawRadar(); requestAnimationFrame(frame); }
   requestAnimationFrame(frame);
 
   // ------------------------------------------------------------------- data
