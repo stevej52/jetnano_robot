@@ -43,7 +43,7 @@ after each for the respawn to land:
     3D map      restart the container's launch
     microphone  restart the ears
     listening   restart listen
-    web page    restart web_teleop;   video: restart web_video_server
+    web page    restart web_teleop;   video: restart csi_cameras
     container   start it if it stopped
     guard       bring the collision guard back to active
     GPU         failed to start at boot (its firmware did not load): reboot,

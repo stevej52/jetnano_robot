@@ -18,8 +18,8 @@
     http://<robot>:8081/
 
 For a phone or a laptop on the robot's Wi-Fi, no ROS needed on it. The page
-shows the camera's MJPEG stream (web_video_server in the Isaac container, port
-8080) and a round pad with a knob: up and down is throttle, left and right is
+shows the camera's MJPEG stream (the D435, relayed by jetnano_bringup csi_cameras
+on port 8082) and a round pad with a knob: up and down is throttle, left and right is
 steering, further from the centre is more of it, and any direction in between
 is the mix - so the upper right corner is forward and turning right. The knob
 springs back to the centre when let go. The page posts the command ten times a
@@ -163,7 +163,6 @@ def make_handler(node: 'WebTeleop'):
                     self._send(HTTPStatus.NO_CONTENT, b'', 'image/png')
             elif path == '/config':
                 self._json({
-                    'video_url': node.video_url,
                     'max_linear': node.max_linear,
                     'max_angular': node.max_angular,
                     'command_timeout': node.command_timeout,
@@ -242,8 +241,6 @@ class WebTeleop(Node):
         # is what protects the robot during the coast.
         self.declare_parameter('command_timeout', 0.8)
         self.declare_parameter('publish_rate', 20.0)
-        # Empty: the page uses http://<the host it loaded from>:8080/stream?...
-        self.declare_parameter('video_url', '')
         # The collision guard (drive.launch.py) and its zones, for the switch on
         # the page: switching off sets every zone's `enabled` parameter false,
         # which makes the guard pass commands through untouched. It comes back
@@ -268,7 +265,6 @@ class WebTeleop(Node):
         self.max_linear = float(self.get_parameter('max_linear').value)
         self.max_angular = float(self.get_parameter('max_angular').value)
         self.command_timeout = float(self.get_parameter('command_timeout').value)
-        self.video_url = str(self.get_parameter('video_url').value)
         self.page = self._read_page(str(self.get_parameter('page').value))
 
         self.cmd_pub = self.create_publisher(

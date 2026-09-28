@@ -130,9 +130,11 @@ ros2 launch jetnano_bringup teleop.launch.py
 The camera's colour stream is on whenever the GPU odometry runs (it comes from the
 same container; `ros2_gpu_robot/cuvslam_d435/README.md`, "Watching the camera"):
 
-- **Any browser, phone included, no ROS needed**:
-  `http://192.168.1.7:8080/stream?topic=/camera/color/image_raw`
-  (the root page lists the topics; `/snapshot?topic=...` for one JPEG).
+- **Any browser, phone included, no ROS needed**: the dashboard
+  `http://192.168.1.7:8081/dash`, the driving page `http://192.168.1.7:8081/`, or the
+  raw streams from `csi_cameras`: `http://192.168.1.7:8082/d435.mjpg` (also `front.mjpg`,
+  `rear.mjpg`; `.jpg` for one frame). Port 8080 (`web_video_server`) was retired on
+  2026-09-27.
 - **RViz**: the `drive` view shows the camera large, with the laser scan, nvblox's
   obstacle grid and the EKF's trail in the `odom` frame, following the robot; the `nav`
   view is the same in the `map` frame with the Nav2 panel. Both read the JPEG topic

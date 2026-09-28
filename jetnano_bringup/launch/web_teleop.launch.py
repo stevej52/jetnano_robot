@@ -4,8 +4,8 @@
     http://<robot>:8081/
 
 Runs on the robot (robot.launch.py includes it), for a phone or a laptop on the
-robot's Wi-Fi. The video comes from web_video_server in the Isaac container
-(port 8080); the knob publishes cmd_vel_web, which twist_mux ranks between the
+robot's Wi-Fi. The video comes from jetnano_bringup csi_cameras (port 8082,
+the D435 relayed); the knob publishes cmd_vel_web, which twist_mux ranks between the
 joystick and Nav2. Details in jetnano_teleop/web_teleop.py.
 """
 
@@ -25,9 +25,6 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'max_angular', default_value='2.4',
             description='rad/s while a left/right arrow is held; 2.4 is full steering lock'),
-        DeclareLaunchArgument(
-            'video_url', default_value='',
-            description="the MJPEG stream; empty = http://<host the page came from>:8080/stream?topic=/camera/color/image_raw"),
 
         Node(
             package='jetnano_teleop',
@@ -40,7 +37,6 @@ def generate_launch_description():
                 'port': ParameterValue(LaunchConfiguration('port'), value_type=int),
                 'max_linear': ParameterValue(LaunchConfiguration('max_linear'), value_type=float),
                 'max_angular': ParameterValue(LaunchConfiguration('max_angular'), value_type=float),
-                'video_url': LaunchConfiguration('video_url'),
             }],
         ),
     ])
