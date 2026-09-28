@@ -44,7 +44,10 @@ bt_navigator:
     robot_base_frame: base_link
     odom_topic: /odometry/filtered
     bt_loop_duration: 10
-    default_server_timeout: 20
+    # ms. The stock 20 was too short on the loaded Jetson (2026-09-27): the BT gave up on a
+    # goal the controller had already accepted, and the controller drove the path unsupervised.
+    default_server_timeout: 200
+    wait_for_service_timeout: 1000
     # Nav2's stock trees recover by spinning; this crawler cannot, and
     # behavior_server has no spin plugin, so bt_navigator would refuse to load
     # them. These are the same trees minus Spin. __BT_DIR__ is replaced with

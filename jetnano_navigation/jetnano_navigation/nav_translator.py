@@ -74,7 +74,9 @@ class NavTranslator(Node):
         self.passthrough = bool(self.declare_parameter('passthrough', False).value)
         # steering units per second: near a goal Nav2's tiny corrections become sharp curves at
         # crawl speed, and without this the wheels flicked to full lock in the last 10 cm
-        self.max_steer_rate = float(self.declare_parameter('max_steer_rate', 4.0).value)
+        # 8/s: a full-lock swap in 0.6 s. At 4/s it took 0.36 m of travel, too slow for the
+        # direction changes of a turn-around (2026-09-27 tests)
+        self.max_steer_rate = float(self.declare_parameter('max_steer_rate', 8.0).value)
         self.steer = 0.0
         self.trim = 0.0
         self.measured = 0.0
@@ -97,9 +99,12 @@ class NavTranslator(Node):
         v, w = m.linear.x, m.angular.z
         out = Twist()
         if abs(v) < self.stop_below:
+            # stopped, often only for a direction change: keep the wheels where they are rather
+            # than centring them and swinging back (twist_mux / the driver centre them anyway
+            # once Nav2 goes quiet)
             self.trim = 0.0
-            self.steer = 0.0
-            self.pub.publish(out)          # Nav2 wants her stopped: all zeros
+            out.angular.z = self.steer
+            self.pub.publish(out)
             return
         # speed: the measured table, then a slow nudge toward the speed Nav2 asked for
         base = throttle_for(v, SPEED_FWD if v > 0 else SPEED_REV)

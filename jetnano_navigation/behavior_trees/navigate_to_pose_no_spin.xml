@@ -3,6 +3,15 @@
   Spin recovery removed: this is a four-wheel-steering crawler and cannot turn on
   the spot, so behavior_server has no spin plugin and bt_navigator refuses a tree
   that names one. Recoveries left: clear the costmaps, wait, back up.
+
+  Replanning every 5 s instead of every second (2026-09-27). A four-wheel-steering car
+  turns around with a multi-point manoeuvre, and a fresh plan every second handed her a
+  different manoeuvre halfway through the last one: 49 of 64 s shuffling on the first
+  return trip. Replanning ONLY when the path became invalid was tried next and was too
+  strict: she came out of a turn crooked at a doorway, the controller saw "collision
+  ahead", the path was still valid on the global map, so nothing replanned and the goal
+  aborted. Every 5 s leaves time to finish a manoeuvre and still replans from where she
+  really is.
 -->
 <root BTCPP_format="4" main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
@@ -10,7 +19,7 @@
       <PipelineSequence name="NavigateWithReplanning">
         <ControllerSelector selected_controller="{selected_controller}" default_controller="FollowPath" topic_name="controller_selector"/>
         <PlannerSelector selected_planner="{selected_planner}" default_planner="GridBased" topic_name="planner_selector"/>
-        <RateController hz="1.0">
+        <RateController hz="0.2">
           <RecoveryNode number_of_retries="1" name="ComputePathToPose">
             <ComputePathToPose goal="{goal}" path="{path}" planner_id="{selected_planner}" error_code_id="{compute_path_error_code}"/>
             <Sequence>
