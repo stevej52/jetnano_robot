@@ -78,6 +78,11 @@ class NavTranslator(Node):
         # 8/s: a full-lock swap in 0.6 s. At 4/s it took 0.36 m of travel, too slow for the
         # direction changes of a turn-around (2026-09-27 tests)
         self.max_steer_rate = float(self.declare_parameter('max_steer_rate', 8.0).value)
+        # throttle added near full lock, none below half lock: four-wheel steering at full lock
+        # scrubs all four tyres, and the speed table was measured going straight. 2026-09-28,
+        # a goal's last metre: Nav2 asked 0.08 m/s on a 10 cm radius, full lock at throttle 0.08,
+        # and she slowed from 0.22 m/s to a standstill until the motion check stopped her.
+        self.lock_boost = float(self.declare_parameter('lock_throttle_boost', 0.04).value)
         self.steer = 0.0
         self.trim = 0.0
         self.measured = 0.0
@@ -119,7 +124,6 @@ class NavTranslator(Node):
         err = abs(v) - abs(self.measured) if (self.measured > 0) == (v > 0) else abs(v)
         self.trim = max(-self.trim_limit, min(self.trim_limit, self.trim + self.ki * err * dt))
         throttle = max(0.0, min(self.max_throttle, base + self.trim))
-        out.linear.x = math.copysign(throttle, v)
         # steering: the planned curve, whatever the speed
         curvature = w / v
         steer = curvature / (self.gain_left if curvature > 0 else self.gain_right)
@@ -127,6 +131,9 @@ class NavTranslator(Node):
         step = self.max_steer_rate * (dt if dt > 0 else 0.05)
         self.steer = max(self.steer - step, min(self.steer + step, steer))
         out.angular.z = self.steer
+        lock = max(0.0, min(1.0, (abs(self.steer) / self.max_steer - 0.5) / 0.5))
+        throttle = min(self.max_throttle, throttle + self.lock_boost * lock)
+        out.linear.x = math.copysign(throttle, v)
         self.pub.publish(out)
 
 

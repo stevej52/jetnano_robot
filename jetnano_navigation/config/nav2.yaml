@@ -43,7 +43,11 @@ bt_navigator:
     global_frame: map
     robot_base_frame: base_link
     odom_topic: /odometry/filtered
-    bt_loop_duration: 10
+    # ms between behaviour-tree ticks (stock 10). The tree only dispatches and watches - the
+    # controller runs at its own 20 Hz - and every tick publishes navigate_to_pose feedback:
+    # 63 a second on the 2026-09-28 drives, the biggest stream the recorder and a goal
+    # client had to take in. 50 ms: 20 a second.
+    bt_loop_duration: 50
     # ms. The stock 20 was too short on the loaded Jetson (2026-09-27): the BT gave up on a
     # goal the controller had already accepted, and the controller drove the path unsupervised.
     default_server_timeout: 200

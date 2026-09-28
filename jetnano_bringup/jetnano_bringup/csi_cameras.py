@@ -49,6 +49,7 @@ Plain HTTP on the robot's own network, no login - like the driving page.
 """
 
 import json
+import signal
 import subprocess
 import threading
 import time
@@ -97,7 +98,9 @@ class Camera:
         return 1 if day else 4
 
     def _command(self):
-        head = ['gst-launch-1.0', '-q', 'nvarguscamerasrc', f'sensor-id={self.sensor}', f'wbmode={self._wbmode()}']
+        # -e: on SIGINT, an end-of-stream through the pipeline before exiting (see _stop)
+        head = ['gst-launch-1.0', '-e', '-q', 'nvarguscamerasrc', f'sensor-id={self.sensor}',
+                f'wbmode={self._wbmode()}']
         tail = ['!', 'nvjpegenc', f'quality={self.quality}', '!', 'fdsink', 'fd=1']
         if self.native:      # the sensor itself runs at the rate we send
             return head + ['!', f'video/x-raw(memory:NVMM),width=1280,height=720,framerate={self.fps}/1',
@@ -109,6 +112,34 @@ class Camera:
                        '!', 'videorate', 'drop-only=true',
                        '!', f'video/x-raw(memory:NVMM),framerate={self.fps}/1'] + tail
 
+    def _stop(self, proc):
+        """End the pipeline the way GStreamer wants: SIGINT, which with -e is an end-of-stream
+        through every element - the camera closed, the NVMM buffers freed - before it exits.
+
+        SIGTERM, what it got until 2026-09-28, kills gst-launch at once with its buffers still
+        mapped, and the kernel tears them down at exit; that day, after 791 such stops, the GPU
+        driver oopsed doing it (NULL dereference in nvgpu_mem_get_addr, via gk20a_as_dev_release)
+        and the kernel panicked with Rosie parked. SIGTERM and SIGKILL are only the fallbacks.
+        """
+        if proc.poll() is not None:
+            return                                          # it ended by itself
+        # keep reading while it winds down: fdsink must be able to write out what the
+        # end-of-stream flushes, or it blocks on a full pipe and never finishes
+        drain = threading.Thread(target=lambda: [None for _ in iter(lambda: proc.stdout.read(65536), b'')],
+                                 daemon=True)
+        drain.start()
+        proc.send_signal(signal.SIGINT)
+        for sig, wait_s in ((None, 8.0), (signal.SIGTERM, 3.0), (signal.SIGKILL, 3.0)):
+            if sig is not None:
+                self.node.get_logger().warning(f'{self.name}: the pipeline did not end on its own, {sig.name}')
+                proc.send_signal(sig)
+            try:
+                proc.wait(timeout=wait_s)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        drain.join(timeout=1.0)
+
     def _run(self):
         while True:
             with self.cond:
@@ -116,7 +147,8 @@ class Camera:
                     self.cond.wait(1.0)
             cmd = self._command()
             self.node.get_logger().info(f'{self.name}: starting (sensor {self.sensor}, '
-                                        f'{self.width}x{self.height} at {self.fps} fps, wbmode {cmd[4][7:]}, '
+                                        f'{self.width}x{self.height} at {self.fps} fps, '
+                                        f'wbmode {next(a for a in cmd if a.startswith("wbmode="))[7:]}, '
                                         f'{"sensor at that rate" if self.native else "sensor at 30 fps, frames dropped"})')
             got = ended_idle = False
             try:
@@ -149,11 +181,7 @@ class Camera:
                 if idle:
                     ended_idle = True
                     break
-            self.proc.terminate()
-            try:
-                self.proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.proc.kill()
+            self._stop(self.proc)
             self.proc = None
             with self.cond:
                 self.frame = None

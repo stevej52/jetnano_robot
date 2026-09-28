@@ -68,8 +68,12 @@ def _mola(context):
     scan_topic = LaunchConfiguration('scan_topic').perform(context)
     cpus = LaunchConfiguration('cpus').perform(context).strip() or str(os.cpu_count() - 1)
     pin = [] if cpus == 'all' else ['taskset', '-c', cpus]
+    # nice -5 (jetnano-robot.service allows down to -10; the EKF has -10): on its one core it
+    # still competed with whatever else the scheduler put there, and on the 2026-09-28 drives
+    # it dropped scans ("worker busy") 44-53 times a drive, silent for up to 4 s
+    pin = ['nice', '-n', '-5'] + pin
     return [
-        LogInfo(msg=f'lidar odometry: MOLA on CPU {cpus}' if pin else 'lidar odometry: MOLA on all CPUs'),
+        LogInfo(msg=f'lidar odometry: MOLA on CPU {cpus}, nice -5' if cpus != 'all' else 'lidar odometry: MOLA on all CPUs, nice -5'),
         ExecuteProcess(
             name='mola_lidar_odometry',
             cmd=pin + [
