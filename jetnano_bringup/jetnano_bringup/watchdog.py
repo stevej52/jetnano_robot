@@ -322,9 +322,8 @@ class Watchdog(Node):
                         or (need == 'slam' and self.slam_active and now - self.slam_since > 60.0))
             if not expected:
                 continue
-            source = self.items.get(depends) or self.http_items.get(depends) if depends else None
-            if source is not None and source.state != 'ok':
-                continue                  # its source is down: fix that first
+            if self._upstream_down(depends):
+                continue                  # its source (or its source's source) is down: fix that first
             silent = age < 0 or age > stale
             if silent:
                 if self._in_grace() or self._starting(item):
@@ -595,6 +594,13 @@ class Watchdog(Node):
                     item.step -= 1                     # someone else is restarting it: try later
                     item.next_at = self.container_busy_until
                     return
+                if action == 'container_launch' and self._launch_young():
+                    # The safety monitor restarts the launch 5 s into a silence and the wrapper
+                    # respawns it 10 s later; it needs ~15 s more to publish. On 2026-09-27 this
+                    # step fired 12 s into that relaunch, killed it, and doubled the outage (56 s).
+                    item.step -= 1
+                    item.next_at = now + 10.0
+                    return
                 self.container_busy_until = now + settle
             item.actions.append(now)
             self._event('act', item.label, self._describe(action, arg))
@@ -656,6 +662,39 @@ class Watchdog(Node):
             if item is not None:
                 with self.lock:
                     item.next_at = time.monotonic() + settle
+
+    def _upstream_down(self, key) -> bool:
+        """True if this source, or anything it depends on, is not ok. The whole chain: on
+        2026-09-27 a frozen camera odometry left the 3D map item skipped (so still 'ok') and
+        the obstacle feed below it got restarted for a fault that was two levels up."""
+        seen = set()
+        while key and key not in seen:
+            seen.add(key)
+            source = self.items.get(key) or self.http_items.get(key)
+            if source is None:
+                return False
+            if source.state != 'ok':
+                return True
+            key = TOPICS[key][5] if key in TOPICS else None
+        return False
+
+    def _launch_young(self) -> bool:
+        """True while the camera pipeline's wrapper is between respawns or started under
+        young_process_s ago: its launch is still coming up and must not be restarted."""
+        pids = self._pids(proc('jetnano_bringup/cuvslam_vo.sh'))
+        if not pids:
+            return True               # between exit and respawn: odometry.launch.py brings it back
+        try:
+            with open('/proc/uptime') as f:
+                up = float(f.read().split()[0])
+            tick = os.sysconf('SC_CLK_TCK')
+            starts = []
+            for pid in pids:              # the wrapper forks subshells with the same command line:
+                with open(f'/proc/{pid}/stat') as f:           # its own start is the oldest
+                    starts.append(int(f.read().rsplit(')', 1)[1].split()[19]) / tick)
+            return up - min(starts) < self.young_s
+        except (OSError, ValueError, IndexError):
+            return False
 
     def _starting(self, item) -> bool:
         """True if the process behind this item was started moments ago."""
