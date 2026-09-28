@@ -22,7 +22,11 @@ with the microphone and keep doing it until you don't hear nothing":
 
 2026-09-28, on the floor with Nav2 driving: 4-6-8-8 degrees gave up twice in five
 minutes (12-16 dB left) and the buzz went on until she moved; Steve: "wiggle a
-little harder". Now 6-10-14-18 degrees, and rounds instead of one try.
+little harder". Now 6-10-14-18 degrees, and rounds instead of one try. Bigger alone
+did not do it (two rounds, 15-19 dB left), so each wiggle is now Steve's "turn it fast
+and then bring it back slow": a snap to one side to break the tyres loose, held a
+quarter second, then a slow ramp back to centre so the load does not wind up again;
+alternate tries go to alternate sides.
 
 Publishes ``steering/buzz`` (dB per half second) for watching it live.
 """
@@ -52,7 +56,9 @@ class Settle(Node):
         self.declare_parameter('wiggle_deg', [6.0, 10.0, 14.0, 18.0])  # each try, a little bigger
         self.declare_parameter('rounds', 3)                    # rounds of those per stop ...
         self.declare_parameter('retry_s', 20.0)                # ... this far apart
-        self.declare_parameter('step_s', 0.25)                 # one way, other way, centre
+        self.declare_parameter('step_s', 0.25)                 # the snap, held this long
+        self.declare_parameter('return_s', 1.2)                # then back to centre this slowly
+        self.declare_parameter('tick_s', 0.05)                 # one steering command every
         # ros2_pca9685 steers by cmd_vel angular.z: |twist.angular_z| in pca9685.yaml
         self.declare_parameter('deg_per_rad_s', 18.33)
 
@@ -71,6 +77,7 @@ class Settle(Node):
         self.gave_up_at = None                  # the end of a round that did not quiet it
         self.reported = True
         self.plan: list[float] = []
+        self.side = 1.0                         # the next snap's side; flips every wiggle
         self.step_timer = None
         self.talking = False                    # someone speaking (listen), or her own voice
         self.speaking = False
@@ -195,14 +202,19 @@ class Settle(Node):
 
     # ------------------------------------------------------------------ wiggle --
     def _wiggle(self, deg: float) -> None:
-        z = deg / float(self.get_parameter('deg_per_rad_s').value)
-        self.plan = [z, -z, 0.0]
+        # out fast, back slow: the snap held for step_s, then a ramp to centre over return_s
+        z = self.side * deg / float(self.get_parameter('deg_per_rad_s').value)
+        self.side = -self.side
+        tick = float(self.get_parameter('tick_s').value)
+        hold = max(1, round(float(self.get_parameter('step_s').value) / tick))
+        ramp = max(1, round(float(self.get_parameter('return_s').value) / tick))
+        self.plan = [z] * hold + [z * (1.0 - k / ramp) for k in range(1, ramp + 1)]
         self.recent.clear()
         self.powers.clear()
-        step = float(self.get_parameter('step_s').value)
-        self.next_check = self._now() + 3 * step + float(self.get_parameter('between_s').value)
+        self.next_check = (self._now() + len(self.plan) * tick
+                           + float(self.get_parameter('between_s').value))
         self._step()
-        self.step_timer = self.create_timer(step, self._step)
+        self.step_timer = self.create_timer(tick, self._step)
 
     def _step(self) -> None:
         if not self.plan:
