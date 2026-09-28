@@ -225,6 +225,9 @@ def generate_launch_description():
             output='screen',
             respawn=True,
             respawn_delay=10.0,
+            # the RealSense is mounted upside down since 2026-09-27 (jetnano.urdf.xacro
+            # camera_rpy): the web pages turn its picture back
+            parameters=[{'d435_rotate': 180}],
             condition=IfCondition(LaunchConfiguration('use_csi_cameras')),
         ),
 

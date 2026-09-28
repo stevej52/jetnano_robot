@@ -154,6 +154,11 @@
   // The robot's own relay (jetnano_bringup csi_cameras, port 8082) since 2026-09-27:
   // NVIDIA's web_video_server on 8080 hung under the snapshot fallback.
   var host = 'http://' + location.hostname + ':8082';
+  // The RealSense is mounted upside down since 2026-09-27: the relay says how far
+  // to turn its picture (csi_cameras d435_rotate), and the browser does it.
+  fetch(host + '/config.json').then(function (r) { return r.json(); }).then(function (c) {
+    video.style.transform = c.d435_rotate ? 'rotate(' + c.d435_rotate + 'deg)' : '';
+  }).catch(function () {});
   var LEVELS = {
     full: { stream: '/d435.mjpg?fps=30', note: '640x480 at 30 fps, ~12 Mbit/s - good Wi-Fi only' },
     low:  { stream: '/d435.mjpg?fps=12&w=320&q=50', note: '320x240 at 12 fps, ~1.5 Mbit/s' },

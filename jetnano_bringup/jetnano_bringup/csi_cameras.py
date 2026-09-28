@@ -18,6 +18,10 @@
     http://<robot>:8082/front.mjpg     the pan-tilt camera (sensor-id 0, port A)
     http://<robot>:8082/rear.mjpg      the rear camera     (sensor-id 1, port C)
     http://<robot>:8082/d435.mjpg      the RealSense colour stream (relayed, see below)
+    http://<robot>:8082/config.json    {"d435_rotate": 180}: how the pages must turn the
+                                       RealSense picture (param d435_rotate; the camera is
+                                       mounted upside down since 2026-09-27). The browser
+                                       turns it (CSS), so it costs the robot nothing.
     http://<robot>:8082/front.jpg      one picture (any camera: <name>.jpg)
     ?fps=5 &w=320 &q=50                per viewer: fewer frames, smaller, rougher
 
@@ -44,6 +48,7 @@ most neutral (2026-09-26). ``wbmode`` -1 picks by the clock: auto (1) from
 Plain HTTP on the robot's own network, no login - like the driving page.
 """
 
+import json
 import subprocess
 import threading
 import time
@@ -225,7 +230,8 @@ def shrink(cam, seq, frame, width, quality):
     return small
 
 
-def make_handler(cameras):
+def make_handler(cameras, config=None):
+    config_body = json.dumps(config or {}).encode()
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = 'HTTP/1.1'
@@ -236,6 +242,15 @@ def make_handler(cameras):
         def do_GET(self):
             path, _, query = self.path.partition('?')
             args = {k: v[-1] for k, v in parse_qs(query).items()}
+            if path.strip('/') == 'config.json':
+                self.send_response(HTTPStatus.OK)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(config_body)))
+                self.send_header('Cache-Control', 'no-store')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(config_body)
+                return
             name, _, kind = path.strip('/').partition('.')
             cam = cameras.get(name)
             if cam is None or kind not in ('mjpg', 'jpg'):
@@ -302,13 +317,15 @@ class CsiCameras(Node):
         self.declare_parameter('front', [0, 960, 540, 15, 80])     # sensor, width, height, fps, quality
         self.declare_parameter('rear', [1, 640, 360, 10, 70])
         self.declare_parameter('d435_topic', '/camera/color/image_raw/compressed')
+        self.declare_parameter('d435_rotate', 0)      # degrees the pages turn the RealSense picture
         cams = {}
         for name in ('front', 'rear'):
             s, w, h, f, q = [int(v) for v in self.get_parameter(name).value]
             cams[name] = Camera(self, name, s, w, h, f, q)
         cams['d435'] = RosCamera(self, 'd435', str(self.get_parameter('d435_topic').value))
         port = int(self.get_parameter('port').value)
-        self.server = ThreadingHTTPServer(('0.0.0.0', port), make_handler(cams))
+        config = {'d435_rotate': int(self.get_parameter('d435_rotate').value) % 360}
+        self.server = ThreadingHTTPServer(('0.0.0.0', port), make_handler(cams, config))
         self.server.daemon_threads = True
         threading.Thread(target=self.server.serve_forever, daemon=True, name='csi-http').start()
         self.get_logger().info(f'cameras on http://0.0.0.0:{port}/: front, rear, d435 (.mjpg / .jpg, on demand)')

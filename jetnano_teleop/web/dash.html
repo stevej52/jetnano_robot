@@ -287,6 +287,10 @@
   }
   stream($('camimg'), 'http://' + host + ':8082/d435.mjpg',
          document.querySelector('#cam .nofeed'));
+  // the RealSense is upside down since 2026-09-27; the relay says how far to turn it
+  fetch('http://' + host + ':8082/config.json').then(function (r) { return r.json(); }).then(function (c) {
+    $('camimg').style.transform = c.d435_rotate ? 'rotate(' + c.d435_rotate + 'deg)' : '';
+  }).catch(function () {});
   stream($('rearimg'), 'http://' + host + ':8082/rear.mjpg');
   stream($('panimg'), 'http://' + host + ':8082/front.mjpg', document.querySelector('#pan .nofeed'));
 

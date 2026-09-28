@@ -56,7 +56,8 @@
        lower than that; the camera covers the gap). The IMU is on the frame
        and did not move; its position is still an estimate. The ORIENTATIONS
        were checked on the robot 2026-09-22: lidar 0 deg is the nose and
-       angles run counter-clockwise (REP-103), the camera image is upright,
+       angles run counter-clockwise (REP-103), the camera image is upright
+       (until 2026-09-27; the camera is now upside down, see camera_rpy),
        and the BNO055 is bolted upside down, turned 90 deg and tilted 10 deg
        on its bracket - the sensor's +y is the robot's +x, its +x the robot's
        +y, its +z the robot's -z. imu_rpy is the rotation from the tilt
@@ -86,9 +87,16 @@
        between the front wheels, 0.35 m ahead of the rear axle (x = 0.35 - 0.165),
        held by tape for now. Plane fit the same evening: 7.8 deg UP (pitch
        -0.136), 1.2 deg roll, lens 0.112 m above the floor (Steve measured 0.11),
-       31 837 inlier points, 3 mm mean residual. -->
-  <xacro:property name="camera_xyz" value="0.185 0.0 0.047"/>
-  <xacro:property name="camera_rpy" value="-0.021 -0.136 0"/>
+       31 837 inlier points, 3 mm mean residual.
+       Turned UPSIDE DOWN 2026-09-27 (Steve: its USB port now faces the Jetson's,
+       and the USB extension is gone - the suspect in the camera dropouts). Roll
+       ~180 deg says so; cuVSLAM and nvblox take it from here through TF, and the
+       web pages turn the picture back (csi_cameras d435_rotate). Plane fit right
+       after (camera_pitch.py with its upside-down option): 6.8 deg UP (pitch -0.118), roll
+       179.3 deg, lens 0.113 m above the floor, 34 166 inliers, 3 mm mean residual.
+       If it is ever turned back upright: roll back to ~0 and d435_rotate 0. -->
+  <xacro:property name="camera_xyz" value="0.185 0.0 0.048"/>
+  <xacro:property name="camera_rpy" value="3.130 -0.118 0"/>
   <xacro:property name="imu_xyz"    value="0.0 0.0 0.060"/>
   <xacro:property name="imu_rpy"    value="2.9698 0.0552 1.5680"/>
 
