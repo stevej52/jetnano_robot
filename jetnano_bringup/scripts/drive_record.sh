@@ -32,7 +32,6 @@
 #                                picture a second from each camera
 #       rates-start.txt, rates-end.txt   the watchdog's rate of every stream
 #       journal.txt              the system journal (kernel included) for the drive
-#       report.txt               drive_report
 # `stop` stops the recorder, drive_log and tegrastats and says so; drive_log stops
 # the lot by itself after two hours in case nobody did.
 
@@ -124,9 +123,9 @@ case "${1:-status}" in
         LEFT=$(left_running)
         if [ -d "$EXTRA" ]; then
             journalctl --since "@$(cat "$EXTRA/started")" --no-pager -o short-iso-precise > "$EXTRA/journal.txt" 2>&1
-            echo "stopped; report for $BAG (also in $EXTRA/report.txt):"
+            echo "stopped; report for $BAG:"
             echo
-            ros2 run jetnano_bringup drive_report "$BAG" 2>&1 | tee "$EXTRA/report.txt"
+            ros2 run jetnano_bringup drive_report "$BAG"
             echo
             echo "kept: $(du -sh "$BAG" | cut -f1) bag, $(du -sh "$EXTRA" | cut -f1) extra" \
                  "($(find "$EXTRA/frames" -name '*.jpg' 2>/dev/null | wc -l) pictures)"

@@ -349,6 +349,16 @@ camera, and throttle-to-ground-speed from steady stretches - and saves it as
 it again later. The first mapping drive (2026-09-24) was diagnosed from
 exactly this data: the EKF had left its sensor and run 6.5 km.
 
+`drive_record.sh start full` is for a test drive to look back at in detail:
+the bag also gets the whole command chain from Nav2's controller to the servo
+board, every stop and guard, MOLA's raw pose, where_am_i's verdicts, Nav2's
+goal, plans, behaviour tree and costmaps, the camera's obstacle points, the
+watchdog, diagnostics and every node's log; beside it `drive-<date>-extra/`
+gets tegrastats, `drive_log`'s CPU, memory, Wi-Fi and busy processes, a
+picture a second from each camera, the watchdog's rates at both ends and the
+journal. About 55 MB a minute and 0.9 of a core (bench, 2026-09-28); `stop`
+turns every part of it off and says so, and it stops itself after two hours.
+
 ### The collision guard
 
 Whoever is driving - phone, joystick, Nav2, the tilt guard's recovery - the
