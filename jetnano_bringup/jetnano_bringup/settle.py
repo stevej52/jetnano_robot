@@ -28,6 +28,15 @@ and then bring it back slow": a snap to one side to break the tyres loose, held 
 quarter second, then a slow ramp back to centre so the load does not wind up again;
 alternate tries go to alternate sides.
 
+That did not do it either. What did (Steve, by ear, the same afternoon): a test that
+switched each servo's signal off for a few seconds and then sent it back to centre -
+the steering went quiet and stayed quiet. A servo with no signal stops holding, the
+tyres unwind, and centre is then reached without the load. So the cure is now
+``mode: release``: both steering servos' pulses off (pca9685 ``<name>/pulse_width``
+0) for ``release_s``, then a zero twist on ``cmd_vel_settle`` brings them back to
+centre through twist_mux (a driver still wins); 2, 4, then 6 s a round. ``mode:
+wiggle`` keeps the old way.
+
 Publishes ``steering/buzz`` (dB per half second) for watching it live.
 """
 
@@ -37,7 +46,7 @@ import numpy as np
 import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
-from std_msgs.msg import Bool, Float32, Int16MultiArray
+from std_msgs.msg import Bool, Float32, Float64, Int16MultiArray
 
 RATE_HZ = 16000
 CHUNK = 1600                       # the ears send 100 ms a message
@@ -61,6 +70,10 @@ class Settle(Node):
         self.declare_parameter('tick_s', 0.05)                 # one steering command every
         # ros2_pca9685 steers by cmd_vel angular.z: |twist.angular_z| in pca9685.yaml
         self.declare_parameter('deg_per_rad_s', 18.33)
+        # release | wiggle: what to do about a buzz (see the docstring)
+        self.declare_parameter('mode', 'release')
+        self.declare_parameter('release_s', [2.0, 4.0, 6.0])  # each try, signal off this long
+        self.declare_parameter('steering_channels', ['steering', 'rear_steering'])  # pca9685's
 
         lo, hi = self.get_parameter('band_hz').value
         freqs = np.fft.rfftfreq(CHUNK, 1.0 / RATE_HZ)
@@ -85,6 +98,9 @@ class Settle(Node):
 
         self.buzz_pub = self.create_publisher(Float32, 'steering/buzz', 10)
         self.cmd_pub = self.create_publisher(Twist, 'cmd_vel_settle', 10)
+        self.off_pubs = [self.create_publisher(Float64, f'/pca9685/{name}/pulse_width', 10)
+                         for name in self.get_parameter('steering_channels').value]
+        self.release_timer = None
         self.create_subscription(Int16MultiArray, 'sound/audio', self._on_audio, 10)
         self.create_subscription(Twist, 'cmd_vel', self._on_cmd, 10)
         for topic in self.locked:
@@ -96,7 +112,9 @@ class Settle(Node):
         self.create_subscription(Bool, 'sound/loud', self._on_loud, 10)
         self.get_logger().info(
             f'listening for steering buzz at {lo:g}-{hi:g} Hz over {self.get_parameter("buzz_db").value:g} dB; '
-            f'wiggles {", ".join(f"{d:g}" for d in self.get_parameter("wiggle_deg").value)} deg')
+            + (f'releases {", ".join(f"{d:g}" for d in self.get_parameter("release_s").value)} s'
+               if self._releasing() else
+               f'wiggles {", ".join(f"{d:g}" for d in self.get_parameter("wiggle_deg").value)} deg'))
 
     # ------------------------------------------------------------------ inputs --
     def _now(self) -> float:
@@ -121,8 +139,14 @@ class Settle(Node):
         if msg.data:
             self.hush_until = self._now() + 1.0
 
+    def _releasing(self) -> bool:
+        return str(self.get_parameter('mode').value) == 'release'
+
+    def _tries(self) -> list:
+        return list(self.get_parameter('release_s' if self._releasing() else 'wiggle_deg').value)
+
     def _on_cmd(self, msg: Twist) -> None:
-        if self.plan or self.step_timer is not None:
+        if self.plan or self.step_timer is not None or self.release_timer is not None:
             return                                          # our own wiggle coming back round
         if any(abs(v) > 1e-6 for v in (msg.linear.x, msg.linear.y, msg.angular.z)):
             if self.attempt and not self.reported:
@@ -148,7 +172,7 @@ class Settle(Node):
         band = np.sort(power[self.band])
         buzz = float(10.0 * math.log10(max(band[-3:].mean(), 1e-20) / max(float(np.median(band)), 1e-20)))
         self.buzz_pub.publish(Float32(data=buzz))
-        if self.step_timer is not None or self._now() < self.quiet_from:
+        if self.step_timer is not None or self.release_timer is not None or self._now() < self.quiet_from:
             self.recent.clear()                             # her own motion is not a buzz
             return
         if self.talking or self.speaking or self._now() < self.hush_until:
@@ -165,7 +189,7 @@ class Settle(Node):
 
     def _decide(self) -> None:
         now = self._now()
-        wiggles = list(self.get_parameter('wiggle_deg').value)
+        wiggles = self._tries()
         if now < self.next_check:
             return
         if any(self.locked.values()):
@@ -185,10 +209,11 @@ class Settle(Node):
             deg = wiggles[self.attempt]
             self.attempt += 1
             self.reported = False
+            what = 'release' if self._releasing() else 'wiggle'
             self.get_logger().info(
                 f'steering buzzing ({max(self.recent):.0f} dB): round {self.round}, '
-                f'wiggle {self.attempt} of {len(wiggles)}, {deg:g} deg')
-            self._wiggle(deg)
+                f'{what} {self.attempt} of {len(wiggles)}, {deg:g} {"s" if self._releasing() else "deg"}')
+            (self._release if self._releasing() else self._wiggle)(deg)
             return
         elif self.attempt and not self.reported and len(self.recent) >= int(self.get_parameter('windows').value):
             self._report('quiet')
@@ -196,9 +221,29 @@ class Settle(Node):
     def _report(self, outcome: str) -> None:
         self.reported = True
         level = max(self.recent) if self.recent else float('nan')
-        done = (self.round - 1) * len(self.get_parameter('wiggle_deg').value) + self.attempt
-        text = f'{outcome} after {done} wiggle{"s" if done != 1 else ""} ({level:.0f} dB)'
+        done = (self.round - 1) * len(self._tries()) + self.attempt
+        what = 'release' if self._releasing() else 'wiggle'
+        text = f'{outcome} after {done} {what}{"s" if done != 1 else ""} ({level:.0f} dB)'
         (self.get_logger().warning if outcome.startswith('giving up') else self.get_logger().info)(text)
+
+    # ----------------------------------------------------------------- release --
+    def _release(self, seconds: float) -> None:
+        """Both steering servos' pulses off for a while, then back to centre."""
+        for pub in self.off_pubs:
+            pub.publish(Float64(data=0.0))              # zero pulse width: the output off
+        self.recent.clear()
+        self.powers.clear()
+        self.next_check = self._now() + seconds + 0.5 + float(self.get_parameter('between_s').value)
+        self.release_timer = self.create_timer(seconds, self._recentre)
+
+    def _recentre(self) -> None:
+        self.release_timer.cancel()
+        self.destroy_timer(self.release_timer)
+        self.release_timer = None
+        # a zero twist through twist_mux: the driver puts both at their home angles
+        # (a real driver, Nav2 or a lock still wins); the watchdog's timeout keeps them there
+        self.cmd_pub.publish(Twist())
+        self.quiet_from = self._now() + 0.5
 
     # ------------------------------------------------------------------ wiggle --
     def _wiggle(self, deg: float) -> None:
