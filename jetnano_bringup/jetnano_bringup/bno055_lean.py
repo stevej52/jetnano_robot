@@ -20,11 +20,12 @@ plus imu/imu_raw, imu/mag, imu/grav and imu/temp, which nothing on Rosie subscri
 That cost 19.5 % of a core (2026-09-27), the most of any program outside the camera
 container.
 
-This is the stock driver - its node, parameters, calibration offsets, I2C connector,
-timers and error handling, started through its own main() - with one method replaced:
-the per-cycle read. It unpacks the 45 bytes in one go, builds imu/imu exactly as the
-stock driver does (same fields, units and covariances), and builds the other four only
-while something subscribes to them, so `ros2 topic echo /imu/mag` still works.
+This is the stock driver - its node, parameters, calibration offsets and I2C connector -
+with the per-cycle read replaced and a lighter executor. The read unpacks the 45 bytes
+in one go, builds imu/imu exactly as the stock driver does (same fields, units and
+covariances), and builds the other four only while something subscribes to them, so
+`ros2 topic echo /imu/mag` still works. main() is the stock one's timers and error
+handling, spun by rclpy's EventsExecutor (see main).
 """
 
 import math
@@ -32,9 +33,13 @@ import struct
 
 from bno055 import bno055 as upstream
 from bno055 import registers
+from bno055.error_handling.exceptions import BusOverRunException
 from bno055.sensor.SensorService import SensorService
 from geometry_msgs.msg import Vector3
 import numpy as np
+import rclpy
+from rclpy.executors import ExternalShutdownException
+from rclpy.experimental import EventsExecutor
 from sensor_msgs.msg import Imu, MagneticField, Temperature
 
 # the 44 bytes from ACC_DATA_X_LSB to GRV_DATA_Z_MSB as little-endian int16:
@@ -126,9 +131,47 @@ class LeanSensorService(SensorService):
 
 
 def main(args=None):
+    """Run the stock node and timers, spun by rclpy's EventsExecutor.
+
+    The stock main() spins the default SingleThreadedExecutor, which rebuilds its wait
+    set in Python on every wake-up: at 100 Hz that, not the I2C read, was most of the
+    driver's CPU (16.7 % of a core with only the unread messages removed).
+    """
     # the stock setup() builds `SensorService(...)` by this module-level name
     upstream.SensorService = LeanSensorService
-    upstream.main(args)
+    rclpy.init(args=args)
+    node = upstream.Bno055Node()
+    try:
+        node.setup()
+
+        def read_data():
+            try:
+                node.sensor.get_sensor_data()
+            except (BusOverRunException, ZeroDivisionError):
+                return  # data not ready, or an all-zero quaternion: skip this cycle
+            except Exception as e:  # noqa: B902 - as the stock driver: warn, keep going
+                node.get_logger().warn(
+                    f'Receiving sensor data failed with {type(e).__name__}:"{e}"')
+
+        def log_calibration_status():
+            try:
+                node.sensor.get_calib_status()
+            except Exception as e:  # noqa: B902
+                node.get_logger().warn(
+                    f'Receiving calibration status failed with {type(e).__name__}:"{e}"')
+
+        # one thread runs both callbacks, so they never overlap (the stock lock's job)
+        node.create_timer(1.0 / float(node.param.data_query_frequency.value), read_data)
+        node.create_timer(1.0 / float(node.param.calib_status_frequency.value),
+                          log_calibration_status)
+        executor = EventsExecutor()
+        executor.add_node(node)
+        executor.spin()
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.try_shutdown()
 
 
 if __name__ == '__main__':
