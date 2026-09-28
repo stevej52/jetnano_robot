@@ -190,6 +190,11 @@ def generate_launch_description():
             package='robot_localization',
             executable='ekf_node',
             name='ekf_filter_node',
+            # ahead of everything else when process start-ups pile up (Nav2, the
+            # camera pipeline): see LimitNICE in systemd/jetnano-robot.service. Where
+            # that is not allowed (a manual launch, the simulator), nice says so and
+            # runs it at normal priority.
+            prefix='nice -n -10',
             respawn=True,
             respawn_delay=3.0,
             output='screen',

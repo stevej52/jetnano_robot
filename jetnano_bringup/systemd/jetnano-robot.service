@@ -11,6 +11,11 @@ Type=simple
 User=jeston
 Group=jeston
 SupplementaryGroups=docker i2c dialout input video
+# Lets odometry.launch.py start the EKF at nice -10. When Nav2 or the camera
+# pipeline starts, a burst of process start-ups starved it: 34 missed 30 Hz
+# deadlines in one Nav2 start, worst 0.40 s; at -10, 3, worst 0.05 s
+# (bench, 2026-09-27). Nothing else here raises its priority.
+LimitNICE=-10
 WorkingDirectory=/home/jeston
 Environment=ROS_DOMAIN_ID=7
 Environment=HOME=/home/jeston

@@ -109,8 +109,8 @@ TOPICS = {
         ('signal', proc('laser_filters/scan_to_scan_filter_chain'), 10.0),
         ('signal', proc('laser_filters/scan_to_scan_filter_chain'), 20.0)]),
     'imu': ('I M U', '/imu/data', 1.5, 25.0, 'always', None, [
-        ('signal', proc('bno055/bno055'), 12.0),
-        ('signal', proc('bno055/bno055'), 30.0)]),
+        ('signal', proc('jetnano_bringup/bno055_lean'), 12.0),
+        ('signal', proc('jetnano_bringup/bno055_lean'), 30.0)]),
     'odometry': ('odometry', '/odometry/filtered', 1.5, 10.0, 'always', None, [
         ('signal', proc('robot_localization/ekf_node'), 10.0),
         ('signal', proc('robot_localization/ekf_node'), 20.0)]),

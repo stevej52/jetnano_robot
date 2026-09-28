@@ -140,8 +140,10 @@ def generate_launch_description():
         GroupAction(
             condition=IfCondition(LaunchConfiguration('use_imu')),
             actions=[Node(
-                package='bno055',
-                executable='bno055',
+                # the stock ros-jazzy-bno055 driver minus the four messages nothing
+                # reads (jetnano_bringup/bno055_lean.py): same node, topics, parameters
+                package='jetnano_bringup',
+                executable='bno055_lean',
                 name='bno055',
                 output='screen',
                 # The driver exits on an I2C error at start (a loose ground on
