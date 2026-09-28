@@ -21,9 +21,13 @@ is standing still, one lidar scan is matched against the whole saved map
     placed      a clear winner: localization is started there - jetnano-localize.service
                 (slam_toolbox, start_pose = the answer) - or, if a slam_toolbox already
                 runs in localization, it is told with /initialpose
-    unsure      several places fit alike: nothing is started; tried again once she has
-                driven a metre or turned 60 degrees and stopped
+    unsure      several places fit alike: nothing is started; searched again the moment
+                she moves (25 cm or 20 degrees - driven, carried or put down), and again
+                and again while she keeps moving, until one search places her
     not_on_map  nothing fits well (the bench, a room the map lacks): the same
+
+A search takes ~7 s and she may be moving: the answer is her pose when the scan was
+taken, so it is carried forward with the odometry before localization gets it.
 
 The verdict, the best candidates and their scores go out on where_am_i/state (JSON,
 latched) for the dashboard, which also calls ~/locate (std_srvs/Trigger) - its
@@ -66,6 +70,19 @@ def _yaw(q) -> float:
     return math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
 
 
+def propagate(pose, odom_then, odom_now):
+    """Her map pose now: ``pose`` (x, y, yaw) was her map pose when the odometry read
+    ``odom_then`` (x, y, yaw); add the way she has moved since, as the odometry saw it."""
+    x0, y0, a0 = odom_then
+    x1, y1, a1 = odom_now
+    c, s = math.cos(a0), math.sin(a0)
+    lx, ly = c * (x1 - x0) + s * (y1 - y0), -s * (x1 - x0) + c * (y1 - y0)   # in her frame then
+    mx, my, ma = pose
+    cm, sm = math.cos(ma), math.sin(ma)
+    return (mx + cm * lx - sm * ly, my + sm * lx + cm * ly,
+            math.remainder(ma + a1 - a0, 2 * math.pi))
+
+
 class WhereAmI(Node):
 
     def __init__(self):
@@ -77,8 +94,11 @@ class WhereAmI(Node):
         self.auto = bool(p('auto', True).value)
         self.settle_s = float(p('settle_s', 25.0).value)       # after start, before the first try
         self.still_s = float(p('still_s', 2.0).value)
-        self.retry_m = float(p('retry_move_m', 1.0).value)
-        self.retry_deg = float(p('retry_turn_deg', 60.0).value)
+        # not placed yet: search again as soon as she has moved this much since the last
+        # scan (Steve: "reevaluate the moment it starts moving")
+        self.retry_m = float(p('retry_move_m', 0.25).value)
+        self.retry_deg = float(p('retry_turn_deg', 20.0).value)
+        self.follow_up_s = float(p('follow_up_s', 8.0).value)   # slam_toolbox up -> /initialpose
         self.start_localizer = bool(p('start_localizer', True).value)
         self.localize_unit = p('localize_unit', 'jetnano-localize').value
         self.mapping_unit = p('mapping_unit', 'jetnano-slam').value
@@ -177,9 +197,14 @@ class WhereAmI(Node):
             return
         if time.monotonic() - self.t_start < self.settle_s:
             return
-        if self.odom is not None and not self._still():
-            return
-        if self.attempt_odom is not None:
+        if self.attempt_odom is None:
+            # the first try: once she stands still (she boots parked)
+            if self.odom is not None and not self._still():
+                return
+            why = 'boot'
+        else:
+            # not placed: the moment she moves, search again - and keep searching while
+            # she moves (each try starts from where the last one's scan was taken)
             if self.odom is None:
                 return
             _, x0, y0, yaw0 = self.attempt_odom
@@ -187,8 +212,8 @@ class WhereAmI(Node):
             turned = abs(math.degrees(math.remainder(self.odom[3] - yaw0, 2 * math.pi)))
             if moved < self.retry_m and turned < self.retry_deg:
                 return
-        threading.Thread(target=self._run, args=('boot' if self.attempt_odom is None else 'moved',),
-                         daemon=True).start()
+            why = 'moved' if self._still() else 'moving'
+        threading.Thread(target=self._run, args=(why,), daemon=True).start()
 
     def _load_map(self) -> bool:
         try:
@@ -226,15 +251,19 @@ class WhereAmI(Node):
             if not self._load_map():
                 return
             pts = self._scan_points()
+            then = self.odom                 # her odometry pose when the scan was taken
             if pts is None:
                 self._set({'state': 'waiting', 'why': 'no lidar scan or lidar transform yet'})
                 return
+            st = self.scan.header.stamp
+            scan_time = st.sec + st.nanosec * 1e-9
             self._set({'state': 'searching', 'why': why})
             t0 = time.monotonic()
             cands = locate(self.model, pts)
             verdict, reason = judge(cands, self.accept, self.margin)
             took = time.monotonic() - t0
             result = {'state': verdict, 'why': reason, 'trigger': why, 'took_s': round(took, 1),
+                      'scan_time': scan_time,
                       'points': int(len(pts)), 'accept': self.accept, 'margin': self.margin,
                       'candidates': [{'score': round(c[0], 3), 'x': round(c[1], 2),
                                       'y': round(c[2], 2), 'yaw': round(c[3], 3)} for c in cands]}
@@ -243,13 +272,14 @@ class WhereAmI(Node):
                 + '; '.join(f'{c[0]:.2f} at ({c[1]:+.2f}, {c[2]:+.2f}, '
                             f'{math.degrees(c[3]):.0f} deg)' for c in cands))
             if verdict == 'placed':
-                result['action'] = self._act(cands[0])
                 self.done, self.attempt_odom = True, None
-                self._follow_odom(False)
+                result['action'] = self._act(cands[0], then)
             else:
                 self.done = False
                 self._follow_odom(True)
-                if self.odom is not None:
+                if then is not None:
+                    self.attempt_odom = then[:4]
+                elif self.odom is not None:
                     self.attempt_odom = self.odom[:4]
                 else:
                     self.attempt_odom = (0.0, 0.0, 0.0, 0.0)
@@ -261,16 +291,26 @@ class WhereAmI(Node):
         finally:
             self.busy.release()
 
-    def _act(self, best) -> str:
-        """Start localization at the answer, or correct the one that runs."""
-        _, x, y, yaw = best
+    def _propagate(self, pose, then):
+        if then is None or self.odom is None:
+            return pose
+        return propagate(pose, then[1:4], self.odom[1:4])
+
+    def _act(self, best, then) -> str:
+        """Start localization at the answer (carried forward to now), or correct the one
+        that runs. The odometry is followed until localization has been told."""
+        found = tuple(best[1:4])
         if self._unit_active(self.mapping_unit):
+            self._follow_odom(False)
             return f'mapping runs ({self.mapping_unit}): left alone'
         if self._unit_active(self.localize_unit) or self._slam_running():
-            self._initial_pose(x, y, yaw)
+            self._initial_pose(found, then)
+            self._follow_odom(False)
             return 'told the running localization (/initialpose)'
         if not self.start_localizer:
+            self._follow_odom(False)
             return 'found; start_localizer is off'
+        x, y, yaw = self._propagate(found, then)
         os.makedirs(os.path.dirname(self.pose_file), exist_ok=True)
         with open(self.pose_file, 'w') as f:
             f.write(f'START_POSE={x:.3f},{y:.3f},{yaw:.4f}\n')
@@ -280,8 +320,25 @@ class WhereAmI(Node):
         except (OSError, subprocess.TimeoutExpired) as exc:
             return f'could not start {self.localize_unit}: {exc}'
         if r.returncode != 0:
+            self._follow_odom(False)
             return f'could not start {self.localize_unit}: {r.stderr.strip()[:120]}'
+        threading.Thread(target=self._follow_up, args=(found, then, (x, y, yaw)), daemon=True).start()
         return f'started {self.localize_unit} there'
+
+    def _follow_up(self, found, then, started_at) -> None:
+        """slam_toolbox starts some seconds after the pose it was given was worked out;
+        if she has moved meanwhile, tell it where she is now."""
+        end = time.monotonic() + 60.0
+        while time.monotonic() < end and not self._slam_running():
+            time.sleep(1.0)
+        time.sleep(self.follow_up_s)     # lifecycle configure/activate and a first scan
+        now = self._propagate(found, then)
+        if (math.hypot(now[0] - started_at[0], now[1] - started_at[1]) > 0.05
+                or abs(math.remainder(now[2] - started_at[2], 2 * math.pi)) > math.radians(2)):
+            self.get_logger().info('she moved while localization started: /initialpose '
+                                   f'({now[0]:+.2f}, {now[1]:+.2f}, {math.degrees(now[2]):.0f} deg)')
+            self._initial_pose(found, then)
+        self._follow_odom(False)
 
     def _unit_active(self, unit: str) -> bool:
         try:
@@ -293,15 +350,18 @@ class WhereAmI(Node):
     def _slam_running(self) -> bool:
         return any(name == 'slam_toolbox' for name, _ in self.get_node_names_and_namespaces())
 
-    def _initial_pose(self, x: float, y: float, yaw: float) -> None:
-        m = PoseWithCovarianceStamped()
-        m.header.frame_id = 'map'
-        m.pose.pose.position.x, m.pose.pose.position.y = x, y
-        m.pose.pose.orientation.z, m.pose.pose.orientation.w = math.sin(yaw / 2), math.cos(yaw / 2)
-        m.pose.covariance[0] = m.pose.covariance[7] = 0.05 ** 2
-        m.pose.covariance[35] = math.radians(3) ** 2
-        for _ in range(3):              # slam_toolbox has missed a single one before
+    def _initial_pose(self, found, then) -> None:
+        """/initialpose three times (slam_toolbox has missed a single one), each carried
+        forward to the moment it is sent."""
+        for _ in range(3):
+            x, y, yaw = self._propagate(found, then)
+            m = PoseWithCovarianceStamped()
+            m.header.frame_id = 'map'
             m.header.stamp = self.get_clock().now().to_msg()
+            m.pose.pose.position.x, m.pose.pose.position.y = x, y
+            m.pose.pose.orientation.z, m.pose.pose.orientation.w = math.sin(yaw / 2), math.cos(yaw / 2)
+            m.pose.covariance[0] = m.pose.covariance[7] = 0.05 ** 2
+            m.pose.covariance[35] = math.radians(3) ** 2
             self.pub_initial.publish(m)
             time.sleep(1.0)
 

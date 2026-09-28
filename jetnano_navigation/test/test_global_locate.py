@@ -81,6 +81,20 @@ def test_nothing_to_go_on():
     assert judge(locate(model, np.zeros((5, 2))), 0.7, 1.15)[0] == 'not_on_map'
 
 
+@pytest.mark.parametrize('pose, then, now, expect', [
+    # facing +y on the map, 1 m forward on the odometry: 1 m further along +y
+    ((5.0, 5.0, math.pi / 2), (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (5.0, 6.0, math.pi / 2)),
+    # the odometry's own frame turned 90 degrees: still 1 m forward for her
+    ((5.0, 5.0, 0.0), (0.0, 0.0, math.pi / 2), (0.0, 1.0, math.pi / 2), (6.0, 5.0, 0.0)),
+    # a turn in place turns her on the map by the same amount
+    ((1.0, 2.0, 0.5), (3.0, 3.0, 1.0), (3.0, 3.0, 1.3), (1.0, 2.0, 0.8)),
+])
+def test_propagate(pose, then, now, expect):
+    from jetnano_navigation.where_am_i import propagate
+    got = propagate(pose, then, now)
+    assert got == pytest.approx(expect, abs=1e-9)
+
+
 @pytest.mark.parametrize('score, second, verdict', [(0.66, 0.64, 'not_on_map'),   # the bench
                                                      (0.85, 0.83, 'unsure'),
                                                      (0.85, 0.60, 'placed')])

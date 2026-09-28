@@ -361,7 +361,7 @@ class Dashboard:
         c = self.wami.get('candidates') or []
         if self.wami.get('state') == 'placed' and c and self.wami.get('time'):
             fix = PoseWithCovarianceStamped()
-            t = float(self.wami['time'])
+            t = float(self.wami.get('scan_time') or self.wami['time'])   # her pose at the scan
             fix.header.stamp.sec, fix.header.stamp.nanosec = int(t), int((t % 1) * 1e9)
             fix.header.frame_id = 'map'
             fix.pose.pose.position.x, fix.pose.pose.position.y = c[0]['x'], c[0]['y']
