@@ -11,6 +11,14 @@
     i2c_address: 64            # 0x40
     pwm_frequency: 100.0
     twist_topic: cmd_vel
+    # The safety relay (CW-025, trigger jumper on H) on header pin 7: IN from pin 7, its
+    # contacts on the board's OE - COM to OE, NC to VCC, NO to GND. De-energised, OE is high
+    # and every output is dead; this node energises it once the channels are at their start
+    # values and drops it on shutdown. A kernel crash reboots in 5 s (kernel.panic) and the
+    # pin resets with it, so the throttle signal cannot outlive the Jetson (2026-09-28: the
+    # chip kept its last pulses through a 2 min 46 s crash-and-reboot; she was parked).
+    output_enable_pin: 7
+    output_enable_active_high: true
     channels: [throttle, steering, rear_steering, pan, tilt]
 
     # Publish servo positions as joint_states. Left off for now: the driver
