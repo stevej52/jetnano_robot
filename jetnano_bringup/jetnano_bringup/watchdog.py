@@ -179,6 +179,7 @@ class Item:
         self.actions = []                # times of actions in the last hour
         self.note = ''
         self.seen = False
+        self.http_fails = 0              # HTTP checks failed in a row
         self.slow_since = 0.0
         self.slow_said = 0.0
         self.gave_up_at = 0.0
@@ -373,9 +374,15 @@ class Watchdog(Node):
                 ok = False
             if ok:
                 item.seen = True
+                item.http_fails = 0
                 self._good(item, 'answering')
             elif item.seen:
-                self._bad(item, 'not answering')
+                # act on the second failure in a row: one slow answer is not a dead
+                # server (2026-09-27, one 3 s stall with the dashboard open got
+                # web_teleop - and the phone's driving page - killed and restarted)
+                item.http_fails += 1
+                if item.http_fails >= 2:
+                    self._bad(item, 'not answering')
 
     def _check_guard(self, names) -> None:
         """The collision guard is a lifecycle node: running is not enough, it must be active."""

@@ -374,6 +374,7 @@
   }
   $('tradar').onclick = function () { setView('radar'); };
   $('tmap').onclick = function () { setView('map'); };
+  if (location.hash === '#map') setView('map');      // /dash#map opens on the map
   $('tzoom').onclick = function () { zoom = zoom === 2 ? 4 : zoom === 4 ? 8 : 2; this.textContent = zoom + ' M'; };
 
   // ------------------------------------------------------------------ helpers
@@ -382,7 +383,8 @@
   function hhmm(t) { var d = new Date(t * 1000); return d.toTimeString().slice(0, 8); }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   function badge(text, cls) { return '<span class="badge ' + (cls || '') + '">' + esc(text) + '</span>'; }
-  var LABEL = { lidar: 'Lidar', scan_filter: 'Lidar filt', imu: 'IMU', odometry: 'EKF', vo: 'Visual odo',
+  // no tile for the lidar filter: its rate only repeats the lidar's; its trouble shows on the lidar tile
+  var LABEL = { lidar: 'Lidar', imu: 'IMU', odometry: 'EKF', vo: 'Visual odo',
     nvblox: '3D map', mic: 'Mic', listening: 'Listening', battery: 'Battery', cliff: 'Cliff', map: 'SLAM map' };
 
   // ------------------------------------------------------------------ render
@@ -426,8 +428,10 @@
     var html = '';
     Object.keys(LABEL).forEach(function (k) {
       var s = streams[k]; if (!s) return;
+      var filt = k === 'lidar' ? streams.scan_filter : null, pre = '';
+      if (filt && filt.state !== 'ok' && s.state === 'ok') { s = filt; pre = 'filter '; }
       var cls = s.state === 'ok' ? (s.hz > 0 ? 'ok' : '') : (/start|grace|wait/.test(s.state) ? 'warn' : 'bad');
-      var v = s.hz > 0 ? s.hz.toFixed(s.hz < 10 ? 1 : 0) + '<small> Hz</small>' : (s.state === 'ok' ? '<small>idle</small>' : '<small>' + esc(s.state) + '</small>');
+      var v = s.hz > 0 && !pre ? s.hz.toFixed(s.hz < 10 ? 1 : 0) + '<small> Hz</small>' : (s.state === 'ok' ? '<small>idle</small>' : '<small>' + pre + esc(s.state) + '</small>');
       html += '<div class="tile"><div class="k"><span class="dot ' + cls + '"></span>' + LABEL[k] + '</div><div class="v">' + v + '</div></div>';
     });
     $('tiles').innerHTML = html;
@@ -491,6 +495,16 @@
     var g = c.createRadialGradient(cx, cy, 0, cx, cy, zoom * sc);
     g.addColorStop(0, 'rgba(94,242,255,0.10)'); g.addColorStop(1, 'rgba(94,242,255,0)');
     c.fillStyle = g; c.beginPath(); c.moveTo(cx, cy); c.arc(cx, cy, zoom * sc, sweep, sweep + 0.5); c.closePath(); c.fill();
+    // the house map underneath, turned to her heading - once SLAM has placed her on it
+    if (S && S.pose && S.map && mapReady()) {
+      var mi = S.map, pz = S.pose, cs = Math.cos(pz.yaw), sn = Math.sin(pz.yaw), k = sc * mi.res;
+      var A = mi.x0 - pz.x, B = mi.y0 + mi.res * mi.h - pz.y;   // image pixel (u, v) -> her frame -> screen
+      c.save(); c.globalAlpha = 0.5; c.imageSmoothingEnabled = false;
+      c.setTransform(f.d * k * sn, -f.d * k * cs, f.d * k * cs, f.d * k * sn,
+                     f.d * (cx - sc * (cs * B - sn * A)), f.d * (cy - sc * (cs * A + sn * B)));
+      c.drawImage(mapimg, 0, 0);
+      c.restore();
+    }
     if (S) {
       // guard zones: the one in the direction of travel brighter
       var fwd = S.cmd && S.cmd[0] > 0.01, back = S.cmd && S.cmd[0] < -0.01;
@@ -529,22 +543,52 @@
 
   // --------------------------------------------------------------------- map
   var mapimg = $('mapimg'), mapcv = $('mapcv'), mctx = mapcv.getContext('2d'), mapV = -1;
+  // the live SLAM map while one comes in, else the last saved one (the server picks)
+  function mapReady() {
+    if (!S || !S.map) return false;
+    if (S.map.v !== mapV) { mapV = S.map.v; mapimg.src = '/dash/map.png?v=' + S.map.v; }
+    return mapimg.complete && mapimg.naturalWidth > 0;
+  }
   function drawMap() {
     if (!S) return;
-    var mi = S.map;
-    if (!mi) { var f0 = fit(mapcv); mctx.setTransform(f0.d, 0, 0, f0.d, 0, 0); mctx.clearRect(0, 0, f0.w, f0.h);
-      mctx.fillStyle = '#3b4a60'; mctx.font = '12px ui-monospace, monospace'; mctx.textAlign = 'center';
-      mctx.fillText('NO MAP · say "Rosie, start mapping"', f0.w / 2, f0.h / 2); mctx.textAlign = 'left'; return; }
-    if (mi.v !== mapV) { mapV = mi.v; mapimg.src = '/dash/map.png?v=' + mi.v; }
-    var f = fit(mapcv), c = mctx; c.setTransform(f.d, 0, 0, f.d, 0, 0); c.clearRect(0, 0, f.w, f.h);
+    var mi = S.map, f = fit(mapcv), c = mctx;
+    c.setTransform(f.d, 0, 0, f.d, 0, 0); c.clearRect(0, 0, f.w, f.h);
+    c.font = '11px ui-monospace, monospace'; c.textAlign = 'center';
+    if (!mi) { mapimg.style.display = 'none'; c.fillStyle = '#3b4a60';
+      c.fillText('NO MAP SAVED YET · map the house first', f.w / 2, f.h / 2); c.textAlign = 'left';
+      $('navtag').textContent = ''; return; }
+    mapimg.style.display = ''; mapReady();
     var s = Math.min(f.w / mi.w, f.h / mi.h), ox = (f.w - mi.w * s) / 2, oy = (f.h - mi.h * s) / 2;
-    var p = S.pose; if (!p) return;
-    var px = ox + (p.x - mi.x0) / mi.res * s, py = oy + (mi.h - (p.y - mi.y0) / mi.res) * s;
-    c.save(); c.translate(px, py); c.rotate(-p.yaw);
+    function M(x, y) { return [ox + (x - mi.x0) / mi.res * s, oy + (mi.h - (y - mi.y0) / mi.res) * s]; }
+    $('navtag').textContent = (mi.w * mi.res).toFixed(1) + ' × ' + (mi.h * mi.res).toFixed(1) + ' m';
+    var p = S.pose;
+    // a caption in the top-left corner: which map, and whether she is on it
+    var lines = [mi.src === 'live' ? 'LIVE MAP (SLAM running)' : 'SAVED MAP · ' + mi.saved,
+                 !p ? 'her position: unknown until mapping or navigation places her'
+                    : p.fix > 90 ? 'placed ' + Math.round(p.fix / 60) + ' min ago, odometry since' : 'her position: placed by SLAM'];
+    c.textAlign = 'left'; c.font = '10px ui-monospace, monospace';
+    var bw = Math.max(c.measureText(lines[0]).width, c.measureText(lines[1]).width) + 12;
+    c.fillStyle = 'rgba(5,7,12,0.75)'; c.fillRect(4, 4, bw, 30);
+    c.fillStyle = '#7f93ab'; c.fillText(lines[0], 10, 16); c.fillStyle = p ? '#ff6bd6' : '#ffc048'; c.fillText(lines[1], 10, 29);
+    if (!p) return;
+    var cy = Math.cos(p.yaw), sy = Math.sin(p.yaw);
+    function R(x, y) { return M(p.x + cy * x - sy * y, p.y + sy * x + cy * y); }   // her frame -> the map
+    // what she sees now, drawn where she is: camera obstacles, then the lidar
+    c.fillStyle = 'rgba(255,192,72,0.8)';
+    (S.obstacles || []).forEach(function (q) { var a = R(q[0], q[1]); c.fillRect(a[0] - 1, a[1] - 1, 2, 2); });
+    if (S.scan) {
+      c.fillStyle = '#5ef2ff';
+      for (var k = 0; k < 360; k++) {
+        var rr = S.scan[k]; if (rr == null) continue;
+        var an = k * Math.PI / 180, a = R(rr * Math.cos(an), rr * Math.sin(an));
+        c.fillRect(a[0] - 1.2, a[1] - 1.2, 2.4, 2.4);
+      }
+    }
+    var m = M(p.x, p.y);
+    c.save(); c.translate(m[0], m[1]); c.rotate(-p.yaw);
     c.fillStyle = '#ff6bd6'; c.shadowColor = '#ff6bd6'; c.shadowBlur = 10;
     c.beginPath(); c.moveTo(12, 0); c.lineTo(-7, 7); c.lineTo(-3, 0); c.lineTo(-7, -7); c.closePath(); c.fill();
     c.restore();
-    $('navtag').textContent = (mi.w * mi.res).toFixed(1) + ' × ' + (mi.h * mi.res).toFixed(1) + ' m';
   }
 
   function frame() { if (view === 'radar') drawRadar(); else drawMap(); requestAnimationFrame(frame); }

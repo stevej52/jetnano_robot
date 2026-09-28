@@ -26,16 +26,20 @@ SLAM map as a PNG:
   points around her, for the radar; her speed, heading and command;
 * what she heard, who said it, what she said and played, the room's level,
   the steering buzz; a rolling log of all of that;
-* CPU, GPU, temperatures, memory; the map and where she is on it.
+* CPU, GPU, temperatures, memory; the map and where she is on it. The map is
+  slam_toolbox's live /map while one comes in, else the last saved map
+  (``dash_map``, map_saver's .yaml + .pgm, reloaded when it is saved again).
 
 Nothing here is needed for driving: a failure only blanks a tile.
 
 Cost: standing Python subscriptions to fast streams are expensive (a first
 version cost 64 % of a core, 2026-09-27), so the lidar, the camera's cloud, the
 odometry are subscribed only while a dashboard has asked for data in the last
-``LIVE_S`` seconds, and read with numpy. The map pose comes from slam_toolbox's
-own ``/pose`` (published when it matches a scan) carried forward with the EKF,
-not from /tf (90 Hz - too dear to read in Python for a picture).
+``LIVE_S`` seconds, read with numpy, and the two fastest (the EKF at 100 Hz,
+nvblox's points at 40 Hz) are taken raw and decoded only as often as the page
+can use them. The map pose comes from slam_toolbox's own ``/pose`` (published
+when it matches a scan) carried forward with the EKF, not from /tf (well over
+100 Hz - too dear to read in Python for a picture).
 """
 
 from __future__ import annotations
@@ -53,6 +57,7 @@ import numpy as np
 from geometry_msgs.msg import PointStamped, Twist
 from nav_msgs.msg import OccupancyGrid, Odometry
 from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
+from rclpy.serialization import deserialize_message
 from sensor_msgs.msg import LaserScan, PointCloud2
 from std_msgs.msg import Bool, Float32, String
 
@@ -64,6 +69,12 @@ from geometry_msgs.msg import PoseWithCovarianceStamped
 
 LOCKS = ('e_stop', 'e_stop_web', 'e_stop_joy', 'e_stop_motion')
 LIVE_S = 6.0            # keep the fast subscriptions this long after the last dashboard poll
+LIVE_MAP_S = 60.0       # a live SLAM map this recent wins over the saved one
+# The page polls 4 times a second; the EKF publishes at 100 Hz and nvblox's obstacle
+# points at 40 Hz. Received raw, decoded no oftener than this (2026-09-27: decoding
+# every message kept the web server at ~50 % of a core with the page open).
+ODOM_EVERY_S = 0.05
+POINTS_EVERY_S = 0.2
 LATCHED = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
 GPU_LOAD = '/sys/devices/platform/bus@0/17000000.gpu/load'
 
@@ -86,12 +97,63 @@ def png_indexed(width: int, height: int, rows: bytes, palette: bytes) -> bytes:
 MAP_PALETTE = bytes([0, 0, 0, 40, 58, 84, 110, 255, 240])
 
 
+def read_map_yaml(path: str) -> dict:
+    """map_saver's .yaml: flat 'key: value' lines, origin as [x, y, yaw]."""
+    meta = {}
+    with open(path) as f:
+        for line in f:
+            key, _, value = line.partition(':')
+            key, value = key.strip(), value.split('#', 1)[0].strip()
+            if not key or not value:
+                continue
+            if value.startswith('['):
+                meta[key] = [float(x) for x in value.strip('[]').split(',')]
+            else:
+                try:
+                    meta[key] = float(value)
+                except ValueError:
+                    meta[key] = value
+    return meta
+
+
+def read_pgm(path: str) -> np.ndarray:
+    """An 8-bit binary (P5) PGM as a height x width array, top row first."""
+    with open(path, 'rb') as f:
+        data = f.read()
+    tokens, i = [], 0
+    while len(tokens) < 4:
+        while data[i:i + 1].isspace():
+            i += 1
+        if data[i:i + 1] == b'#':
+            i = data.index(b'\n', i) + 1
+            continue
+        j = i
+        while not data[j:j + 1].isspace():
+            j += 1
+        tokens.append(data[i:j])
+        i = j
+    if tokens[0] != b'P5' or int(tokens[3]) > 255:
+        raise ValueError('not an 8-bit binary PGM')
+    w, h = int(tokens[1]), int(tokens[2])
+    return np.frombuffer(data, dtype=np.uint8, count=w * h, offset=i + 1).reshape(h, w)
+
+
+def saved_map_indices(pixels: np.ndarray, meta: dict) -> np.ndarray:
+    """Palette indices (0 unknown, 1 free, 2 occupied) as map_server reads the image."""
+    p = pixels.astype(np.float32) / 255.0
+    occupied = p if int(meta.get('negate', 0)) else 1.0 - p
+    return np.where(occupied > float(meta.get('occupied_thresh', 0.65)), 2,
+                    np.where(occupied < float(meta.get('free_thresh', 0.196)), 1, 0)).astype(np.uint8)
+
+
 class Dashboard:
     """Subscriptions on the web_teleop node; snapshot() is called from HTTP threads."""
 
     def __init__(self, node):
         self.node = node
         node.declare_parameter('dash_scan_yaw_offset', math.pi)    # the lidar is mounted backwards
+        # the saved map (map_saver's <base>.yaml + image), shown whenever no SLAM runs
+        node.declare_parameter('dash_map', '~/maps/home')
         self.lock = threading.Lock()
         now = time.monotonic()
         self.t0 = now
@@ -108,7 +170,9 @@ class Dashboard:
         self.speech_state = None
         self.level, self.buzz = None, None
         self.log = deque(maxlen=40)
-        self.map_png, self.map_info, self.map_version = None, None, 0
+        self.map_png, self.map_info, self.map_version, self.map_t = None, None, 0, 0.0
+        self.saved_png, self.saved_info, self.saved_mtime = None, None, None
+        self._odom_decoded = self._points_decoded = 0.0
         self._cpu_prev = None
         self.sys = {}
         self._pc_busy = False
@@ -130,7 +194,13 @@ class Dashboard:
         sub(Float32, 'steering/buzz', lambda m: setattr(self, 'buzz', round(m.data, 1)), 10)
         sub(OccupancyGrid, 'map', self._on_map, LATCHED)
         self.map_odom = None                 # map -> odom (x, y, yaw), from slam_toolbox's /pose
-        self.odom_hist = deque(maxlen=120)   # (stamp, x, y, yaw) of the EKF, ~4 s
+        self.pose_t = 0.0                    # when the last /pose came
+        self.pending_pose = None             # a /pose that came while nobody watched
+        self.odom_hist = deque(maxlen=120)   # (stamp, x, y, yaw) of the EKF, ~6 s at 20 Hz
+        # slam_toolbox publishes /pose only after she has moved, so listen all the time
+        # (a few messages a minute) - a page opened while she is parked still has a fix
+        sub(PoseWithCovarianceStamped, '/pose', self._on_pose, 5)
+        self._load_saved_map()
         self.polled = 0.0                    # last dashboard request
         self.live = []                       # the fast subscriptions, while watched
         node.create_timer(2.0, self._system)
@@ -141,23 +211,33 @@ class Dashboard:
         watched = time.monotonic() - self.polled < LIVE_S
         if watched and not self.live:
             sub = self.node.create_subscription
-            self.live = [sub(Odometry, 'odometry/filtered', self._on_odom, 5),
+            self.live = [sub(Odometry, 'odometry/filtered', self._on_odom_raw, 5, raw=True),
                          sub(LaserScan, 'scan', self._on_scan, qos_profile_sensor_data),
-                         sub(PointCloud2, '/nvblox_node/obstacle_points', self._on_points, 1),
-                         sub(PoseWithCovarianceStamped, '/pose', self._on_pose, 5)]
+                         sub(PointCloud2, '/nvblox_node/obstacle_points', self._on_points_raw, 1,
+                             raw=True)]
             self.node.get_logger().info('dashboard: someone is watching, following the sensors')
         elif not watched and self.live:
             for handle in self.live:
                 self.node.destroy_subscription(handle)
             self.live = []
+            self.odom_hist.clear()       # stale once nobody follows the odometry
             self.node.get_logger().info('dashboard: nobody watching, sensors dropped')
 
     def _on_pose(self, msg) -> None:
         """slam_toolbox's pose on the map, paired with the EKF's odom pose of the
         same moment: that is map -> odom until the next one."""
-        t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        self.pose_t = time.monotonic()
         if not self.odom_hist:
+            # nobody watching, so no odometry to pair it with yet: the first odometry
+            # after the page opens will do (she has not moved since, or slam_toolbox
+            # would have sent a newer pose)
+            self.pending_pose = msg
             return
+        self.pending_pose = None
+        self._pair(msg)
+
+    def _pair(self, msg) -> None:
+        t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
         _, ox, oy, oyaw = min(self.odom_hist, key=lambda h: abs(h[0] - t))
         p = msg.pose.pose
         yaw = _yaw(p.orientation) - oyaw
@@ -199,11 +279,21 @@ class Dashboard:
             self._event('mover', f'someone moving at {b:+.0f} deg, {math.hypot(*self.mover):.1f} m')
         self.mover_t = time.monotonic()
 
+    def _on_odom_raw(self, data: bytes) -> None:
+        now = time.monotonic()
+        if now - self._odom_decoded < ODOM_EVERY_S:
+            return
+        self._odom_decoded = now
+        self._on_odom(deserialize_message(data, Odometry))
+
     def _on_odom(self, msg) -> None:
         self.odom, self.odom_t = msg, time.monotonic()
         p = msg.pose.pose
         self.odom_hist.append((msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9,
                                p.position.x, p.position.y, _yaw(p.orientation)))
+        if self.pending_pose is not None:
+            self._pair(self.pending_pose)
+            self.pending_pose = None
 
     def _on_cmd(self, msg) -> None:
         self.cmd, self.cmd_t = (round(msg.linear.x, 3), round(msg.angular.z, 3)), time.monotonic()
@@ -219,6 +309,13 @@ class Dashboard:
         np.minimum.at(near, k, r[ok])
         self.scan = [None if not np.isfinite(v) else round(float(v), 2) for v in near]
         self.scan_t = time.monotonic()
+
+    def _on_points_raw(self, data: bytes) -> None:
+        now = time.monotonic()
+        if now - self._points_decoded < POINTS_EVERY_S:
+            return
+        self._points_decoded = now
+        self._on_points(deserialize_message(data, PointCloud2))
 
     def _on_points(self, msg) -> None:
         if pc2 is None or self.odom is None or self._pc_busy:
@@ -257,11 +354,48 @@ class Dashboard:
         with self.lock:
             self.map_png = png
             self.map_version += 1
+            self.map_t = time.monotonic()
             self.map_info = {'w': w, 'h': h, 'res': msg.info.resolution, 'x0': o.x, 'y0': o.y,
-                             'yaw0': _yaw(msg.info.origin.orientation), 'v': self.map_version}
+                             'yaw0': _yaw(msg.info.origin.orientation),
+                             'v': f'L{self.map_version}', 'src': 'live'}
+
+    def _load_saved_map(self) -> None:
+        """The last saved map, reloaded whenever its image changes (a new save)."""
+        base = os.path.expanduser(str(self.node.get_parameter('dash_map').value))
+        try:
+            meta = read_map_yaml(base + '.yaml')
+            image = os.path.join(os.path.dirname(base), str(meta['image']))
+            mtime = os.path.getmtime(image)
+        except (OSError, KeyError, ValueError):
+            return                           # no saved map (yet): the page says so
+        if mtime == self.saved_mtime:
+            return
+        try:
+            pixels = read_pgm(image)
+            origin = meta['origin']
+            h, w = pixels.shape
+            png = png_indexed(w, h, saved_map_indices(pixels, meta).tobytes(), MAP_PALETTE)
+            info = {'w': w, 'h': h, 'res': float(meta['resolution']), 'x0': origin[0],
+                    'y0': origin[1], 'yaw0': origin[2], 'v': f'S{mtime:.0f}', 'src': 'saved',
+                    'saved': time.strftime('%b %d %H:%M', time.localtime(mtime))}
+        except (OSError, KeyError, ValueError, IndexError) as exc:
+            self.node.get_logger().warning(f'dashboard: cannot read the saved map {base}: {exc}',
+                                           throttle_duration_sec=300.0)
+            return
+        with self.lock:
+            self.saved_png, self.saved_info, self.saved_mtime = png, info, mtime
+        self.node.get_logger().info(f'dashboard: saved map {image} ({w} x {h}, {info["saved"]})')
+
+    def _current_map(self):
+        """(png, info): the live SLAM map while one is coming in, else the saved one."""
+        with self.lock:
+            if self.map_png is not None and time.monotonic() - self.map_t < LIVE_MAP_S:
+                return self.map_png, self.map_info
+            return self.saved_png, self.saved_info
 
     # ------------------------------------------------------------ system --
     def _system(self) -> None:
+        self._load_saved_map()               # a stat() unless the map was saved again
         s = {}
         try:
             with open('/proc/stat') as f:
@@ -302,15 +436,20 @@ class Dashboard:
 
     # ------------------------------------------------------------ output --
     def _pose_on_map(self):
-        """map -> base: slam_toolbox's map -> odom composed with the EKF's odom -> base."""
-        if self.map_info is None or self.map_odom is None or self.odom is None:
+        """map -> base: slam_toolbox's map -> odom composed with the EKF's odom -> base.
+
+        ``fix`` is how long ago slam_toolbox last placed her (it only does while she
+        moves); after SLAM stops, the last fix carries on with the odometry alone.
+        """
+        if self.map_odom is None or self.odom is None:
             return None
         mx, my, myaw = self.map_odom
         p = self.odom.pose.pose
         c, s = math.cos(myaw), math.sin(myaw)
         return {'x': round(mx + c * p.position.x - s * p.position.y, 2),
                 'y': round(my + s * p.position.x + c * p.position.y, 2),
-                'yaw': round(myaw + _yaw(p.orientation), 3)}
+                'yaw': round(myaw + _yaw(p.orientation), 3),
+                'fix': round(time.monotonic() - self.pose_t)}
 
     def snapshot(self, page_status: dict) -> dict:
         now = time.monotonic()
@@ -326,7 +465,8 @@ class Dashboard:
         with self.lock:
             log = list(self.log)[:25]
             heard, said, sound = self.heard, self.said, self.sound
-            map_info = dict(self.map_info) if self.map_info else None
+        _, current = self._current_map()
+        map_info = dict(current) if current else None
         return {
             'page': page_status,
             'watchdog': wd,
@@ -348,6 +488,5 @@ class Dashboard:
         }
 
     def map_image(self):
-        with self.lock:
-            return self.map_png
+        return self._current_map()[0]
 
