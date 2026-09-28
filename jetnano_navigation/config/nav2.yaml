@@ -120,6 +120,12 @@ local_costmap:
       # on a crawler, the tyres are the edges (was 0.44 x 0.22: 7.5 cm too narrow)
       footprint: "[ [0.222, 0.148], [0.222, -0.148], [-0.222, -0.148], [-0.222, 0.148] ]"
       footprint_padding: 0.03
+      # Layers combine by maximum: the camera's layer can add obstacles, never erase the
+      # lidar's. Nav2 reads use_maximum (and lethal_cost_threshold, track_unknown_space)
+      # per costmap, not per layer, so until 2026-09-28 the nvblox layer's own lines were
+      # ignored and it OVERWROTE the lidar's marks wherever the camera had mapped (its free
+      # cells wiping chair legs the lidar saw). nvblox's grid is 0 / 100 / -1 only.
+      use_maximum: true
       plugins: ["obstacle_layer", "inflation_layer"]
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
@@ -147,8 +153,6 @@ local_costmap:
         map_topic: /nvblox_node/static_occupancy_grid
         map_subscribe_transient_local: false
         subscribe_to_updates: false
-        track_unknown_space: false
-        lethal_cost_threshold: 65
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
@@ -167,6 +171,8 @@ global_costmap:
       # on a crawler, the tyres are the edges (was 0.44 x 0.22: 7.5 cm too narrow)
       footprint: "[ [0.222, 0.148], [0.222, -0.148], [-0.222, -0.148], [-0.222, 0.148] ]"
       footprint_padding: 0.03
+      # by maximum, as the local costmap: the camera layer only adds (see there)
+      use_maximum: true
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
@@ -183,6 +189,19 @@ global_costmap:
           data_type: "LaserScan"
           raytrace_max_range: 10.0
           obstacle_max_range: 8.0
+      # The camera's obstacles for the planner too (navigation.launch.py nvblox:=true
+      # adds it to the list). grid_to_points lays nvblox's grid, which is in the odom
+      # frame, on /map's cells through SLAM's map -> odom, twice a second; unknown stays
+      # unknown (track_unknown_space above) and, by maximum, it only adds what the
+      # camera sees under the lidar's plane - boxes, bags, cushions - to the saved map
+      # and the lidar. 2026-09-28: without it the planner sent her through a box and a
+      # floor cushion the controller could see and would not drive into, twice.
+      camera_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        enabled: true
+        map_topic: /nvblox_node/map_grid
+        map_subscribe_transient_local: true
+        subscribe_to_updates: false
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0

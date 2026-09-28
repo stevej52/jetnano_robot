@@ -40,6 +40,7 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
+from rclpy.serialization import deserialize_message
 
 # (m/s, throttle) measured on the hard floor, 2026-09-27
 SPEED_FWD = [(0.18, 0.08), (0.23, 0.12), (0.29, 0.15), (0.39, 0.20), (0.51, 0.25), (0.65, 0.375), (0.87, 0.50)]
@@ -80,11 +81,16 @@ class NavTranslator(Node):
         self.steer = 0.0
         self.trim = 0.0
         self.measured = 0.0
+        self._odom_raw = None                   # the EKF's latest, still serialized
         self.last_t = None
         self.pub = self.create_publisher(Twist, 'cmd_vel_nav', 10)
         self.create_subscription(Twist, 'cmd_vel_nav_mps', self.on_cmd, 10)
+        # The EKF publishes 100 times a second and only its speed is needed, and only
+        # when Nav2 asks for a speed (20 times a second, driving): keep the latest message
+        # as it came and decode it then. Decoding every one in Python was most of this
+        # node's 13 % of a core on the 2026-09-28 drive.
         self.create_subscription(Odometry, 'odometry/filtered',
-                                 lambda m: setattr(self, 'measured', m.twist.twist.linear.x), 10)
+                                 lambda raw: setattr(self, '_odom_raw', raw), 10, raw=True)
         self.get_logger().info(
             f'Nav2 m/s -> throttle (max {self.max_throttle:.2f}), curvature -> steering '
             f'(left x{self.gain_left:.2f}, right x{self.gain_right:.2f}, lock {self.max_steer:.1f})')
@@ -107,6 +113,8 @@ class NavTranslator(Node):
             self.pub.publish(out)
             return
         # speed: the measured table, then a slow nudge toward the speed Nav2 asked for
+        if self._odom_raw is not None:
+            self.measured = deserialize_message(self._odom_raw, Odometry).twist.twist.linear.x
         base = throttle_for(v, SPEED_FWD if v > 0 else SPEED_REV)
         err = abs(v) - abs(self.measured) if (self.measured > 0) == (v > 0) else abs(v)
         self.trim = max(-self.trim_limit, min(self.trim_limit, self.trim + self.ki * err * dt))
@@ -125,8 +133,17 @@ class NavTranslator(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = NavTranslator()
+    # rclpy's EventsExecutor: the default SingleThreadedExecutor rebuilds its wait set in
+    # Python on every wake-up, 100 of them a second here (see web_teleop, 2026-09-28)
     try:
-        rclpy.spin(node)
+        from rclpy.experimental import EventsExecutor
+        executor = EventsExecutor()
+    except ImportError:
+        from rclpy.executors import SingleThreadedExecutor
+        executor = SingleThreadedExecutor()
+    executor.add_node(node)
+    try:
+        executor.spin()
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:

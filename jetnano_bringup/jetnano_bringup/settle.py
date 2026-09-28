@@ -16,8 +16,13 @@ with the microphone and keep doing it until you don't hear nothing":
   the last three seconds hold two or more buzzing half seconds, it wiggles the
   steering a few degrees each way through twist_mux (``cmd_vel_settle``, the
   lowest priority, so a driver, Nav2 or an e-stop lock always wins);
-* then listens again, wiggling a little bigger each time, up to four goes per
-  stop; the result is logged so the numbers can be tuned from the journal.
+* then listens again, wiggling a little bigger each time, four goes a round;
+  if it still buzzes it comes back for another round 20 s later, up to three
+  rounds per stop; the result is logged so the numbers can be tuned from the journal.
+
+2026-09-28, on the floor with Nav2 driving: 4-6-8-8 degrees gave up twice in five
+minutes (12-16 dB left) and the buzz went on until she moved; Steve: "wiggle a
+little harder". Now 6-10-14-18 degrees, and rounds instead of one try.
 
 Publishes ``steering/buzz`` (dB per half second) for watching it live.
 """
@@ -44,7 +49,9 @@ class Settle(Node):
                                                                 #     "jittered for a long time")
         self.declare_parameter('after_stop_s', 1.0)            # still this long before listening
         self.declare_parameter('between_s', 2.0)               # listen this long after a wiggle
-        self.declare_parameter('wiggle_deg', [4.0, 6.0, 8.0, 8.0])  # each try, a little bigger
+        self.declare_parameter('wiggle_deg', [6.0, 10.0, 14.0, 18.0])  # each try, a little bigger
+        self.declare_parameter('rounds', 3)                    # rounds of those per stop ...
+        self.declare_parameter('retry_s', 20.0)                # ... this far apart
         self.declare_parameter('step_s', 0.25)                 # one way, other way, centre
         # ros2_pca9685 steers by cmd_vel angular.z: |twist.angular_z| in pca9685.yaml
         self.declare_parameter('deg_per_rad_s', 18.33)
@@ -60,6 +67,8 @@ class Settle(Node):
         self.quiet_from = self.last_drive       # windows before this hold her own motion, not a buzz
         self.next_check = self.last_drive
         self.attempt = 0
+        self.round = 1
+        self.gave_up_at = None                  # the end of a round that did not quiet it
         self.reported = True
         self.plan: list[float] = []
         self.step_timer = None
@@ -114,6 +123,8 @@ class Settle(Node):
             self.last_drive = self._now()
             self.quiet_from = self.last_drive + float(self.get_parameter('after_stop_s').value)
             self.attempt = 0
+            self.round = 1
+            self.gave_up_at = None
             self.reported = True
             self.recent.clear()
             self.powers.clear()
@@ -154,22 +165,32 @@ class Settle(Node):
             return                                          # stopped means nothing moves
         if self._buzzing():
             if self.attempt >= len(wiggles):
-                if not self.reported:
-                    self._report('giving up until she moves')
-                return
+                rounds = int(self.get_parameter('rounds').value)
+                if self.gave_up_at is None:
+                    self.gave_up_at = now
+                    self._report(f'round {self.round} of {rounds} did not quiet it'
+                                 if self.round < rounds else 'giving up until she moves')
+                if self.round >= rounds or now - self.gave_up_at < float(self.get_parameter('retry_s').value):
+                    return
+                self.round += 1
+                self.attempt = 0
+                self.gave_up_at = None
             deg = wiggles[self.attempt]
             self.attempt += 1
             self.reported = False
             self.get_logger().info(
-                f'steering buzzing ({max(self.recent):.0f} dB): wiggle {self.attempt} of {len(wiggles)}, {deg:g} deg')
+                f'steering buzzing ({max(self.recent):.0f} dB): round {self.round}, '
+                f'wiggle {self.attempt} of {len(wiggles)}, {deg:g} deg')
             self._wiggle(deg)
+            return
         elif self.attempt and not self.reported and len(self.recent) >= int(self.get_parameter('windows').value):
             self._report('quiet')
 
     def _report(self, outcome: str) -> None:
         self.reported = True
         level = max(self.recent) if self.recent else float('nan')
-        text = f'{outcome} after {self.attempt} wiggle{"s" if self.attempt != 1 else ""} ({level:.0f} dB)'
+        done = (self.round - 1) * len(self.get_parameter('wiggle_deg').value) + self.attempt
+        text = f'{outcome} after {done} wiggle{"s" if done != 1 else ""} ({level:.0f} dB)'
         (self.get_logger().warning if outcome.startswith('giving up') else self.get_logger().info)(text)
 
     # ------------------------------------------------------------------ wiggle --
