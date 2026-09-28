@@ -19,13 +19,13 @@ LimitNICE=-10
 WorkingDirectory=/home/jeston
 Environment=ROS_DOMAIN_ID=7
 Environment=HOME=/home/jeston
-# Without an RTC battery a cold power-up starts the clock weeks in the past
-# and it jumps when NTP syncs; nodes started before the jump see negative
-# time points and die (cuVSLAM/nvblox did, 2026-09-23). So: if the clock is
-# already later than the workspace's last build, it is real (an RTC battery
-# is fitted, or NTP already synced) - go. Otherwise wait up to 90 s for NTP,
-# then start regardless (no network in the field).
-ExecStartPre=/bin/sh -c '[ "$(date +%%s)" -gt "$(stat -c %%Y /home/jeston/ros2_ws/install/setup.bash)" ] && exit 0; for i in $(seq 1 45); do [ "$(timedatectl show -p NTPSynchronized --value)" = "yes" ] && exit 0; sleep 2; done; echo "jetnano-robot: no time sync after 90 s, starting anyway"'
+# Without an RTC battery a cold power-up starts the clock in the past - at 1970, or, with
+# robot-environment's rosie-clock (2026-09-28), at the time saved before she was switched
+# off - and it jumps when NTP syncs; nodes started before the jump see negative time points
+# and die (cuVSLAM/nvblox did, 2026-09-23). So wait up to 90 s for NTP, then start
+# regardless (no network in the field). Until 2026-09-28 a clock later than the workspace's
+# last build counted as real; a restored clock is later than that and still wrong.
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 45); do [ "$(timedatectl show -p NTPSynchronized --value)" = "yes" ] && exit 0; sleep 2; done; echo "jetnano-robot: no time sync after 90 s, starting anyway"'
 # What the robot boots with. Override in /etc/default/jetnano-robot, e.g.
 #     ROBOT_ARGS="nvblox:=true use_cliff:=true location:=Ventura,California"
 #     ANTHROPIC_API_KEY=sk-ant-...        (her brain; keep that file root-only, chmod 600)
