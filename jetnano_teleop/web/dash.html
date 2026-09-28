@@ -558,6 +558,20 @@
     var n1 = P(0.30, 0), n2 = P(0.20, 0.07), n3 = P(0.20, -0.07);
     c.fillStyle = '#5ef2ff'; c.beginPath(); c.moveTo(n1[0], n1[1]); c.lineTo(n2[0], n2[1]); c.lineTo(n3[0], n3[1]); c.closePath(); c.fill();
     if (view === 'both' && S && S.map) caption(c, S.map, S.pose);   // on top of everything
+    // OVERLAY with no position: say so plainly, not only in the corner (Steve, 2026-09-28:
+    // "the overlay doesn't appear to be overlaying" - she was on the bench, not on the map)
+    if (view === 'both' && S && !S.pose) {
+      var msg = [S.map ? 'NO MAP UNDER THE RADAR YET' : 'NO MAP SAVED YET',
+                 S.map ? 'she does not know where on the map she is' : 'map the house first',
+                 S.map ? 'on the floor: press WHERE AM I?' : ''];
+      c.textAlign = 'center'; c.font = '600 12px ui-monospace, monospace';
+      var mw = c.measureText(msg[1]).width + 24, my = f.h - 58;
+      c.fillStyle = 'rgba(5,7,12,0.8)'; c.fillRect(cx - mw / 2, my - 16, mw, msg[2] ? 52 : 36);
+      c.fillStyle = '#ffc048'; c.fillText(msg[0], cx, my);
+      c.font = '11px ui-monospace, monospace'; c.fillStyle = '#7f93ab';
+      c.fillText(msg[1], cx, my + 16); if (msg[2]) c.fillText(msg[2], cx, my + 31);
+      c.textAlign = 'left';
+    }
   }
 
   // --------------------------------------------------------------------- map
