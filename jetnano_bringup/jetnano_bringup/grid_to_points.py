@@ -19,7 +19,7 @@ nvblox publishes what the camera sees - steps, low rocks, table edges between
 reads that directly, but the collision guard (nav2_collision_monitor) takes
 laser scans and point clouds only. This turns every cell at or above the
 threshold into one point at a fixed height, in the grid's own frame, each time
-a grid arrives (9.5 Hz, a few hundred points), so the guard can stop the robot
+a grid arrives (40 Hz, a few hundred points), so the guard can stop the robot
 for something the lidar's single plane cannot see.
 """
 

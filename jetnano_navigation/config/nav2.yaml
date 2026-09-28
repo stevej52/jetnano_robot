@@ -103,7 +103,11 @@ controller_server:
 local_costmap:
   local_costmap:
     ros__parameters:
-      update_frequency: 5.0
+      # as often as the controller steers (20 Hz), so it never works from a map more than
+      # 50 ms old; nvblox's grid comes at 40 Hz, the lidar at 7.9. Bench, no goal, nvblox
+      # layer on (2026-09-27): whole navigation stack 111 % of a core at 5 Hz, 112 % at 10,
+      # 114 % at 20, no missed-rate warnings
+      update_frequency: 20.0
       publish_frequency: 2.0
       global_frame: odom
       robot_base_frame: base_link

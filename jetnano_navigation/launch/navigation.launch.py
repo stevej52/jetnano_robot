@@ -95,7 +95,8 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'nvblox', default_value='false',
             description='Add the nvblox 3D-map layer to the local costmap (Jetson only: '
-                        'needs ros-jazzy-nvblox-nav2 and the nvblox node running)'),
+                        "Nav2's own StaticLayer reading /nvblox_node/static_occupancy_grid, "
+                        'so the nvblox node must be running)'),
 
         DeclareLaunchArgument(
             'translate', default_value='true',
