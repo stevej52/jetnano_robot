@@ -12,7 +12,7 @@ Jetson Nano on ROS 2 Eloquent to an Orin Nano on Jazzy.
 | Cameras | Intel RealSense D435 (odometry, depth, the video feed); two Raspberry-Pi-style IMX219 CSI cameras, one on the pan-tilt (streaming, not yet in ROS) |
 | IMU | BNO055 |
 | Audio | USB microphone (ALSA card `Device`) and USB speaker (card `UACDemoV10`) |
-| Odometry | visual (NVIDIA cuVSLAM on the GPU at 89 Hz, or rtabmap on the CPU) + IMU, fused by robot_localization — **no wheel encoders** |
+| Odometry | visual (NVIDIA cuVSLAM on the GPU at 89 Hz, or rtabmap on the CPU) + IMU, optionally + lidar (MOLA), fused by robot_localization — **no wheel encoders** |
 | Driving | the phone page (below); a Thrustmaster HOTAS or Xbox pad is supported by `jetnano_teleop` but not started at boot |
 
 ## Packages
@@ -285,15 +285,50 @@ steering servo buzzing (below). `/e_stop` is the battery monitor's;
 (a command of at least 0.08 reaching the driver) and the visual odometry has
 moved less than 4 cm - or not published at all - it stops her and says "nope",
 until every driver lets go. That is the check that was missing on 2026-09-26,
-when a blind camera reported "all fine" and she drove into the curtains. On the
-bench with the wheels in the air: `ros2 param set /safety_monitor motion.enabled false`.
+when a blind camera reported "all fine" and she drove into the curtains. With
+lidar odometry running (below), either odometry seeing her move is enough, so
+she can keep driving while the camera's odometry restarts; but the lidar
+odometry seeing her move 15 cm or more while the camera's hardly moves is the
+curtains again, and stops her the same way. On the bench with the wheels in
+the air: `ros2 param set /safety_monitor motion.enabled false`.
 
 The tilt guard, this motion check and the visual-odometry watchdog run as one
 C++ node, `jetnano_watchdog safety_monitor` (2026-09-27: as three Python nodes
 they cost ~19 % of a core, as one C++ node 3 %). Same topics, thresholds and
 behaviour; `cpp_safety:=false` on `robot.launch.py` or `drive.launch.py` brings
 back the Python originals (`tilt_guard`, `motion_check`, `vo_watchdog` in
-jetnano_bringup).
+jetnano_bringup; of those only `vo_watchdog` knows about lidar odometry).
+
+### Lidar odometry (off by default)
+
+`robot.launch.py lidar_odom:=true` adds a second odometry that does not need
+the camera: MOLA (`sudo apt install ros-jazzy-mola-lidar-odometry`) matches
+each `/scan` against a local map of her recent scans
+(`launch/lidar_odometry.launch.py`). `lidar_odom_relay` turns MOLA's pose into
+speeds on `/lidar_odom`, and the EKF fuses them next to the camera's
+(`config/ekf.yaml`, `odom2`). MOLA publishes no transform. With it running:
+
+- when `/vo` goes quiet, the safety monitor does not hold the EKF still: the
+  lidar odometry keeps her position moving while the camera pipeline restarts;
+- the motion check takes either odometry as proof she is moving (above);
+- the watchdog restarts MOLA if `/lidar_odom` goes silent while `/scan` is fine;
+- `drive_record.sh` records `/lidar_odom`, and `drive_report` says how far the
+  camera's and the lidar's odometry disagree over each 2 s of the drive.
+
+MOLA runs pinned to one CPU core (`cpus:=` on the launch file, default the last
+core). Its scan matcher otherwise starts a thread per core: on the host PC's 32
+threads that cost 177 % of a core while driving, pinned to one core 17 % at the
+same 7.7 Hz (synthetic scans, 2026-09-27).
+
+In the simulator (2026-09-27) MOLA alone tracked a 12 m loop within 5 cm of
+ground truth, its speeds were within 3-4 cm/s, and with the camera odometry
+frozen for 6 s mid-drive the EKF stayed within 9 cm and never held still. The
+fusion is only as good as its worst source, though: when the simulator's CPU
+visual odometry published wrong speeds instead of going quiet, the EKF followed
+them to 1.9 m off, lidar or not. Rejecting outliers (robot_localization's
+`odomN_twist_rejection_threshold`) needs the real cuVSLAM and lidar noise to
+set, so it is not on yet. Before making lidar odometry the default: one
+recorded test drive on Rosie with it on, and `drive_report` on the bag.
 
 ### Recording a drive
 
@@ -362,7 +397,8 @@ Three rules hold this together, and each was a bug before it was a rule:
 3. **Only the EKF publishes `odom → base_footprint`.** The visual odometry
    (cuVSLAM in the container, or `rgbd_odometry` on the CPU) publishes no
    transform and feeds the EKF as a measurement on `/vo` - velocities only,
-   so a restart of the odometry cannot yank the robot's position.
+   so a restart of the odometry cannot yank the robot's position. The lidar
+   odometry (MOLA) is the same: no transform, speeds on `/lidar_odom`.
 
 Tested in simulate mode: teleop overrides Nav2 mid-run and Nav2 resumes when
 teleop lets go; the e-stop lock blocks a full-throttle command; every channel

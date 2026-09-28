@@ -20,6 +20,8 @@ Prints, and writes to <bag>/report.txt:
 
 - odometry health: VO rate and gaps, EKF-vs-VO separation (the two must
   agree; on 2026-09-24 the EKF ran 6.5 km while VO moved 4.5 m), jumps;
+  with lidar odometry running (lidar_odom:=true) the same for it, and how far
+  the camera's and the lidar's odometry disagree over each 2 s of the drive;
 - the phone link: how long the page was driving, command dropouts > 0.4 s
   (each one stops the robot);
 - the collision guard: stop events, and for each whether the lidar had
@@ -99,8 +101,8 @@ def report(bag):
         return [(t, m.pose.pose.position.x, m.pose.pose.position.y, yaw_of(m.pose.pose.orientation))
                 for t, m in msgs.get(topic, [])]
 
-    vo, ekf = poses('/vo'), poses('/odometry/filtered')
-    for name, P in (('VO', vo), ('EKF', ekf)):
+    vo, ekf, lo = poses('/vo'), poses('/odometry/filtered'), poses('/lidar_odom')
+    for name, P in [('VO', vo), ('EKF', ekf)] + ([('lidar odometry', lo)] if lo else []):
         if len(P) < 2:
             say(f'{name}: no data')
             continue
@@ -112,6 +114,25 @@ def report(bag):
     if vo and ekf:
         sep = max(math.hypot(e[1] - v[1], e[2] - v[2]) for e in ekf[::10] for v in [nearest(vo, e[0])])
         say(f'EKF vs VO: worst separation {sep:.2f} m' + ('  <-- the filter left its sensor' if sep > 0.5 else ''))
+    if vo and lo:
+        # different frames (odom vs lidar_odom), so compare how far and how much
+        # each says she moved and turned over the same 2 s, not where she is
+        dist, turn = [], []
+        for a in lo[::8]:
+            b = nearest(lo, a[0] + 2.0)
+            va, vb = nearest(vo, a[0]), nearest(vo, b[0])
+            if b[0] - a[0] < 1.5 or abs(va[0] - a[0]) > 0.2 or abs(vb[0] - b[0]) > 0.2:
+                continue
+            dist.append(abs(math.hypot(b[1] - a[1], b[2] - a[2]) - math.hypot(vb[1] - va[1], vb[2] - va[2])))
+            d = (b[3] - a[3]) - (vb[3] - va[3])
+            turn.append(abs(math.degrees(math.atan2(math.sin(d), math.cos(d)))))
+        if dist:
+            dist.sort()
+            turn.sort()
+            say(f'VO vs lidar odometry over 2 s ({len(dist)} windows): distance differs by '
+                f'{dist[len(dist) // 2] * 100:.0f} cm typically, {dist[-1] * 100:.0f} cm at worst; turn by '
+                f'{turn[len(turn) // 2]:.1f} deg typically, {turn[-1]:.0f} deg at worst'
+                + ('  <-- one of them lost her' if dist[-1] > 0.3 or turn[-1] > 20 else ''))
     hold = msgs.get('/odom_hold', [])
     if hold:
         say(f'vo_watchdog held the EKF {len(hold) / 10:.0f} s in total (VO was silent that long)')

@@ -30,6 +30,7 @@ setup(
             'tilt_guard = jetnano_bringup.tilt_guard:main',
             'grid_to_points = jetnano_bringup.grid_to_points:main',
             'vo_watchdog = jetnano_bringup.vo_watchdog:main',
+            'lidar_odom_relay = jetnano_bringup.lidar_odom_relay:main',
             'drive_report = jetnano_bringup.drive_report:main',
             'battery_monitor = jetnano_bringup.battery_monitor:main',
             'cliff_guard = jetnano_bringup.cliff_guard:main',

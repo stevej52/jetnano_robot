@@ -126,6 +126,11 @@ TOPICS = {
     'obstacles': ('camera obstacles for the guard', '/nvblox_node/obstacle_points', 3.0, 2.0, 'soon', 'nvblox', [
         ('signal', proc('jetnano_bringup/grid_to_points'), 10.0),
         ('signal', proc('jetnano_bringup/grid_to_points'), 20.0)]),
+    # MOLA (robot.launch.py lidar_odom:=true): its launch respawns it when it dies, and
+    # stopping mola-cli ends that launch, so a silent-but-alive one gets the same cure
+    'lidar_odom': ('lidar odometry', '/lidar_odom', 3.0, 3.0, 'seen', 'scan_filter', [
+        ('signal', proc('mola_launcher/mola-cli'), 20.0),
+        ('signal', proc('mola_launcher/mola-cli'), 40.0)]),
     'mic': ('microphone', '/sound/audio', 3.0, 5.0, 'seen', None, [
         ('signal', proc('jetnano_bringup/ears'), 12.0),
         ('signal', proc('jetnano_bringup/ears'), 30.0)]),

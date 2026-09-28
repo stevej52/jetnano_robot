@@ -56,9 +56,10 @@ ekf_filter_node:
     odom0_relative: false
     odom0_queue_size: 10
 
-    # While /vo is silent, vo_watchdog publishes zero vx/vy here (see
-    # jetnano_bringup/vo_watchdog.py): the filter's velocity decays to zero
-    # instead of coasting forever. Silent otherwise.
+    # While /vo is silent - and the lidar odometry below is silent too, or
+    # not running - the VO watchdog (jetnano_watchdog safety_monitor, or
+    # jetnano_bringup/vo_watchdog.py) publishes zero vx/vy here: the filter's
+    # velocity decays to zero instead of coasting forever. Silent otherwise.
     odom1: odom_hold
     odom1_config: [false, false, false,
                    false, false, false,
@@ -68,6 +69,24 @@ ekf_filter_node:
     odom1_differential: false
     odom1_relative: false
     odom1_queue_size: 10
+
+    # Lidar odometry (MOLA on /scan, lidar_odometry.launch.py; robot.launch.py
+    # lidar_odom:=true). Speeds again, for the same reason as the camera's:
+    # lidar_odom_relay differentiates MOLA's pose into vx, vy and yaw rate in
+    # the robot's frame, so a MOLA restart cannot yank the pose. ~8-10 Hz, a
+    # tenth of the camera's rate, so per message it is trusted more
+    # (lidar_odom_relay velocity_sd / yaw_rate_sd set the covariance). When the
+    # camera goes quiet it carries the filter alone and the hold above stays
+    # off; when it is not running this input is simply silent.
+    odom2: lidar_odom
+    odom2_config: [false, false, false,
+                   false, false, false,
+                   true,  true,  false,
+                   false, false, true,
+                   false, false, false]
+    odom2_differential: false
+    odom2_relative: false
+    odom2_queue_size: 10
 
     # BNO055: yaw RATE only.
     imu0: imu/data

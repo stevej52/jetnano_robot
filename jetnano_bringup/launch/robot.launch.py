@@ -17,6 +17,8 @@ Useful variations:
                             nvblox:=true) and for the collision guard. Odometry
                             drops from 89 to ~43 Hz.
     use_camera:=false       skip the RealSense (and any visual odometry)
+    lidar_odom:=true        also MOLA lidar odometry on /scan, fused by the EKF next
+                            to the camera's (lidar_odometry.launch.py)
     use_teleop:=true        run the joystick node HERE instead of on the PC
     use_web_teleop:=false   no driving web page (http://<robot>:8081/)
 
@@ -79,6 +81,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'nvblox', default_value='false',
             description='with vo:=cuvslam, also run nvblox 3D mapping for the Nav2 costmap'),
+        DeclareLaunchArgument(
+            'lidar_odom', default_value='false',
+            description='also MOLA lidar odometry on /scan as a second EKF source '
+                        '(needs ros-jazzy-mola-lidar-odometry)'),
         DeclareLaunchArgument('use_teleop', default_value='false'),
         DeclareLaunchArgument(
             'use_cliff', default_value='false',
@@ -163,6 +169,7 @@ def generate_launch_description():
                  arguments={'use_sim_time': use_sim_time, 'vo': vo_source,
                             'nvblox': LaunchConfiguration('nvblox'),
                             'color_mesh': LaunchConfiguration('color_mesh'),
+                            'lidar_odom': LaunchConfiguration('lidar_odom'),
                             'vo_watchdog': PythonExpression(["'", LaunchConfiguration('cpp_safety'),
                                                              "' != 'true'"])}.items()),
 
@@ -258,7 +265,7 @@ def generate_launch_description():
             output='screen',
             respawn=True,
             respawn_delay=3.0,
-            parameters=[{'topics': ['/scan_raw', '/scan', '/imu/data', '/vo', '/odometry/filtered',
+            parameters=[{'topics': ['/scan_raw', '/scan', '/imu/data', '/vo', '/lidar_odom', '/odometry/filtered',
                                     '/nvblox_node/static_occupancy_grid', '/nvblox_node/obstacle_points',
                                     '/sound/audio', '/speech/heartbeat',
                                     '/map', '/battery', '/cliff/ranges']}],

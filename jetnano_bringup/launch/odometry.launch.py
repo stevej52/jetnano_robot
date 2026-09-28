@@ -16,6 +16,11 @@ Two visual odometry sources, chosen with vo:=
               container; robot.launch.py defaults to cuvslam.
     none      the EKF alone (IMU only - useful for a few seconds at most).
 
+lidar_odom:=true adds a second, independent source: MOLA's lidar odometry on
+/scan (lidar_odometry.launch.py), fused as speeds next to the camera's. It keeps
+the pose moving when the camera's odometry drops out. Off by default until it
+has been measured on the robot.
+
 Whichever runs, only ONE node may publish odom -> base_footprint. Both sources
 run with their transform broadcasters off and hand their estimate to the EKF on
 /vo as a measurement. The EKF owns the transform. Numbers behind the choice:
@@ -26,8 +31,9 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess, LogInfo
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription, LogInfo
 from launch.conditions import IfCondition
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackagePrefix
@@ -76,6 +82,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'color_mesh', default_value='false',
             description='nvblox only: paint the colour camera onto the 3D map (RViz, saved .ply)'),
+        DeclareLaunchArgument(
+            'lidar_odom', default_value='false',
+            description='also MOLA lidar odometry on /scan, fused by the EKF as a second '
+                        'source (needs ros-jazzy-mola-lidar-odometry)'),
         DeclareLaunchArgument(
             'nvblox', default_value='false',
             description='cuvslam only: also run nvblox 3D mapping from the same camera '
@@ -168,6 +178,13 @@ def generate_launch_description():
                 ('odom', '/vo'),
             ],
         ),
+
+        # Lidar: MOLA and its relay (ekf.yaml odom2).
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(bringup_pkg, 'launch', 'lidar_odometry.launch.py')),
+            condition=IfCondition(LaunchConfiguration('lidar_odom')),
+            launch_arguments={'use_sim_time': use_sim_time}.items()),
 
         Node(
             package='robot_localization',

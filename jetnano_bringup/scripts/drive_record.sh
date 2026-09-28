@@ -15,7 +15,7 @@
 # is how the first recorder had to be power-cycled away).
 
 BAGS=${DRIVE_BAGS:-$HOME/bags}
-TOPICS="/cmd_vel /cmd_vel_mux /cmd_vel_web /vo /odometry/filtered /odom_hold /imu/data /collision_guard/state /scan /tf /tf_static"
+TOPICS="/cmd_vel /cmd_vel_mux /cmd_vel_web /vo /lidar_odom /odometry/filtered /odom_hold /imu/data /collision_guard/state /scan /tf /tf_static"
 
 mkdir -p "$BAGS"
 # The recorder is found by its command line, not a saved PID: a background

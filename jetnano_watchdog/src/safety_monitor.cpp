@@ -36,10 +36,15 @@
 //    the IMU goes quiet it holds the robot still (stop_on_imu_timeout).
 //
 // 2. MOTION (motion.enabled): told to drive - cmd_vel, after twist_mux and the
-//    collision guard, at least min_cmd for window_s - while the visual odometry
-//    moved less than min_move_m or said nothing: the camera is blind (2026-09-26:
-//    new D435 firmware, "tracking fine", three metres into the curtains), or the
-//    wheels are stuck or in the air. Raises its own twist_mux lock e_stop_motion,
+//    collision guard, at least min_cmd for window_s - while the odometry moved
+//    less than min_move_m or said nothing: the camera is blind (2026-09-26: new
+//    D435 firmware, "tracking fine", three metres into the curtains), or the
+//    wheels are stuck or in the air. With the lidar odometry running
+//    (lidar_odom, lidar_odometry.launch.py) either source seeing her move is
+//    enough - she can drive on while the camera's odometry restarts - but the
+//    camera seeing next to nothing while the lidar sees her go at least
+//    blind_camera_m is the curtains again, and stops her just the same.
+//    Raises its own twist_mux lock e_stop_motion,
 //    says "nope", and lifts it once every driver has let go (nothing non-zero on
 //    cmd_vel_web/teleop/nav/tilt for release_after_s, and at least 2 s).
 //    throttle_calibration creeps below the motor's start on purpose and pauses
@@ -48,7 +53,8 @@
 // 3. VO (vo.enabled, only with the GPU odometry): when /vo goes quiet without
 //    anything dying (a camera USB glitch, 2026-09-24) it publishes a zero-velocity
 //    odometry on odom_hold after hold_after_s, which the EKF fuses so the pose
-//    stays put instead of coasting away, and after restart_after_s it stops the
+//    stays put instead of coasting away - unless the lidar odometry is still
+//    talking, which then carries the EKF alone - and after restart_after_s it stops the
 //    launch inside the isaac_vo container so the host wrapper respawns it - at
 //    most once per restart_min_interval_s, and not in the start-up grace.
 
@@ -167,6 +173,10 @@ public:
     window_ = declare_parameter("motion.window_s", 1.5);
     min_move_ = declare_parameter("motion.min_move_m", 0.04);
     release_after_ = declare_parameter("motion.release_after_s", 1.0);
+    blind_camera_ = declare_parameter("motion.blind_camera_m", 0.15);
+    // ----------------------------------------------------------------- lidar
+    lidar_timeout_ = declare_parameter("lidar.timeout_s", 0.5);
+    const std::string lidar_topic = declare_parameter("lidar.topic", std::string("lidar_odom"));
     // ------------------------------------------------------------------- vo
     vo_on_ = declare_parameter("vo.enabled", false);
     hold_after_ = declare_parameter("vo.hold_after_s", 0.5);
@@ -213,6 +223,9 @@ public:
     if (motion_on_ || vo_on_) {
       vo_sub_ = create_subscription<nav_msgs::msg::Odometry>(
         "vo", rclcpp::QoS(50), [this](nav_msgs::msg::Odometry::ConstSharedPtr m) {on_vo(*m);});
+      // silent unless lidar_odometry.launch.py runs
+      lo_sub_ = create_subscription<nav_msgs::msg::Odometry>(
+        lidar_topic, rclcpp::QoS(20), [this](nav_msgs::msg::Odometry::ConstSharedPtr m) {on_lidar(*m);});
     }
     if (motion_on_) {
       lock_pub_ = create_publisher<std_msgs::msg::Bool>("e_stop_motion", 10);
@@ -248,6 +261,13 @@ public:
   }
 
 private:
+  // one odometry position, camera's or lidar's, as it arrived
+  struct VoSample
+  {
+    std::chrono::steady_clock::time_point t;
+    double x, y;
+  };
+
   // ================================================================== tilt
   void on_imu(const sensor_msgs::msg::Imu & m)
   {
@@ -408,10 +428,45 @@ private:
       vo_.pop_front();
     }
     last_vo_ = now;
+    on_lidar_ = false;
     if (holding_) {
       holding_ = false;
       RCLCPP_INFO(get_logger(), "/vo is back; releasing the hold");
     }
+  }
+
+  void on_lidar(const nav_msgs::msg::Odometry & m)
+  {
+    const auto now = std::chrono::steady_clock::now();
+    lo_.push_back({now, m.pose.pose.position.x, m.pose.pose.position.y});
+    while (!lo_.empty() && std::chrono::duration<double>(now - lo_.front().t).count() > 5.0) {
+      lo_.pop_front();
+    }
+    last_lo_ = now;
+  }
+
+  bool lidar_alive() const
+  {
+    return last_lo_ && seconds_since(*last_lo_) < lidar_timeout_;
+  }
+
+  struct Track
+  {
+    std::size_t n;
+    double moved;       // farthest from the first sample in the window
+  };
+
+  Track track(const std::deque<VoSample> & d, std::chrono::steady_clock::time_point now) const
+  {
+    Track t{0, 0.0};
+    const VoSample * first = nullptr;
+    for (const auto & s : d) {
+      if (std::chrono::duration<double>(now - s.t).count() > window_) {continue;}
+      if (!first) {first = &s;}
+      ++t.n;
+      t.moved = std::max(t.moved, std::hypot(s.x - first->x, s.y - first->y));
+    }
+    return t;
   }
 
   void tick()
@@ -441,19 +496,26 @@ private:
     if (!cmd_since_ || seconds_since(cmd_at_) > 0.3 || seconds_since(*cmd_since_) < window_) {
       return;
     }
-    std::vector<const VoSample *> recent;
-    for (const auto & s : vo_) {
-      if (std::chrono::duration<double>(now - s.t).count() <= window_) {recent.push_back(&s);}
-    }
-    char reason[96];
-    if (recent.size() < 5) {
+    const Track vo = track(vo_, now);
+    const Track lo = track(lo_, now);
+    const bool has_vo = vo.n >= 5, has_lo = lo.n >= 5;
+    char reason[160];
+    if (!has_vo && !has_lo) {
       std::snprintf(reason, sizeof(reason), "no odometry for %.1f s", window_);
+    } else if (has_vo && has_lo && lo.moved >= blind_camera_ && vo.moved < 0.3 * lo.moved) {
+      // the curtains (2026-09-26): the camera "tracking fine" and seeing nothing move
+      std::snprintf(reason, sizeof(reason), "the camera's odometry moved %.1f cm while the lidar's moved "
+        "%.0f cm in %.1f s - the camera is blind", vo.moved * 100.0, lo.moved * 100.0, window_);
     } else {
-      double moved = 0.0;
-      for (const auto * s : recent) {
-        moved = std::max(moved, std::hypot(s->x - recent.front()->x, s->y - recent.front()->y));
+      const double moved = std::max(has_vo ? vo.moved : 0.0, has_lo ? lo.moved : 0.0);
+      if (moved >= min_move_) {
+        if (has_vo && has_lo && vo.moved >= blind_camera_ && lo.moved < 0.3 * vo.moved) {
+          RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 10000, "the camera's odometry moved %.0f cm but "
+            "the lidar's %.1f cm: the lidar odometry has lost her (a long bare wall, glass, open space?)",
+            vo.moved * 100.0, lo.moved * 100.0);
+        }
+        return;
       }
-      if (moved >= min_move_) {return;}
       std::snprintf(reason, sizeof(reason), "the odometry moved %.1f cm in %.1f s", moved * 100.0, window_);
     }
     locked_ = true;
@@ -474,7 +536,18 @@ private:
     const auto now = std::chrono::steady_clock::now();
     const double since_start = seconds_since(started_);
     const double silent = last_vo_ ? seconds_since(*last_vo_) : since_start;
-    if (silent > hold_after_ && (last_vo_ || since_start > grace_)) {
+    const bool vo_gone = silent > hold_after_ && (last_vo_ || since_start > grace_);
+    if (vo_gone && lidar_alive()) {
+      // the EKF still has a real measurement of her motion: a zero here would fight it
+      if (holding_) {
+        holding_ = false;
+        RCLCPP_INFO(get_logger(), "the lidar odometry is talking again; releasing the hold");
+      }
+      if (!on_lidar_) {
+        on_lidar_ = true;
+        RCLCPP_WARN(get_logger(), "/vo silent for %.1f s: the lidar odometry carries the EKF", silent);
+      }
+    } else if (vo_gone) {
       if (!holding_) {
         holding_ = true;
         RCLCPP_WARN(get_logger(), "/vo silent for %.1f s: holding the EKF still", silent);
@@ -519,12 +592,6 @@ private:
     state_pub_->publish(s);
   }
 
-  struct VoSample
-  {
-    std::chrono::steady_clock::time_point t;
-    double x, y;
-  };
-
   // tilt
   bool tilt_on_{true}, stop_on_imu_timeout_{true}, imu_timed_out_{false}, gave_up_{false};
   double roll_trigger_, pitch_trigger_, roll_release_, pitch_release_;
@@ -542,23 +609,25 @@ private:
   rclcpp::TimerBase::SharedPtr tilt_timer_;
   // motion
   bool motion_on_{true}, locked_{false}, any_input_{false};
-  double min_cmd_, window_, min_move_, release_after_;
+  double min_cmd_, window_, min_move_, release_after_, blind_camera_;
   int events_{0};
   std::optional<std::chrono::steady_clock::time_point> cmd_since_;
   std::chrono::steady_clock::time_point cmd_at_{}, input_at_{}, locked_at_{}, lock_sent_{}, paused_until_{};
-  std::deque<VoSample> vo_;
+  std::deque<VoSample> vo_, lo_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr lock_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr say_pub_, state_pub_;
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr pause_sub_;
   std::vector<rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr> input_subs_;
   // vo
-  bool vo_on_{false}, holding_{false};
+  bool vo_on_{false}, holding_{false}, on_lidar_{false};
   double hold_after_, restart_after_, grace_, min_interval_;
   std::string container_, pattern_, hold_frame_;
   std::chrono::steady_clock::time_point started_;
-  std::optional<std::chrono::steady_clock::time_point> last_vo_, last_restart_;
-  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr vo_sub_;
+  std::optional<std::chrono::steady_clock::time_point> last_vo_, last_restart_, last_lo_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr vo_sub_, lo_sub_;
+  // lidar
+  double lidar_timeout_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr hold_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
 };

@@ -26,7 +26,9 @@ collision guard) went with it. This node closes both holes:
    ekf.yaml fuses as a second source. The filter's velocity decays to zero
    and the pose stays put instead of running away. The gyro still owns the
    yaw rate, so a robot that IS turning is not fought. As soon as /vo is back
-   the hold stops.
+   the hold stops. Not while the lidar odometry (lidar_odom, from
+   lidar_odometry.launch.py) is still talking: then the EKF has a real
+   measurement of her motion, and a zero here would fight it.
 
 2. ``restart``: after ``restart_after_s`` of silence (and a grace period
    after start-up) it stops the launch inside the isaac_vo container, whose
@@ -49,6 +51,8 @@ class VoWatchdog(Node):
         super().__init__('vo_watchdog')
         self.declare_parameter('vo_topic', 'vo')
         self.declare_parameter('hold_topic', 'odom_hold')
+        self.declare_parameter('lidar_odom_topic', 'lidar_odom')
+        self.declare_parameter('lidar_timeout_s', 0.5)
         self.declare_parameter('base_frame', 'base_footprint')
         self.declare_parameter('hold_after_s', 0.5)
         self.declare_parameter('restart_after_s', 5.0)
@@ -65,14 +69,18 @@ class VoWatchdog(Node):
         self.container = str(self.get_parameter('container').value)
         self.pattern = str(self.get_parameter('launch_pattern').value)
         self.base_frame = str(self.get_parameter('base_frame').value)
+        self.lidar_timeout = float(self.get_parameter('lidar_timeout_s').value)
 
         self.started = time.monotonic()
         self.last_vo = None
         self.last_restart = 0.0
         self.holding = False
+        self.last_lidar = None
+        self.on_lidar = False     # the EKF is running on the lidar odometry alone
 
         self.hold_pub = self.create_publisher(Odometry, self.get_parameter('hold_topic').value, 10)
         self.create_subscription(Odometry, self.get_parameter('vo_topic').value, self._on_vo, 10)
+        self.create_subscription(Odometry, self.get_parameter('lidar_odom_topic').value, self._on_lidar, 10)
         self.create_timer(0.1, self._tick)
         self.get_logger().info(
             f'holding the EKF after {self.hold_after:.1f} s without /vo, restarting the '
@@ -80,16 +88,29 @@ class VoWatchdog(Node):
 
     def _on_vo(self, _msg):
         self.last_vo = time.monotonic()
+        self.on_lidar = False
         if self.holding:
             self.holding = False
             self.get_logger().info('/vo is back; releasing the hold')
+
+    def _on_lidar(self, _msg):
+        self.last_lidar = time.monotonic()
 
     def _tick(self):
         now = time.monotonic()
         since_start = now - self.started
         silent = (now - self.last_vo) if self.last_vo is not None else since_start
+        lidar_alive = self.last_lidar is not None and now - self.last_lidar < self.lidar_timeout
 
-        if silent > self.hold_after and (self.last_vo is not None or since_start > self.grace):
+        vo_gone = silent > self.hold_after and (self.last_vo is not None or since_start > self.grace)
+        if vo_gone and lidar_alive:
+            if self.holding:
+                self.holding = False
+                self.get_logger().info('lidar odometry is talking again; releasing the hold')
+            if not self.on_lidar:
+                self.on_lidar = True
+                self.get_logger().warning(f'/vo silent for {silent:.1f} s: the lidar odometry carries the EKF')
+        elif vo_gone:
             if not self.holding:
                 self.holding = True
                 self.get_logger().warning(f'/vo silent for {silent:.1f} s: holding the EKF still')

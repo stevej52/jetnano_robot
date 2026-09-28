@@ -72,6 +72,12 @@ def generate_launch_description():
             'odometry', default_value='true',
             description='rtabmap visual odometry and the EKF'),
         DeclareLaunchArgument(
+            'lidar_odom', default_value='false',
+            description='also MOLA lidar odometry, fused by the EKF (needs ros-jazzy-mola-lidar-odometry)'),
+        DeclareLaunchArgument(
+            'vo_watchdog', default_value='false',
+            description="the safety monitor's VO hold (its container restart finds no container here)"),
+        DeclareLaunchArgument(
             'slam', default_value='true',
             description='slam_toolbox in mapping mode'),
         DeclareLaunchArgument(
@@ -93,6 +99,7 @@ def generate_launch_description():
             'simulate': 'true',
             'use_sim_time': 'true',
             'use_tilt_guard': LaunchConfiguration('tilt_guard'),
+            'vo_watchdog': LaunchConfiguration('vo_watchdog'),
         }),
 
         # Given 20 s to let the controllers come up and the camera produce a
@@ -100,7 +107,9 @@ def generate_launch_description():
         # first seconds complaining rather than initialising.
         TimerAction(period=20.0, actions=[
             include(bringup_pkg, 'odometry.launch.py',
-                    condition=IfCondition(LaunchConfiguration('odometry'))),
+                    condition=IfCondition(LaunchConfiguration('odometry')),
+                    arguments={'use_sim_time': 'true',
+                               'lidar_odom': LaunchConfiguration('lidar_odom')}),
         ]),
 
         # SLAM last: it needs /scan and a tf tree that already reaches
