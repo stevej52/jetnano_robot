@@ -59,6 +59,7 @@ from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import Twist
 from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
 from rcl_interfaces.srv import GetParameters, SetParameters
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
 from sensor_msgs.msg import BatteryState
@@ -491,9 +492,21 @@ class WebTeleop(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = WebTeleop()
+    # rclpy's EventsExecutor, not the default SingleThreadedExecutor: that one rebuilds
+    # its wait set of ~40 entities (the dashboard's subscriptions, the parameter
+    # services, clients, timers) in Python on every wake-up, which py-spy put at 82-92 %
+    # of this node's CPU (2026-09-28: 7.6 % of a core idle, 38.9 % with the dashboard
+    # open); the callbacks themselves were under 10 %.
     try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
+        from rclpy.experimental import EventsExecutor
+        executor = EventsExecutor()
+    except ImportError:          # an rclpy without it: the old way
+        from rclpy.executors import SingleThreadedExecutor
+        executor = SingleThreadedExecutor()
+    executor.add_node(node)
+    try:
+        executor.spin()
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         try:
