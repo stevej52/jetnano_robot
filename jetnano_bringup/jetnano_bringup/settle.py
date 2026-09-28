@@ -39,6 +39,12 @@ centre through twist_mux (a driver still wins); 1, 2, then 3 s a round - no long
 release takes the servos back at once anyway: pca9685 writes every command it gets. ``mode:
 wiggle`` keeps the old way.
 
+It also listens during a release (2026-09-28, the 13:09 drive): the pca9685 registers showed
+the steering outputs really off (LED1_OFF_H 0x10), yet the buzz measured 17-21 dB right
+through releases - with both steering servos unpowered something else was making it. Now a
+buzz that goes on while they are off is logged as "not the steering" and no more releases
+are tried until she moves.
+
 Publishes ``steering/buzz`` (dB per half second) for watching it live.
 """
 
@@ -106,6 +112,8 @@ class Settle(Node):
         self.off_pubs = [self.create_publisher(Float64, f'/pca9685/{name}/pulse_width', 10)
                          for name in self.get_parameter('steering_channels').value]
         self.release_timer = None
+        self.during: list[float] = []           # buzz dB while the steering is off
+        self.not_steering = False               # heard with the steering off: stop releasing
         self.create_subscription(Int16MultiArray, 'sound/audio', self._on_audio, 10)
         self.create_subscription(Twist, 'cmd_vel', self._on_cmd, 10)
         # ... and a driver asking counts as driving even when a lock keeps it from cmd_vel
@@ -168,6 +176,7 @@ class Settle(Node):
             self.attempt = 0
             self.round = 1
             self.gave_up_at = None
+            self.not_steering = False
             self.reported = True
             self.recent.clear()
             self.powers.clear()
@@ -184,7 +193,12 @@ class Settle(Node):
         band = np.sort(power[self.band])
         buzz = float(10.0 * math.log10(max(band[-3:].mean(), 1e-20) / max(float(np.median(band)), 1e-20)))
         self.buzz_pub.publish(Float32(data=buzz))
-        if self.step_timer is not None or self.release_timer is not None or self._now() < self.quiet_from:
+        if self.release_timer is not None:
+            if not (self.talking or self.speaking or self._now() < self.hush_until):
+                self.during.append(buzz)                    # the steering is off: is it still here?
+            self.recent.clear()
+            return
+        if self.step_timer is not None or self._now() < self.quiet_from:
             self.recent.clear()                             # her own motion is not a buzz
             return
         if self.talking or self.speaking or self._now() < self.hush_until:
@@ -206,6 +220,8 @@ class Settle(Node):
             return
         if any(self.locked.values()):
             return                                          # stopped means nothing moves
+        if self.not_steering:
+            return                                          # releasing cannot help this one
         if self._buzzing():
             if self.attempt >= len(wiggles):
                 rounds = int(self.get_parameter('rounds').value)
@@ -245,6 +261,7 @@ class Settle(Node):
             pub.publish(Float64(data=0.0))              # zero pulse width: the output off
         self.recent.clear()
         self.powers.clear()
+        self.during = []
         self.next_check = self._now() + seconds + 0.5 + float(self.get_parameter('between_s').value)
         self.release_timer = self.create_timer(seconds, self._recentre)
 
@@ -256,6 +273,17 @@ class Settle(Node):
         # (a real driver, Nav2 or a lock still wins); the watchdog's timeout keeps them there
         self.cmd_pub.publish(Twist())
         self.quiet_from = self._now() + 0.5
+        # the first half second is the servos letting go; judge by what followed
+        heard = sorted(self.during[1:]) if len(self.during) > 1 else []
+        if heard:
+            level = heard[len(heard) // 2]
+            if level >= float(self.get_parameter('buzz_db').value):
+                self.not_steering = True
+                self.get_logger().warning(
+                    f'still {level:.0f} dB with both steering servos off: this buzz is not the steering; '
+                    'no more releases until she moves')
+            else:
+                self.get_logger().info(f'quiet with the steering off ({level:.0f} dB)')
 
     # ------------------------------------------------------------------ wiggle --
     def _wiggle(self, deg: float) -> None:
