@@ -57,7 +57,8 @@ robot by itself: that would restart mapping away from the parking spot and
 spoil the map.
 
 A process that keeps dying is not "starting": after four fresh starts in ten
-minutes it is judged like anything else.
+minutes it is judged like anything else - but not in its first
+crash_loop_young_s (10 s), while even a good start is still coming up.
 
 It speaks only when it gives up or something it had given up on comes back
 (``announce``: failures | all | none), in English when she is in English
@@ -200,6 +201,11 @@ class Watchdog(Node):
         # ~10 s): not silent, just new. 2026-09-25 the watchdog fought five
         # deliberate restarts of listen in an hour and gave up on it.
         self.declare_parameter('young_process_s', 40.0)
+        # ...but in a crash loop (four starts in ten minutes) only this long. With no
+        # grace at all, on 2026-09-28 a series of deliberate EKF restarts made the
+        # watchdog kill a respawned EKF one second old, just before it would have
+        # published - a second outage for nothing.
+        self.declare_parameter('crash_loop_young_s', 10.0)
         self.declare_parameter('expect_boot_parts_after_s', 180.0)
         # what the launch switched on (robot.launch.py vo:= and nvblox:=): a part
         # that is off is only watched once seen (review 2026-09-26: with nvblox
@@ -217,6 +223,7 @@ class Watchdog(Node):
         self.lock = threading.RLock()
         self.node_missing_s = float(p('node_missing_s'))
         self.young_s = float(p('young_process_s'))
+        self.crash_young_s = float(p('crash_loop_young_s'))
         self.expect_after = float(p('expect_boot_parts_after_s'))
         self.gpu_reboot_within = float(p('gpu_reboot_within_s'))
         self.announce = str(p('announce'))
@@ -721,8 +728,11 @@ class Watchdog(Node):
                     start = int(f.read().rsplit(')', 1)[1].split()[19]) / tick
                 if up - start < self.young_s:
                     item.starts = {t for t in item.starts if up - t < 600.0} | {round(start)}
-                    # four fresh starts in ten minutes is a crash loop, not a start
-                    return len(item.starts) < 4
+                    # four fresh starts in ten minutes is a crash loop, not a start: judged
+                    # like anything else, but still not in its first seconds
+                    if len(item.starts) < 4:
+                        return True
+                    return up - start < self.crash_young_s
         except (OSError, ValueError, IndexError):
             pass
         return False
