@@ -637,17 +637,46 @@
     c.restore();
   }
 
-  function frame() { if (view === 'map') drawMap(); else drawRadar(); requestAnimationFrame(frame); }
+  // What drawing costs this device (2026-09-28): frames per second, time per frame, and
+  // frames that came late (a busy main thread) - sent to /dash/perf every 10 s with the
+  // time spent taking in each poll.
+  var perf = { t0: performance.now(), frames: 0, drawMs: 0, drawMax: 0, late: 0, last: 0,
+               polls: 0, pollMs: 0, bytes: 0 };
+  function frame(ts) {
+    var t = performance.now();
+    if (view === 'map') drawMap(); else drawRadar();
+    var d = performance.now() - t;
+    perf.frames++; perf.drawMs += d; if (d > perf.drawMax) perf.drawMax = d;
+    if (perf.last && ts - perf.last > 34) perf.late++;
+    perf.last = ts;
+    requestAnimationFrame(frame);
+  }
   requestAnimationFrame(frame);
 
   // ------------------------------------------------------------------- data
   var failures = 0;
   function poll() {
-    return fetch('/dash/state', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
+    return fetch('/dash/state', { cache: 'no-store' }).then(function (r) { return r.text(); }).then(function (txt) {
+      var t = performance.now(), j = JSON.parse(txt);
+      if (j.page_v) { if (pageV === null) pageV = j.page_v; else if (j.page_v !== pageV) { location.reload(); return; } }
       S = j; failures = 0; $('lost').style.display = 'none'; render();
+      perf.polls++; perf.pollMs += performance.now() - t; perf.bytes += txt.length;
     }).catch(function () { if (++failures > 3) $('lost').style.display = 'block'; });
   }
+  var pageV = null;             // the page's version on the robot: a new one reloads this
   setInterval(poll, 250); poll();
+  setInterval(function () {
+    var now = performance.now(), s = (now - perf.t0) / 1000, n = Math.max(1, perf.frames), q = Math.max(1, perf.polls);
+    var rep = { view: view, s: +s.toFixed(1), hidden: document.hidden,
+                fps: +(perf.frames / s).toFixed(1), draw_ms: +(perf.drawMs / n).toFixed(2),
+                draw_max_ms: +perf.drawMax.toFixed(1), late_frames: perf.late,
+                polls_s: +(perf.polls / s).toFixed(2), poll_ms: +(perf.pollMs / q).toFixed(2),
+                poll_kb: +(perf.bytes / q / 1024).toFixed(1), dpr: window.devicePixelRatio,
+                radar: [radar.width, radar.height], map: [mapcv.width, mapcv.height],
+                screen: [screen.width, screen.height] };
+    fetch('/dash/perf', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rep) }).catch(function () {});
+    perf = { t0: now, frames: 0, drawMs: 0, drawMax: 0, late: 0, last: 0, polls: 0, pollMs: 0, bytes: 0 };
+  }, 10000);
   setInterval(function () { $('clock').textContent = new Date().toTimeString().slice(0, 8); }, 500);
 
   // keep the iPad's screen on while the dashboard is open

@@ -46,6 +46,7 @@ the robot's own network only.
 
 from __future__ import annotations
 
+import collections
 import json
 import os
 import threading
@@ -132,7 +133,7 @@ def make_handler(node: 'WebTeleop'):
                 self.wfile.write(body)
 
         def _json(self, payload: dict, status=HTTPStatus.OK):
-            self._send(status, json.dumps(payload).encode())
+            self._send(status, json.dumps(payload, separators=(',', ':')).encode())
 
         def _body(self) -> dict:
             length = int(self.headers.get('Content-Length') or 0)
@@ -155,7 +156,11 @@ def make_handler(node: 'WebTeleop'):
             elif path in ('/dash', '/ipad', '/dash.html'):
                 self._send(HTTPStatus.OK, node.dash_page(), 'text/html; charset=utf-8')
             elif path == '/dash/state':
-                self._json(node.dash.snapshot(node.status()) if node.dash else {'error': 'no dashboard'})
+                snap = node.dash.snapshot(node.status()) if node.dash else {'error': 'no dashboard'}
+                snap['page_v'] = node.dash_page_version()     # the page reloads itself when it changes
+                self._json(snap)
+            elif path == '/dash/perf':
+                self._json({'reports': list(node.dash_perf)})
             elif path == '/dash/map.png':
                 png = node.dash.map_image() if node.dash else None
                 if png:
@@ -205,6 +210,10 @@ def make_handler(node: 'WebTeleop'):
                     self._json({'error': 'pan and tilt must be numbers'}, HTTPStatus.BAD_REQUEST)
                     return
                 self._json({'look': node.look_at})
+            elif path == '/dash/perf':
+                # what the page costs the device showing it, every 10 s (dash.html's beacon)
+                node.dash_perf.append({'t': round(time.time(), 1), 'from': self.client_address[0], **body})
+                self._json({'ok': True})
             elif path == '/dash/locate':
                 # the dashboard's WHERE AM I? button: where_am_i searches; the answer
                 # arrives on where_am_i/state and shows in /dash/state
@@ -312,6 +321,7 @@ class WebTeleop(Node):
         self.create_timer(3.0, self._poll_guard)
 
         self.dash = None
+        self.dash_perf = collections.deque(maxlen=720)     # the pages' own reports, 2 h of them
         try:
             from jetnano_teleop.dash import Dashboard
             self.dash = Dashboard(self)
@@ -433,6 +443,12 @@ class WebTeleop(Node):
     def dash_page(self) -> bytes:
         # read each time, so the page can be edited without a restart
         return self._read_page(str(self.get_parameter('dash_page').value))
+
+    def dash_page_version(self) -> float:
+        try:
+            return os.path.getmtime(str(self.get_parameter('dash_page').value))
+        except OSError:
+            return 0.0
 
     def monotonic(self) -> float:
         return self.get_clock().now().nanoseconds / 1e9

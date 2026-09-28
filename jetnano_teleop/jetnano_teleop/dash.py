@@ -335,7 +335,10 @@ class Dashboard:
             near = dx * dx + dy * dy < 25.0
             rx, ry = c * dx[near] - s * dy[near], s * dx[near] + c * dy[near]
             step = max(1, len(rx) // 500)
-            self.obstacles = np.round(np.stack([rx[::step], ry[::step]], axis=1), 2).tolist()
+            # float64 before rounding: float32's 3.74 prints as 3.740000009536743, and that
+            # was 36 of the 43 KB the page fetched 4 times a second (measured 2026-09-28)
+            xy = np.stack([rx[::step], ry[::step]], axis=1).astype(np.float64)
+            self.obstacles = np.round(xy, 2).tolist()
             self.obstacles_t = time.monotonic()
         finally:
             self._pc_busy = False
