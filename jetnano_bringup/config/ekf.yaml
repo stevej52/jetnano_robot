@@ -79,16 +79,24 @@ ekf_filter_node:
     # Lidar odometry (MOLA on /scan, lidar_odometry.launch.py; robot.launch.py
     # lidar_odom:=true). Speeds again, for the same reason as the camera's:
     # lidar_odom_relay differentiates MOLA's pose into vx, vy and yaw rate in
-    # the robot's frame, so a MOLA restart cannot yank the pose. ~8-10 Hz, a
-    # tenth of the camera's rate, so per message it is trusted more
-    # (lidar_odom_relay velocity_sd / yaw_rate_sd set the covariance). When the
+    # the robot's frame, so a MOLA restart cannot yank the pose. ~8 Hz. The relay
+    # drops what cannot be real (sideways motion, impossible speed changes, and
+    # the samples after each: MOLA loses track in episodes) and sets the
+    # covariance from what got through on the recorded drives: +-0.03 m/s still,
+    # +-0.10 moving (lidar_odom_relay velocity_sd_* / yaw_rate_sd_*). When the
     # camera goes quiet it carries the filter alone and the hold above stays
     # off; when it is not running this input is simply silent.
     odom2: lidar_odom
+    # Forward and sideways speed only, not the yaw rate (2026-09-28). On the 19:32
+    # drive of 2026-09-27 MOLA reported her spinning the wrong way (-3.4 rad/s while
+    # the IMU read +1.2) for most of a minute and dragged the EKF's heading 70-140
+    # degrees off the camera's; the relay's gates stop 89 % of such samples, not all.
+    # The IMU's gyro gives the yaw rate 100 times a second to +-0.007 rad/s; what the
+    # lidar adds is speed when the camera is gone.
     odom2_config: [false, false, false,
                    false, false, false,
                    true,  true,  false,
-                   false, false, true,
+                   false, false, false,
                    false, false, false]
     odom2_differential: false
     odom2_relative: false

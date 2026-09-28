@@ -18,10 +18,15 @@
 
 Prints, and writes to <bag>/report.txt:
 
-- odometry health: VO rate and gaps, EKF-vs-VO separation (the two must
-  agree; on 2026-09-24 the EKF ran 6.5 km while VO moved 4.5 m), jumps;
-  with lidar odometry running (lidar_odom:=true) the same for it, and how far
-  the camera's and the lidar's odometry disagree over each 2 s of the drive;
+- odometry health: VO rate, gaps and restarts, and how far the EKF and VO
+  disagree about how far she moved and turned over each 2 s (the two must
+  agree; on 2026-09-24 the EKF ran 6.5 km while VO moved 4.5 m); with lidar
+  odometry running (lidar_odom:=true) the same for it against VO. Only
+  motion over windows is compared, never positions: VO starts over from its
+  own origin whenever the camera pipeline restarts, and the lidar odometry
+  is in a frame of its own - absolute positions read metres apart for no
+  fault (2026-09-27: "11.51 m" on a drive where the EKF was fine). Windows
+  across a VO restart or gap are skipped;
 - the phone link: how long the page was driving, command dropouts > 0.4 s
   (each one stops the robot);
 - the collision guard: stop events, and for each whether the lidar had
@@ -84,6 +89,61 @@ def nearest(lst, t):
     return lst[lo]
 
 
+def index_at(lst, t):
+    """Index of the first sample at or after t."""
+    lo, hi = 0, len(lst)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if lst[mid][0] < t:
+            lo = mid + 1
+        else:
+            hi = mid
+    return lo
+
+
+def _turned(a, b):
+    return abs(math.degrees(math.atan2(math.sin(b[3] - a[3]), math.cos(b[3] - a[3]))))
+
+
+def clean(P, ta, tb, max_step=0.10, max_turn=10.0, max_gap=0.3):
+    """True if P runs through [ta, tb] without a gap or a jump (a restart): a restart
+    near its origin barely moves the position but can reset the heading."""
+    i, j = index_at(P, ta), index_at(P, tb)
+    if i == 0 or j >= len(P):
+        return False
+    seg = P[i - 1:j + 1]
+    return all(b[0] - a[0] <= max_gap and math.hypot(b[1] - a[1], b[2] - a[2]) <= max_step
+               and _turned(a, b) <= max_turn for a, b in zip(seg, seg[1:]))
+
+
+def restarts(P, jump=0.3, turn=20.0):
+    """Times at which P started over: more than `jump` metres or `turn` degrees
+    between two samples (VO: 22 ms apart, far beyond anything she can do)."""
+    return [b[0] for a, b in zip(P, P[1:])
+            if math.hypot(b[1] - a[1], b[2] - a[2]) > jump or _turned(a, b) > turn]
+
+
+def window_diffs(A, B, span=2.0, step=1.0, a_must_be_clean=False):
+    """How far apart A and B are about how far she moved and how much she turned over
+    each `span` s, every `step` s: (sorted distance diffs m, sorted turn diffs deg). A
+    window is skipped where B (and A if asked) has a gap or a restart in it."""
+    dist, turn = [], []
+    t = max(A[0][0], B[0][0])
+    end = min(A[-1][0], B[-1][0]) - span
+    while t <= end:
+        a, b = nearest(A, t), nearest(A, t + span)
+        va, vb = nearest(B, t), nearest(B, t + span)
+        t += step
+        if (b[0] - a[0] < 0.75 * span or abs(va[0] - a[0]) > 0.2 or abs(vb[0] - b[0]) > 0.2
+                or not clean(B, a[0], b[0])
+                or (a_must_be_clean and not clean(A, a[0], b[0], max_step=0.25, max_turn=30.0))):
+            continue
+        dist.append(abs(math.hypot(b[1] - a[1], b[2] - a[2]) - math.hypot(vb[1] - va[1], vb[2] - va[2])))
+        d = (b[3] - a[3]) - (vb[3] - va[3])
+        turn.append(abs(math.degrees(math.atan2(math.sin(d), math.cos(d)))))
+    return sorted(dist), sorted(turn)
+
+
 def report(bag):
     msgs = load(bag)
     lines = []
@@ -111,28 +171,25 @@ def report(bag):
         gaps = [b[0] - a[0] for a, b in zip(P, P[1:]) if b[0] - a[0] > 0.5]
         say(f'{name}: {len(P) / (P[-1][0] - P[0][0]):.1f} Hz, path {length:.1f} m, jumps >10 cm: {jumps}, '
             f'gaps >0.5 s: {len(gaps)}' + (f' (worst {max(gaps):.1f} s)' if gaps else ''))
-    if vo and ekf:
-        sep = max(math.hypot(e[1] - v[1], e[2] - v[2]) for e in ekf[::10] for v in [nearest(vo, e[0])])
-        say(f'EKF vs VO: worst separation {sep:.2f} m' + ('  <-- the filter left its sensor' if sep > 0.5 else ''))
-    if vo and lo:
-        # different frames (odom vs lidar_odom), so compare how far and how much
-        # each says she moved and turned over the same 2 s, not where she is
-        dist, turn = [], []
-        for a in lo[::8]:
-            b = nearest(lo, a[0] + 2.0)
-            va, vb = nearest(vo, a[0]), nearest(vo, b[0])
-            if b[0] - a[0] < 1.5 or abs(va[0] - a[0]) > 0.2 or abs(vb[0] - b[0]) > 0.2:
-                continue
-            dist.append(abs(math.hypot(b[1] - a[1], b[2] - a[2]) - math.hypot(vb[1] - va[1], vb[2] - va[2])))
-            d = (b[3] - a[3]) - (vb[3] - va[3])
-            turn.append(abs(math.degrees(math.atan2(math.sin(d), math.cos(d)))))
-        if dist:
-            dist.sort()
-            turn.sort()
-            say(f'VO vs lidar odometry over 2 s ({len(dist)} windows): distance differs by '
-                f'{dist[len(dist) // 2] * 100:.0f} cm typically, {dist[-1] * 100:.0f} cm at worst; turn by '
-                f'{turn[len(turn) // 2]:.1f} deg typically, {turn[-1]:.0f} deg at worst'
-                + ('  <-- one of them lost her' if dist[-1] > 0.3 or turn[-1] > 20 else ''))
+    if len(vo) > 1:
+        again = restarts(vo)
+        if again:
+            say(f'VO started over {len(again)} time(s), at ' + ', '.join(f'{t - t0:.0f} s' for t in again)
+                + ' (a camera pipeline restart: its jumps above include these)')
+
+    def agreement(name, dist, turn, flag):
+        if not dist:
+            return
+        say(f'{name} over 2 s ({len(dist)} windows): distance differs by {dist[len(dist) // 2] * 100:.0f} cm '
+            f'typically, {dist[int(len(dist) * 0.99)] * 100:.0f} cm at the 99th percentile, '
+            f'{dist[-1] * 100:.0f} cm at worst; turn by {turn[len(turn) // 2]:.1f} deg typically, '
+            f'{turn[-1]:.0f} deg at worst' + (f'  <-- {flag}' if dist[-1] > 0.3 or turn[-1] > 20 else ''))
+    if len(vo) > 1 and len(ekf) > 1:
+        # the EKF may jump (that is what this is looking for); only VO must run clean
+        agreement('EKF vs VO', *window_diffs(ekf, vo), 'the filter left its sensor')
+    if len(vo) > 1 and len(lo) > 1:
+        # the relay drops the stretches the lidar odometry got wrong: compare where it ran
+        agreement('VO vs lidar odometry', *window_diffs(lo, vo, a_must_be_clean=True), 'one of them lost her')
     hold = msgs.get('/odom_hold', [])
     if hold:
         say(f'vo_watchdog held the EKF {len(hold) / 10:.0f} s in total (VO was silent that long)')

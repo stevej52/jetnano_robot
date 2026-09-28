@@ -128,8 +128,11 @@ TOPICS = {
         ('signal', proc('jetnano_bringup/grid_to_points'), 10.0),
         ('signal', proc('jetnano_bringup/grid_to_points'), 20.0)]),
     # MOLA (robot.launch.py lidar_odom:=true): its launch respawns it when it dies, and
-    # stopping mola-cli ends that launch, so a silent-but-alive one gets the same cure
-    'lidar_odom': ('lidar odometry', '/lidar_odom', 3.0, 3.0, 'seen', 'scan_filter', [
+    # stopping mola-cli ends that launch, so a silent-but-alive one gets the same cure.
+    # Judged by MOLA's own output, not the relay's /lidar_odom: since 2026-09-28 the relay
+    # withholds whole episodes MOLA got wrong (up to 12 s on the recorded drives), and
+    # that silence is not a dead MOLA - restarting it then only made things worse.
+    'lidar_odom': ('lidar odometry', '/lidar_odometry/pose', 3.0, 3.0, 'seen', 'scan_filter', [
         ('signal', proc('mola_launcher/mola-cli'), 20.0),
         ('signal', proc('mola_launcher/mola-cli'), 40.0)]),
     'mic': ('microphone', '/sound/audio', 3.0, 5.0, 'seen', None, [
@@ -148,11 +151,12 @@ TOPICS = {
 # Nodes that respawn by themselves: reported if one stays away.
 NODES = ('pca9685', 'twist_mux', 'collision_guard', 'lifecycle_manager_guard', 'robot_state_publisher',
          'ekf_filter_node', 'rplidar', 'scan_filter', 'bno055', 'safety_monitor', 'web_teleop',
-         'sounds', 'speak', 'listen', 'brain', 'ears', 'motion_watch', 'topic_watch')
+         'sounds', 'speak', 'listen', 'brain', 'ears', 'motion_watch', 'topic_watch',
+         'lidar_odom_relay')
 NODE_LABELS = {'pca9685': 'motor driver', 'twist_mux': 'command mixer', 'collision_guard': 'collision guard',
                'ekf_filter_node': 'odometry', 'rplidar': 'lidar driver', 'bno055': 'I M U driver',
                'web_teleop': 'web page', 'robot_state_publisher': 'robot model',
-               'safety_monitor': 'safety monitor'}
+               'safety_monitor': 'safety monitor', 'lidar_odom_relay': 'lidar odometry relay'}
 
 HTTP = {
     'web page': ('http://127.0.0.1:8081/status', [('signal', proc('jetnano_teleop/web_teleop'), 12.0)]),
