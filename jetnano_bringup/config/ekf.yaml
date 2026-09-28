@@ -8,7 +8,13 @@
 # map -> odom is still not ours. That comes from slam_toolbox or AMCL.
 ekf_filter_node:
   ros__parameters:
-    frequency: 30.0
+    # 100 Hz, the IMU's rate (was 30). Bench, composed Nav2 starting and stopping,
+    # two runs each (2026-09-27): output spacing median 30.5 -> 10.1 ms, 1-in-1000
+    # gap 103-112 -> 63-71 ms, time with the pose older than 50 ms 3.4-3.7 -> 1.8-2.2 s;
+    # the rare 0.2-0.3 s stall is the same at both rates. Its "Failed to meet update
+    # rate" warnings are more frequent at a 10 ms budget but are not staler output.
+    # Costs ~11 % of a core parked (EKF +4, /tf listeners +7) and ~15 % more in Nav2.
+    frequency: 100.0
     sensor_timeout: 0.2
     two_d_mode: true              # ground vehicle: pin z, roll and pitch
     publish_tf: true
