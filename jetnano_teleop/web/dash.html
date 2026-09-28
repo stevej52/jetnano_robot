@@ -444,25 +444,29 @@
     $('badges').innerHTML = badges.join('');
 
     // systems tiles
-    var html = '';
+    // FLUX: how rough the iPad's view is - the worst of drawing, late frames, missed
+    // updates and the link, each as % of what it may use (the beacon below works it out).
+    // It sits where Battery was, so the two top rows are the live ones (Steve, 2026-09-28).
+    var tb = ipadPerf ? ipadPerf.flux : null;
+    var flux = '<div class="tile"><div class="k"><span class="dot ' + (tb == null ? '' : tb < 25 ? 'ok' : tb < 50 ? 'warn' : 'bad')
+      + '"></span>Flux</div><div class="v">' + (tb == null ? '<small>measuring</small>' : tb + '<small> % ' + ipadPerf.flux_from + '</small>') + '</div></div>';
+    var html = '', later = '';
     Object.keys(LABEL).forEach(function (k) {
+      if (k === 'battery') html += flux;
       var s = streams[k]; if (!s) return;
       var filt = k === 'lidar' ? streams.scan_filter : null, pre = '';
       if (filt && filt.state !== 'ok' && s.state === 'ok') { s = filt; pre = 'filter '; }
       var cls = s.state === 'ok' ? (s.hz > 0 ? 'ok' : '') : (/start|grace|wait/.test(s.state) ? 'warn' : 'bad');
       var v = s.hz > 0 && !pre ? s.hz.toFixed(s.hz < 10 ? 1 : 0) + '<small> Hz</small>' : (s.state === 'ok' ? '<small>idle</small>' : '<small>' + pre + esc(s.state) + '</small>');
-      html += '<div class="tile"><div class="k"><span class="dot ' + cls + '"></span>' + LABEL[k] + '</div><div class="v">' + v + '</div></div>';
+      var tile = '<div class="tile"><div class="k"><span class="dot ' + cls + '"></span>' + LABEL[k] + '</div><div class="v">' + v + '</div></div>';
+      if (k === 'battery') later = tile; else html += tile;     // Battery after the iPad's tiles
     });
     // the iPad itself: frames this page drew a second over the last 10 s (the perf beacon's
     // last report); green from 30, amber below, red below 15 (Steve, 2026-09-28)
     var fps = ipadPerf ? ipadPerf.fps : null;
     html += '<div class="tile"><div class="k"><span class="dot ' + (fps == null ? '' : fps >= 30 ? 'ok' : fps >= 15 ? 'warn' : 'bad')
       + '"></span>iPad</div><div class="v">' + (fps == null ? '<small>measuring</small>' : Math.round(fps) + '<small> fps</small>') + '</div></div>';
-    // FLUX: how rough the iPad's view is - the worst of drawing, late frames, missed
-    // updates and the link, each as % of what it may use (the beacon below works it out)
-    var tb = ipadPerf ? ipadPerf.flux : null;
-    html += '<div class="tile"><div class="k"><span class="dot ' + (tb == null ? '' : tb < 25 ? 'ok' : tb < 50 ? 'warn' : 'bad')
-      + '"></span>Flux</div><div class="v">' + (tb == null ? '<small>measuring</small>' : tb + '<small> % ' + ipadPerf.flux_from + '</small>') + '</div></div>';
+    html += later;
     $('tiles').innerHTML = html;
     var t = sys.temps || {}, hot = Math.max.apply(null, Object.keys(t).map(function (k) { return t[k]; }).concat([0]));
     function mt(k, v, u, bad) { return '<div class="tile"><div class="k"><span class="dot ' + (v == null ? '' : bad ? 'warn' : 'ok') + '"></span>' + k + '</div><div class="v">' + (v == null ? '—' : v) + '<small>' + u + '</small></div></div>'; }
