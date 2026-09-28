@@ -13,6 +13,11 @@ Before=jetnano-robot.service
 Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/bin/jetson_clocks
+# jetson_clocks pins the GPU clock and turns railgating off but leaves ELPG (engine
+# level power gating) on: the GPU powers engines down between frames and wakes them
+# for each one. Off, for even per-frame timing; the board drew the same 9.4-9.5 W
+# (2026-09-28). Orin Nano path; harmless where it does not exist.
+ExecStartPost=-/bin/sh -c 'echo 0 > /sys/devices/platform/bus@0/17000000.gpu/elpg_enable'
 
 [Install]
 WantedBy=multi-user.target
