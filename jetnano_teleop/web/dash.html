@@ -458,11 +458,11 @@
     var fps = ipadPerf ? ipadPerf.fps : null;
     html += '<div class="tile"><div class="k"><span class="dot ' + (fps == null ? '' : fps >= 30 ? 'ok' : fps >= 15 ? 'warn' : 'bad')
       + '"></span>iPad</div><div class="v">' + (fps == null ? '<small>measuring</small>' : Math.round(fps) + '<small> fps</small>') + '</div></div>';
-    // TURBULENCE: how rough the iPad's view is - the worst of drawing, late frames, missed
+    // FLUX: how rough the iPad's view is - the worst of drawing, late frames, missed
     // updates and the link, each as % of what it may use (the beacon below works it out)
-    var tb = ipadPerf ? ipadPerf.turbulence : null;
+    var tb = ipadPerf ? ipadPerf.flux : null;
     html += '<div class="tile"><div class="k"><span class="dot ' + (tb == null ? '' : tb < 25 ? 'ok' : tb < 50 ? 'warn' : 'bad')
-      + '"></span>Turbulence</div><div class="v">' + (tb == null ? '<small>measuring</small>' : tb + '<small> % ' + ipadPerf.turbulence_from + '</small>') + '</div></div>';
+      + '"></span>Flux</div><div class="v">' + (tb == null ? '<small>measuring</small>' : tb + '<small> % ' + ipadPerf.flux_from + '</small>') + '</div></div>';
     $('tiles').innerHTML = html;
     var t = sys.temps || {}, hot = Math.max.apply(null, Object.keys(t).map(function (k) { return t[k]; }).concat([0]));
     function mt(k, v, u, bad) { return '<div class="tile"><div class="k"><span class="dot ' + (v == null ? '' : bad ? 'warn' : 'ok') + '"></span>' + k + '</div><div class="v">' + (v == null ? '—' : v) + '<small>' + u + '</small></div></div>'; }
@@ -703,7 +703,7 @@
                 radar: [radar.width, radar.height], map: [mapcv.width, mapcv.height],
                 screen: [screen.width, screen.height],
                 rtt_ms: +(perf.rttMs / q).toFixed(1), rtt_max_ms: +perf.rttMax.toFixed(0) };
-    // TURBULENCE, 0-100: the worst of four, each as a share of what it may take -
+    // FLUX, 0-100: the worst of four, each as a share of what it may take -
     //   draw    drawing time per frame, of a 60 fps frame (16.7 ms)
     //   late    frames that came more than 34 ms after the one before, of all frames
     //   missed  data updates that never came, of the 4 a second asked for
@@ -713,8 +713,8 @@
                   missed: Math.max(0, 1 - perf.polls / Math.max(1, s * 4)), link: perf.rttMs / q / 250 };
     var worst = 'draw';
     Object.keys(parts).forEach(function (k) { if (parts[k] > parts[worst]) worst = k; });
-    rep.turbulence = Math.round(Math.min(1, parts[worst]) * 100);
-    rep.turbulence_from = worst;
+    rep.flux = Math.round(Math.min(1, parts[worst]) * 100);
+    rep.flux_from = worst;
     rep.parts = {};
     Object.keys(parts).forEach(function (k) { rep.parts[k] = Math.round(parts[k] * 100); });
     ipadPerf = rep;
