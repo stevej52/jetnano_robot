@@ -84,6 +84,9 @@ def generate_launch_description():
             'plugins: ["obstacle_layer", "nvblox_layer", "inflation_layer"]',
             'plugins: ["static_layer", "obstacle_layer", "inflation_layer"]':
             'plugins: ["static_layer", "obstacle_layer", "camera_layer", "inflation_layer"]',
+            # and the collision monitor's approach check sees the camera too (nav2.yaml)
+            'observation_sources: ["scan"]':
+            'observation_sources: ["scan", "camera"]',
         },
         condition=IfCondition(LaunchConfiguration('nvblox')))
 

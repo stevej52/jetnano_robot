@@ -83,7 +83,10 @@ class Settle(Node):
         self.window = np.hanning(CHUNK).astype(np.float32)
         self.powers: list[np.ndarray] = []      # chunk spectra of the current half second
         self.recent: list[float] = []           # buzz dB of the last few half seconds
-        self.locked = {'e_stop': False, 'e_stop_web': False, 'e_stop_joy': False}
+        # every twist_mux lock, the motion check's too: on 2026-09-28 it held her against the
+        # TV cabinet while Nav2 kept asking to reverse, cmd_vel went quiet, and this node took
+        # her for parked and released the steering nine times in the middle of it
+        self.locked = {'e_stop': False, 'e_stop_web': False, 'e_stop_joy': False, 'e_stop_motion': False}
         self.last_drive = self._now()
         self.quiet_from = self.last_drive       # windows before this hold her own motion, not a buzz
         self.next_check = self.last_drive
@@ -105,6 +108,9 @@ class Settle(Node):
         self.release_timer = None
         self.create_subscription(Int16MultiArray, 'sound/audio', self._on_audio, 10)
         self.create_subscription(Twist, 'cmd_vel', self._on_cmd, 10)
+        # ... and a driver asking counts as driving even when a lock keeps it from cmd_vel
+        for topic in ('cmd_vel_nav', 'cmd_vel_web', 'cmd_vel_teleop'):
+            self.create_subscription(Twist, topic, self._on_driver, 10)
         for topic in self.locked:
             self.create_subscription(Bool, topic, self._on_lock(topic), 10)
         # Voices and bangs have energy in the buzz band too: on 2026-09-27 people
@@ -146,6 +152,10 @@ class Settle(Node):
 
     def _tries(self) -> list:
         return list(self.get_parameter('release_s' if self._releasing() else 'wiggle_deg').value)
+
+    def _on_driver(self, msg: Twist) -> None:
+        if any(abs(v) > 1e-6 for v in (msg.linear.x, msg.linear.y, msg.angular.z)):
+            self._on_cmd(msg)
 
     def _on_cmd(self, msg: Twist) -> None:
         if self.plan or self.step_timer is not None or self.release_timer is not None:

@@ -72,6 +72,7 @@
 #include <deque>
 #include <optional>
 
+#include "action_msgs/srv/cancel_goal.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 #include "nav_msgs/msg/odometry.hpp"
@@ -246,9 +247,19 @@ public:
               }
             }));
       }
+      // A stop also cancels Nav2's goal (2026-09-28). The lock is released once nobody is
+      // driving, and Nav2 cannot see the lock: stuck against the TV cabinet it kept asking
+      // for the same reverse turn (recoveries, replans, the same arc) and the lock held for
+      // three minutes. Cancelled, Nav2 lets go, the lock is released 2 s later, and whoever
+      // sent the goal hears that it was cancelled.
+      if (declare_parameter("motion.cancel_nav_goal", true)) {
+        nav_cancel_ = create_client<action_msgs::srv::CancelGoal>(
+          declare_parameter("motion.nav_cancel_service", std::string("/navigate_to_pose/_action/cancel_goal")));
+      }
       send_lock(false);
       RCLCPP_INFO(get_logger(), "motion: stops her if told to drive (>= %.2f) for %.1f s while the "
-        "odometry moves < %.0f cm; lock e_stop_motion", min_cmd_, window_, min_move_ * 100.0);
+        "odometry moves < %.0f cm; lock e_stop_motion%s", min_cmd_, window_, min_move_ * 100.0,
+        nav_cancel_ ? ", and cancels Nav2's goal" : "");
     }
     if (vo_on_) {
       hold_pub_ = create_publisher<nav_msgs::msg::Odometry>("odom_hold", 10);
@@ -529,6 +540,24 @@ private:
     publish_state(std::string("stopped: told to drive, ") + reason);
     RCLCPP_WARN(get_logger(), "STOPPED her: told to drive for %.1f s but %s - odometry blind, wheels "
       "stuck or in the air (event %d); released when nobody is driving", window_, reason, events_);
+    cancel_nav_goal();
+  }
+
+  void cancel_nav_goal()
+  {
+    if (!nav_cancel_) {return;}
+    if (!nav_cancel_->service_is_ready()) {
+      RCLCPP_INFO(get_logger(), "no Nav2 to cancel (%s not there)", nav_cancel_->get_service_name());
+      return;
+    }
+    // an empty request (zero goal id, zero stamp) cancels every goal the server has
+    nav_cancel_->async_send_request(
+      std::make_shared<action_msgs::srv::CancelGoal::Request>(),
+      [this](rclcpp::Client<action_msgs::srv::CancelGoal>::SharedFuture f) {
+        const auto r = f.get();
+        RCLCPP_WARN(get_logger(), "cancelled Nav2's goal (%zu goal(s), return code %d)",
+          r->goals_canceling.size(), r->return_code);
+      });
   }
 
   void vo_tick()
@@ -615,6 +644,7 @@ private:
   std::chrono::steady_clock::time_point cmd_at_{}, input_at_{}, locked_at_{}, lock_sent_{}, paused_until_{};
   std::deque<VoSample> vo_, lo_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr lock_pub_;
+  rclcpp::Client<action_msgs::srv::CancelGoal>::SharedPtr nav_cancel_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr say_pub_, state_pub_;
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr pause_sub_;

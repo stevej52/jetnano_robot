@@ -283,20 +283,37 @@ collision_monitor:
     base_shift_correction: true
     stop_pub_timeout: 2.0
     polygons: ["FootprintApproach"]
+    # Simulates her outline along the commanded motion and slows her so nothing is hit
+    # within time_before_collision. Until 2026-09-28 it used the costmap footprint
+    # (0.444 x 0.295, tyre to tyre with the wheels straight), looked 1.2 s ahead and saw
+    # the lidar only, and it let her swing her nose into the TV cabinet: reversing at full
+    # lock the turned front tyres stick out ~3.5 cm past that outline, she turned tighter
+    # than commanded (0.32 m radius against the planner's 0.40), and the cabinet 10 cm off
+    # her side was the camera's to see. Now: the outline with the tyres turned (plus a
+    # centimetre), 1.5 s (1.2 x 0.40/0.32), and nvblox's obstacle points as well - the
+    # whole grid it keeps, so what is beside her counts even when the camera looks ahead.
     FootprintApproach:
       type: "polygon"
       action_type: "approach"
-      footprint_topic: "/local_costmap/published_footprint"
-      time_before_collision: 1.2
+      points: "[[0.26, 0.19], [0.26, -0.19], [-0.26, -0.19], [-0.26, 0.19]]"
+      time_before_collision: 1.5
       simulation_time_step: 0.1
-      min_points: 6
+      min_points: 4
       visualize: false
       enabled: true
+    # navigation.launch.py nvblox:=true adds "camera": with no nvblox (the simulator) a
+    # source that never arrives is "invalid" and the monitor would stop everything
     observation_sources: ["scan"]
     scan:
       type: "scan"
       topic: "/scan"
       min_height: 0.15
+      max_height: 2.0
+      enabled: true
+    camera:
+      type: "pointcloud"
+      topic: "/nvblox_node/obstacle_points"     # grid_to_points: nvblox's occupied cells at z 0.20
+      min_height: 0.05
       max_height: 2.0
       enabled: true
 
