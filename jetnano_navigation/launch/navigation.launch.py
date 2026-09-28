@@ -98,6 +98,15 @@ def generate_launch_description():
                         "Nav2's own StaticLayer reading /nvblox_node/static_occupancy_grid, "
                         'so the nvblox node must be running)'),
 
+        # One container instead of 15 processes. Bench, no goal, 2 runs each
+        # (2026-09-27): 113-115 -> 93-95 % of a core, 452 -> 317 MB of its own
+        # memory, camera frame gaps during Nav2's start and stop 5-6 -> 0-1, the
+        # same 599 topic endpoints; active after 32 s instead of 36.
+        DeclareLaunchArgument(
+            'composition', default_value='true',
+            description="load Nav2's servers into one container process (nav2_container) "
+                        'instead of one process each (false: the old way)'),
+
         DeclareLaunchArgument(
             'translate', default_value='true',
             description="turn Nav2 m/s and rad/s into Rosie's throttle and steering "
@@ -124,12 +133,27 @@ def generate_launch_description():
             SetRemap(src='/cmd_vel', dst='/cmd_vel_nav_raw'),
             SetRemap(src='/cmd_vel_smoothed', dst='/cmd_vel_nav_smoothed'),
 
+            # composition:=true: the container nav2_bringup's own bringup_launch.py
+            # would start; navigation_launch.py then loads every server into it (the
+            # remaps above reach them through the load requests)
+            Node(
+                condition=IfCondition(LaunchConfiguration('composition')),
+                name='nav2_container',
+                package='rclcpp_components',
+                executable='component_container_isolated',
+                parameters=[params_file, {'autostart': ParameterValue(
+                    LaunchConfiguration('autostart'), value_type=bool)}],
+                output='screen',
+            ),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(nav2_bringup),
                 launch_arguments={
                     'use_sim_time': LaunchConfiguration('use_sim_time'),
                     'params_file': params_file,
                     'autostart': LaunchConfiguration('autostart'),
+                    'use_composition': PythonExpression(
+                        ["'", LaunchConfiguration('composition'), "' == 'true'"]),
+                    'container_name': 'nav2_container',
                 }.items(),
             ),
         ]),
