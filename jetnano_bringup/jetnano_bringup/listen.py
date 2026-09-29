@@ -564,8 +564,7 @@ def _node_main(args):
             # A voice this high that is not strongly his (his own long phrases score 0.86+):
             self.declare_parameter('fun_pitch_hz', 165.0)
             self.declare_parameter('fun_max_owner', 0.75)
-            self.declare_parameter('fun_unknown', 'not Steve - most likely his wife, maybe a guest; you do not '
-                                                  'know her name')
+            self.declare_parameter('fun_unknown', 'not Steve - most likely his wife Diane, maybe a guest')
             self.declare_parameter('voice_actions', False)            # see ROBOT_ACTIONS
             self.declare_parameter('voice_match', speaker.MATCH)         # cosine: confidently that person
             self.declare_parameter('same_voice', speaker.SAME)           # cosine: the voice she is talking with
