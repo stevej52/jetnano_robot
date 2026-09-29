@@ -190,6 +190,9 @@ class Dashboard:
         sub(String, 'speech/text', lambda m: self._event('heard', m.data, 'heard'), 10)
         sub(String, 'speech/speaker', self._on_speaker, 10)
         sub(String, 'speech/partial', self._on_partial, 10)
+        # which way the last voice came from (listen, degrees in her frame, + left)
+        self.voice_dir, self.voice_t = None, 0.0
+        sub(Float32, 'speech/direction', self._on_voice_dir, 10)
         sub(String, 'speech/state', lambda m: setattr(self, 'speech_state', m.data), 10)
         sub(String, 'speak', lambda m: self._event('said', m.data.replace('\n', ' '), 'said'), 10)
         sub(String, 'say', self._on_sound, 10)
@@ -344,6 +347,9 @@ class Dashboard:
             self.obstacles_t = time.monotonic()
         finally:
             self._pc_busy = False
+
+    def _on_voice_dir(self, msg) -> None:
+        self.voice_dir, self.voice_t = round(float(msg.data), 1), time.monotonic()
 
     def _on_partial(self, msg) -> None:
         """listen is waiting for the rest of a sentence (JSON text, hold_s): 'Listening' on the page."""
@@ -524,7 +530,9 @@ class Dashboard:
             'scan': self.scan if now - self.scan_t < 2.0 else None,
             'obstacles': self.obstacles if now - self.obstacles_t < 3.0 else [],
             'speech': {'heard': heard, 'said': said, 'sound': sound, 'state': self.speech_state,
-                       'speaker': self.speaker, 'partial': self.partial if now < self.partial_until else ''},
+                       'speaker': self.speaker, 'partial': self.partial if now < self.partial_until else '',
+                       'direction': ({'deg': self.voice_dir, 'age': round(now - self.voice_t, 1)}
+                                     if self.voice_dir is not None and now - self.voice_t < 30 else None)},
             'level': self.level, 'buzz': self.buzz,
             'system': {**(wd or {}).get('system', {}), **self.sys},
             'map': map_info, 'pose': self._pose_on_map(), 'wami': self.wami,

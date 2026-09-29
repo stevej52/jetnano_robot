@@ -50,7 +50,7 @@ import numpy as np
 import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
-from std_msgs.msg import Bool, Float32, Int16MultiArray, String
+from std_msgs.msg import Bool, Float32, Float32MultiArray, Int16MultiArray, String
 
 
 class Ears(Node):
@@ -111,6 +111,14 @@ class Ears(Node):
         agc = 'on' if bool(self.get_parameter('auto_gain').value) else 'off'
         subprocess.run(['amixer', '-q', '-c', self.card, 'sset', 'Auto Gain Control', agc], capture_output=True, timeout=5)
 
+        # 2026-09-29, Steve: "implement barge in and directional sound". The reSpeaker's chip says
+        # which way a voice came from (0-180 degrees along its line of mics) and whether it hears
+        # speech: sound/doa [degrees, speech 0/1], 10 times a second (xvf.py, over USB control;
+        # needs robot-environment's udev rule). listen uses it to tell a person talking over her
+        # from her own voice (which always comes from her speaker's direction) and to say where
+        # a voice came from.
+        self.declare_parameter('doa_hz', 10.0)
+        self.doa_pub = self.create_publisher(Float32MultiArray, 'sound/doa', 10)
         self.level_pub = self.create_publisher(Float32, 'sound/level', 10)
         self.audio_pub = self.create_publisher(Int16MultiArray, 'sound/audio', 10)
         self.loud_pub = self.create_publisher(Bool, 'sound/loud', 10)
@@ -126,6 +134,7 @@ class Ears(Node):
         self.background = None
         self._warned = False
         threading.Thread(target=self._listen, daemon=True, name='ears-arecord').start()
+        threading.Thread(target=self._doa, daemon=True, name='ears-doa').start()
         self.get_logger().info(f'listening on card {self.card} channel {self.channel + 1} of {self.channels} '
                                f'at {self.rate} Hz, gain {gain} %')
 
@@ -170,6 +179,29 @@ class Ears(Node):
             self._warn(f'microphone stream ended: {err[:100] or "no data"} (retrying)')
             self.background = None
             time.sleep(5)
+
+    def _doa(self) -> None:
+        """The chip's direction of arrival and speech flag, for listen (see doa_hz)."""
+        from jetnano_bringup import xvf
+        period = 1.0 / max(1.0, float(self.get_parameter('doa_hz').value))
+        chip, said = None, None
+        while rclpy.ok():
+            try:
+                if chip is None:
+                    chip = xvf.XVF()
+                    self.get_logger().info('direction of arrival: reading the reSpeaker chip')
+                    said = None
+                deg, speech = chip.read('DOA_VALUE')
+                msg = Float32MultiArray()
+                msg.data = [float(deg), float(speech)]
+                self.doa_pub.publish(msg)
+                time.sleep(period)
+            except Exception as exc:      # noqa: BLE001 - no chip, no permission, unplugged: try later
+                if str(exc) != said:
+                    self.get_logger().warning(f'direction of arrival: {exc} (retrying every 10 s)')
+                    said = str(exc)
+                chip = None
+                time.sleep(10.0)
 
     def _warn(self, text: str) -> None:
         if not self._warned:

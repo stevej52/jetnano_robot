@@ -469,7 +469,9 @@
     // voice
     var sp = S.speech || {}, who = sp.speaker;
     // she is waiting for the rest of what he is saying (listen's turn-taking)
-    $('hlabel').textContent = sp.partial ? 'Listening…' : 'Heard';
+    var dir = sp.direction && sp.direction.age < 20 ? sp.direction.deg : null;
+    $('hlabel').textContent = (sp.partial ? 'Listening…' : 'Heard')
+      + (dir == null ? '' : Math.abs(dir) < 10 ? ' · ahead' : ' · ' + Math.round(Math.abs(dir)) + '° ' + (dir > 0 ? 'left' : 'right'));
     $('heard').className = 'vtext' + (sp.partial ? ' listening' : '');
     $('heard').textContent = sp.partial ? sp.partial + ' …' : (sp.heard || '—');
     $('said').textContent = sp.said || (sp.sound ? '♪ ' + sp.sound : '—');
@@ -554,6 +556,15 @@
           c.beginPath(); c.arc(q[0], q[1], 2.2, 0, Math.PI * 2); c.fill();
         }
         c.shadowBlur = 0;
+      }
+      // where the last voice came from (the reSpeaker's direction of arrival; a line of mics
+      // cannot tell front from back, so it is drawn in front of her), for 6 s
+      var vd = S.speech && S.speech.direction;
+      if (vd && vd.age < 6) {
+        var va = vd.deg * Math.PI / 180, fade = 1 - vd.age / 6, R = zoom * 0.9;
+        var o = P(0, 0), e1 = P(R * Math.cos(va - 0.13), R * Math.sin(va - 0.13)), e2 = P(R * Math.cos(va + 0.13), R * Math.sin(va + 0.13));
+        c.fillStyle = 'rgba(155,140,255,' + (0.35 * fade) + ')'; c.beginPath(); c.moveTo(o[0], o[1]);
+        c.lineTo(e1[0], e1[1]); c.lineTo(e2[0], e2[1]); c.closePath(); c.fill();
       }
       // someone moving
       if (S.mover && S.mover.age < 4) {

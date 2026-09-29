@@ -490,7 +490,7 @@ def _node_main(args):
     from rclpy.node import Node
     from rclpy.qos import DurabilityPolicy, QoSProfile
     from sensor_msgs.msg import BatteryState
-    from std_msgs.msg import Bool, Empty, Int16MultiArray, String, UInt32
+    from std_msgs.msg import Bool, Empty, Float32, Float32MultiArray, Int16MultiArray, String, UInt32
 
     from jetnano_bringup import news, speaker, turn, voice
     from jetnano_bringup.health import Health
@@ -533,6 +533,23 @@ def _node_main(args):
             self.declare_parameter('hold_name_s', 2.5)              # just "Rosie" - and then?
             self.declare_parameter('min_speech_s', 0.3)
             self.declare_parameter('max_speech_s', 30.0)            # 10 cut long sentences in two
+            # Barge-in (Steve, 2026-09-29): someone talking over her stops her. Her own voice
+            # sets off both detectors - the chip's speech flag came on 2.4 s into a line of hers
+            # and stayed on - but the chip also says which way it came from: her own voice read
+            # 142 degrees (her speaker) every time. So: her detector hears speech AND the chip
+            # places it barge_margin_deg or more away from her speaker's direction (learned
+            # while she talks), for barge_hold_s -> she stops and listens.
+            self.declare_parameter('barge_in', True)
+            self.declare_parameter('barge_margin_deg', 30.0)
+            self.declare_parameter('barge_hold_s', 0.3)
+            self.declare_parameter('barge_after_s', 0.5)           # not in her first half second
+            self.declare_parameter('speaker_doa_deg', 142.0)       # until she has learned it again
+            # Where a voice came from, in her own frame (degrees, + to her left): the chip's 0-180
+            # is an angle along the line of mics, so front and back look the same; she takes
+            # the front. PROVISIONAL until someone speaks from straight ahead: set doa_front_deg
+            # to the chip's reading then, and doa_left_sign to -1 if left and right come out swapped.
+            self.declare_parameter('doa_front_deg', 90.0)
+            self.declare_parameter('doa_left_sign', 1.0)
             self.declare_parameter('chat_timeout_s', 45.0)          # silence that ends a conversation
             # False: only what has her name in it is for her - no open conversation after
             # "Rosie" (Steve, 2026-09-28, after "Word, the two in series." said to someone
@@ -599,6 +616,17 @@ def _node_main(args):
             self.hold_maybe = float(p('hold_maybe_s'))
             self.hold_unfinished = float(p('hold_unfinished_s'))
             self.hold_name = float(p('hold_name_s'))
+            self.barge_in = bool(p('barge_in'))
+            self.barge_margin = float(p('barge_margin_deg'))
+            self.barge_hold = float(p('barge_hold_s'))
+            self.barge_after = float(p('barge_after_s'))
+            self.speaker_doa = float(p('speaker_doa_deg'))
+            self.doa_front = float(p('doa_front_deg'))
+            self.doa_sign = 1.0 if float(p('doa_left_sign')) >= 0 else -1.0
+            self.doa = collections.deque(maxlen=100)        # (time, degrees, speech) from ears, ~10 s
+            self.own_doa = collections.deque(maxlen=60)     # the chip's direction of her own voice
+            self.speaking_started = 0.0
+            self.barged_at = -1e9
             self.turn = None                # what he has said so far, while she waits for the rest
             self.turn_ids = 0               # thinking-ahead asks to the brain, numbered
             self.turn_model = None
@@ -651,6 +679,8 @@ def _node_main(args):
             self.ask_pub = self.create_publisher(String, 'brain/ask', 10)
             self.turn_pub = self.create_publisher(String, 'brain/turn', 10)     # go / drop a thought-ahead answer
             self.partial_pub = self.create_publisher(String, 'speech/partial', 10)   # "listening..." for the iPad
+            self.direction_pub = self.create_publisher(Float32, 'speech/direction', 10)  # degrees, + left
+            self.create_subscription(Float32MultiArray, 'sound/doa', self._on_doa, 50)
             self.who_pub = self.create_publisher(String, 'speech/speaker', 10)
             self.watch_pub = self.create_publisher(String, 'motion/mode', 10)
             self.brain_ready = False
@@ -710,6 +740,8 @@ def _node_main(args):
             self._Parameter, self._ParameterType, self._ParameterValue, self._SetParameters = \
                 Parameter, ParameterType, ParameterValue, SetParameters
             self._String, self._Bool, self._Empty = String, Bool, Empty
+            self._Float32 = Float32
+            self.heard_from = ''             # where the last sentence came from, for the log
             threading.Thread(target=self._work, daemon=True, name='listen-asr').start()
             self.get_logger().info(f'{p("asr")} ready in {time.monotonic() - t0:.1f} s; say "{NAME}" to her')
             self._publish_state()
@@ -728,10 +760,47 @@ def _node_main(args):
             except queue.Full:
                 pass
 
+        def _on_doa(self, msg) -> None:
+            if len(msg.data) < 2:
+                return
+            now, deg, speech = time.monotonic(), float(msg.data[0]), msg.data[1] > 0.5
+            self.doa.append((now, deg, speech))
+            if speech and self.speaking and now - self.speaking_started > self.barge_after:
+                self.own_doa.append(deg)        # her own voice, through her speaker
+                if len(self.own_doa) >= 10:
+                    self.speaker_doa = float(np.median(self.own_doa))
+
+        def _others_talking(self, now: float) -> list:
+            """The chip's speech readings of the last barge_hold_s that are NOT from her speaker's direction."""
+            return [d for t, d, s in self.doa
+                    if s and now - t <= self.barge_hold + 0.05 and abs(d - self.speaker_doa) >= self.barge_margin]
+
+        def _barge_check(self, active: bool) -> None:
+            now = time.monotonic()
+            if (not self.barge_in or not self.speaking or not active or now - self.barged_at < 3.0
+                    or now - self.speaking_started < self.barge_after):
+                return
+            others = self._others_talking(now)
+            if len(others) >= max(2, int(self.barge_hold * 10)):
+                self.barged_at = now
+                self.get_logger().info(f'barge-in: someone talking over her from {np.median(others):.0f} degrees '
+                                       f'(her speaker at {self.speaker_doa:.0f}): she stops and listens')
+                self._stop()
+
+        def _direction(self, t0: float, t1: float):
+            """Where the voice heard between t0 and t1 came from: degrees in her frame (+ left), or None."""
+            d = [deg for t, deg, s in self.doa if s and t0 - 0.2 <= t <= t1 + 0.2
+                 and abs(deg - self.speaker_doa) >= self.barge_margin * (1.0 if self.speaking else 0.0)]
+            if len(d) < 2:
+                return None
+            return float((np.median(d) - self.doa_front) * self.doa_sign)
+
         def _on_speaking(self, msg) -> None:
             now = time.monotonic()
             if self.speaking and not msg.data:
                 self.speaking_ended = now
+            if msg.data and not self.speaking:
+                self.speaking_started = now
             self.speaking = msg.data
             self.last_heard = now           # her own talking keeps the conversation open
 
@@ -777,6 +846,7 @@ def _node_main(args):
                     fed += len(window)
                     history = np.concatenate([history, window])[-32000:]
                 active = self.vad.is_speech_detected()
+                self._barge_check(active)
                 if active != self.active:
                     self.active = active
                     flag = self._Bool()
@@ -793,14 +863,18 @@ def _node_main(args):
                     # did this start while she was talking? then it is mostly her
                     started = time.monotonic() - len(samples) / 16000.0 - self.min_silence
                     overlapped = self.speaking or started < self.speaking_ended + self.echo_guard
-                    self._utterance(samples, overlapped)
+                    self._utterance(samples, overlapped, started)
                 if self.turn is not None and not active and time.monotonic() >= self.turn['until']:
                     self._turn_end('waited')              # no more came: what he said is what he meant
 
         # ------------------------------------------------------------ words --
 
-        def _utterance(self, samples: np.ndarray, overlapped: bool) -> None:
+        def _utterance(self, samples: np.ndarray, overlapped: bool, started: float = None) -> None:
             seconds = len(samples) / 16000.0
+            started = time.monotonic() - seconds if started is None else started
+            barged = overlapped and self.barged_at >= started - 0.5     # this is who she stopped for
+            if barged:
+                overlapped = False
             if self.voice_off:
                 text = transcribe(self.recognizer, samples)
                 if text and code_word(text) == 'on':
@@ -823,6 +897,9 @@ def _node_main(args):
                 self.get_logger().info(f'speech with no words ({seconds:.1f} s at {db:.0f} dBFS)')
                 return
             who = self._who(samples)
+            if barged:
+                text = beyond_her_voice(text, ' '.join(list(self.own_text)[-3:])) or text
+                self.get_logger().info(f'the one she stopped for: "{text[:80]}"')
             if overlapped and code_word(text) == 'off':
                 self._understand(text, seconds, took, db)
                 return
@@ -862,12 +939,14 @@ def _node_main(args):
             msg = self._String()
             msg.data = text
             self.text_pub.publish(msg)
-            self._turn_add(text, samples, seconds, took, db, who, done)
+            self._turn_add(text, samples, seconds, took, db, who, done, started)
 
         # ------------------------------------------------------------- turns --
 
-        def _turn_add(self, text: str, samples, seconds: float, took: float, db: float, who, done) -> None:
+        def _turn_add(self, text: str, samples, seconds: float, took: float, db: float, who, done,
+                      started: float = None) -> None:
             """One more stretch of speech: is he done (answer now) or not (wait for the rest)?"""
+            started = time.monotonic() - seconds if started is None else started
             t = self.turn
             if (t is not None and normalize(text).startswith(NAME)
                     and not any(re.search(rf'\b{NAME}\b', normalize(x)) for x in t['texts'])):
@@ -877,10 +956,11 @@ def _node_main(args):
                 self.turn = t = None                  # a fresh start with her name
             if t is None:
                 t = self.turn = {'texts': [], 'audio': [], 'seconds': 0.0, 'took': 0.0, 'db': db, 'who': who,
-                                 'spec': None, 'until': 0.0}
+                                 'spec': None, 'until': 0.0, 't0': started}
             elif t['spec'] is not None:
                 self._turn_go(t['spec'], False)       # he carried on: the answer she had ready is dropped
                 t['spec'] = None
+            t['t1'] = time.monotonic()
             t['texts'].append(text)
             t['audio'].append(samples)
             t['seconds'] += seconds
@@ -930,6 +1010,14 @@ def _node_main(args):
             if len(t['audio']) > 1:                   # all of it: a longer print is a surer one
                 who = self._who(np.concatenate(t['audio'])) or who
             self._partial('', 0.0)
+            bearing = self._direction(t['t0'], t.get('t1', time.monotonic()))
+            self.heard_from = ''
+            if bearing is not None:                   # where the voice came from, for the iPad and the log
+                m = self._Float32()
+                m.data = bearing
+                self.direction_pub.publish(m)
+                self.heard_from = (', straight ahead' if abs(bearing) < 10 else
+                                   f', from {abs(bearing):.0f} degrees {"left" if bearing > 0 else "right"}')
             if t['spec'] is not None:                  # the answer is ready: out with it
                 self._turn_go(t['spec'], True)
                 now = time.monotonic()
@@ -940,7 +1028,8 @@ def _node_main(args):
                     self._publish_state()
                 self.get_logger().info(f'heard "{said}" ({t["seconds"]:.1f} s, {t["db"]:.0f} dBFS'
                                        + (f', {who.label}' if who is not None else '')
-                                       + f') -> chat, thought ahead [{why}]' + (' [terse]' if self.terse else ''))
+                                       + f'{self.heard_from}) -> chat, thought ahead [{why}]'
+                                       + (' [terse]' if self.terse else ''))
                 return
             if len(t['texts']) > 1 or why == 'waited':
                 self.get_logger().info(f'turn over ({why}): {len(t["texts"])} piece(s)')
@@ -1017,7 +1106,8 @@ def _node_main(args):
             action, mode = decide(text, self.mode if self.open_chat else 'idle')
             level = f', {db:.0f} dBFS' if db is not None else ', typed'
             voice_note = f', {who.label}' if who is not None else ''
-            self.get_logger().info(f'heard "{text}" ({seconds:.1f} s{level}{voice_note}, decoded in {took:.2f} s)'
+            self.get_logger().info(f'heard "{text}" ({seconds:.1f} s{level}{voice_note}{self.heard_from}, '
+                                   f'decoded in {took:.2f} s)'
                                    + (f' -> {action}' if action else '') + (' [terse]' if self.terse else ''))
             if action and not self._for_me(text, action, who):
                 return
