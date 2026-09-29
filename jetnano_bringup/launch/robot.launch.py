@@ -122,9 +122,9 @@ def generate_launch_description():
             description='where "local news" and "the weather" are: "City,State" (set in /etc/default/jetnano-robot); '
                         'empty = wherever the internet connection appears to be'),
         DeclareLaunchArgument(
-            'asr', default_value='moonshine-tiny',
-            description='her speech recogniser: moonshine-tiny (fastest), moonshine-base, parakeet (most '
-                        'accurate, ~0.2 s slower on a command), whisper-tiny - see listen.make_recognizer'),
+            'asr', default_value='parakeet',
+            description='her speech recogniser: parakeet (most accurate, ~0.2 s slower on a command than '
+                        'moonshine-tiny, the fastest), moonshine-base, whisper-tiny - see listen.make_recognizer'),
         DeclareLaunchArgument(
             'color_mesh', default_value='false',
             description='with nvblox: a coloured 3D map (RViz: /nvblox_node/color_layer_marker; '

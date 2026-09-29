@@ -459,7 +459,8 @@ def make_recognizer(model_dir: str, asr: str, threads: int):
     voice", "Rosie's chop, bring, fix", "the back dem off"; moonshine-base 165 ms / 1.07 s -
     about half of those right, new ones ("light-hour", "Becky Moth"); parakeet (NVIDIA
     Parakeet TDT 0.6B v2) 302 ms / 1.54 s - all of them right, keeps his "um"s; whisper
-    base.en was as good but 0.7 s on every command (it pads to 30 s), so it is not offered."""
+    base.en was as good but 0.7 s on every command (it pads to 30 s), so it is not offered.
+    Parakeet is hers since 2026-09-29 (Steve: "Switch to parakeet")."""
     import sherpa_onnx
     if asr == 'whisper-tiny':
         m = os.path.join(model_dir, 'sherpa-onnx-whisper-tiny.en')
@@ -522,7 +523,7 @@ def _node_main(args):
         def __init__(self):
             super().__init__('listen')
             self.declare_parameter('model_dir', MODEL_DIR)
-            self.declare_parameter('asr', 'moonshine-tiny')          # ASR_MODELS, make_recognizer
+            self.declare_parameter('asr', 'parakeet')                # ASR_MODELS, make_recognizer
             self.declare_parameter('threads', 2)
             # The mic is tiny and inside the robot: a person a few feet away
             # reaches it far quieter than her own speaker does (2026-09-25,
@@ -1810,7 +1811,7 @@ def _node_main(args):
 # ---------------------------------------------------------- files (a test) --
 
 def _files_main(argv):
-    asr = argv[argv.index('--asr') + 1] if '--asr' in argv else 'moonshine-tiny'
+    asr = argv[argv.index('--asr') + 1] if '--asr' in argv else 'parakeet'
     paths = [a for a in argv[argv.index('--file') + 1:] if not a.startswith('--') and a != asr]
     t0 = time.monotonic()
     rec = make_recognizer(os.environ.get('MODEL_DIR', MODEL_DIR), asr, 2)
