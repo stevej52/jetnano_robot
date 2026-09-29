@@ -210,7 +210,7 @@ CLAUSE_WORDS = 4
 # things work, sports, current affairs - asked with a question word; but not about
 # her, Steve, the house or the moment (the local model has those facts).
 FACT_QUESTION = re.compile(
-    r"^(?:(?:hey|ok|okay|so|and|um|uh|well)\s+)*(?:who (?:is|was|were|won|invented|wrote|discovered|made|built|"
+    r"^(?:(?:hey|ok|okay|so|and|um|uh|well)[\s,]+)*(?:who (?:is|was|were|won|invented|wrote|discovered|made|built|"
     r"founded|painted|played|sang|directed)|what (?:is|was|are|were) the|what's the|what year|what does .+ mean|"
     r"when (?:did|was|were|is|does|will)|where (?:is|was|are|were|did|does)|which|how (?:many|much|far|long|old|"
     r"big|tall|deep|fast|heavy|hot|cold|does|do|did|is|are|was|were)|why (?:do|does|did|is|are|was|were)|"
