@@ -61,8 +61,10 @@ def generate_launch_description():
     nav_pkg = get_package_share_directory('jetnano_navigation')
     nav2_params = os.path.join(nav_pkg, 'config', 'nav2.yaml')
 
+    # nav2_bringup's navigation_launch.py minus the four servers she never uses
+    # (2026-09-28: Nav2 idle was 74 % of a core, ~90 % of it ROS middleware)
     nav2_bringup = PathJoinSubstitution(
-        [FindPackageShare('nav2_bringup'), 'launch', 'navigation_launch.py'])
+        [FindPackageShare('jetnano_navigation'), 'launch', 'nav2_servers.launch.py'])
     slam_launch = PathJoinSubstitution(
         [FindPackageShare('jetnano_navigation'), 'launch', 'slam.launch.py'])
 
