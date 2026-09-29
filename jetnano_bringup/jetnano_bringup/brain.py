@@ -131,6 +131,21 @@ jokes, no sass. If yes or no answers it, reply with exactly one word, YES or NO,
 when the facts above or common knowledge settle it: you do not know the state of your own sensors beyond \
 those facts, so never guess about them. If you do not know, reply UNKNOWN. Examples: "Is the lidar working?" -> YES. "Two plus two?" -> Four. "How far is the \
 moon?" -> About 384,000 kilometres. "Should I take an umbrella?" -> NO."""
+# Steve, 2026-09-28: "When my wife talks to her I'm going to need a super funny,
+# girly, outgoing, helpful, talkative personality to Rosie. And that personality
+# needs to disappear when I'm talking to her." Last, like TERSE, for the voices
+# listen's fun_voices names; Steve himself always gets TERSE.
+FUN = """
+
+{name} IS TALKING - {relation}. This overrides every rule above about tone and length. With her you are a \
+different Rosie: super funny, girly, bubbly and outgoing - her chatty best friend who happens to be a robot. \
+Be warm and playful and a little dramatic: tease gently, laugh at yourself, hype her up, pay her compliments, \
+gush about fun things, and enjoy a bit of harmless gossip about the house (Beans the cat is a favourite \
+subject). Be genuinely helpful: when she asks for something, give the real answer first, then the fun. Talk \
+more than usual: two to four lively spoken sentences, sixty words at most, and now and then toss a playful \
+question back to her. Use her name now and then. Still spoken English only: no lists, no emojis, no stage \
+directions like *giggles* - say "ha!" or "ooh" out loud instead. Steve's private business (money, settings, \
+status reports) stays between you and Steve, with a wink."""
 YES_WORDS = {'yes', 'yep', 'yeah', 'affirmative', 'correct', 'yessir', 'yesitis', 'yesiam', 'yesyoudo'}
 NO_WORDS = {'no', 'nope', 'negative', 'incorrect', 'nosir', 'noitisnot', 'noitsnot', 'noiamnot'}
 
@@ -522,9 +537,10 @@ class Brain(Node):
                 self.terse = bool(ask.get('terse', False))
                 hold = ask.get('hold')
                 try:
+                    fun = ask.get('fun') if not self.terse and isinstance(ask.get('fun'), dict) else None
                     self._answer(text, str(ask.get('lead_in', '')).strip(), bool(ask.get('think', False)),
                                  speaker=str(ask.get('speaker', '')).strip(),
-                                 hold=int(hold) if hold is not None else None)
+                                 hold=int(hold) if hold is not None else None, fun=fun)
                 finally:
                     with self._gate_lock:
                         self._gate = None
@@ -598,7 +614,8 @@ class Brain(Node):
             self._out(rest)
         return full, first, None
 
-    def _answer(self, text: str, lead_in: str, think: bool = False, speaker: str = '', hold: int = None) -> None:
+    def _answer(self, text: str, lead_in: str, think: bool = False, speaker: str = '', hold: int = None,
+                fun: dict = None) -> None:
         if hold is not None:
             with self._gate_lock:
                 decided = self._decisions.pop(hold, None)
@@ -619,7 +636,9 @@ class Brain(Node):
         if time.monotonic() - self.last_exchange > self.memory_timeout:
             self.memory.clear()
         persona = PERSONA.format(place=self.place)
-        who_line = (WHO.format(who=speaker) if speaker else '') + (TERSE if self.terse else '')
+        who_line = (WHO.format(who=speaker) if speaker else '') + (
+            TERSE if self.terse else FUN.format(name=str(fun.get('name', 'She')), relation=str(fun.get('relation', '')))
+            if fun else '')
         messages = list(self.memory) + [{'role': 'user', 'content': text}]
         self._stopped = False
         t0 = time.monotonic()
@@ -711,7 +730,7 @@ class Brain(Node):
             route = f'local ({reason}, no Claude to hand to)'
         else:
             route = backend
-        route += ' [terse]' if self.terse else ''
+        route += ' [terse]' if self.terse else f' [fun: {fun.get("name")}]' if fun else ''
         self.get_logger().info(f'{route}: "{text[:80]}" -> "{full[:160]}" (first words {first or 0:.1f} s, '
                                f'{time.monotonic() - t0:.1f} s, {self._usage[0]}+{self._usage[1]} tokens{speed}'
                                + (f', {cents:.1f} cents today' if backend == 'claude' else '')

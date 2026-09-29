@@ -546,6 +546,12 @@ def _node_main(args):
             self.declare_parameter('voice_model', speaker.DEFAULT_MODEL)   # '' or missing: no voice recognition
             self.declare_parameter('voices_dir', speaker.DEFAULT_DIR)
             self.declare_parameter('owner', 'Steve')
+            # Steve, 2026-09-28: "When my wife talks to her I'm going to need a super funny,
+            # girly, outgoing, helpful, talkative personality ... and that personality needs to
+            # disappear when I'm talking to her." These voices get it (comma list of the names
+            # she learned; '' = every voice she knows that is not the owner's), told who they are:
+            self.declare_parameter('fun_voices', '')
+            self.declare_parameter('fun_relation', "Steve's wife")
             self.declare_parameter('voice_actions', False)            # see ROBOT_ACTIONS
             self.declare_parameter('voice_match', speaker.MATCH)         # cosine: confidently that person
             self.declare_parameter('same_voice', speaker.SAME)           # cosine: the voice she is talking with
@@ -596,6 +602,9 @@ def _node_main(args):
             self.chat_file = str(p('chat_file'))
             self.location = str(p('location'))
             self.owner = str(p('owner'))
+            self.fun_voices = {n.strip().lower() for n in str(p('fun_voices')).split(',') if n.strip()}
+            self.fun_relation = str(p('fun_relation'))
+            self.fun_name = None            # the fun-personality voice now talking, if it is one
             self.voices = None
             voice_model = os.path.expanduser(str(p('voice_model')))
             if voice_model and os.path.exists(voice_model):
@@ -887,6 +896,7 @@ def _node_main(args):
                 self.turn_ids += 1
                 t['spec'] = self.turn_ids              # the brain thinks meanwhile; nothing is said yet
                 self.terse = self._owner_speaking(t['who'])
+                self.fun_name = None if self.terse else self._fun(t['who'])
                 self._ask_brain(said, who=t['who'], hold=t['spec'])
 
         def _turn_end(self, why: str) -> None:
@@ -981,6 +991,7 @@ def _node_main(args):
                     self.last_heard = now
                     return
             self.terse = self._owner_speaking(who)
+            self.fun_name = None if self.terse else self._fun(who)
             action, mode = decide(text, self.mode if self.open_chat else 'idle')
             level = f', {db:.0f} dBFS' if db is not None else ', typed'
             voice_note = f', {who.label}' if who is not None else ''
@@ -1106,6 +1117,19 @@ def _node_main(args):
                                        'score': round(w.score, 3), 'percent': w.percent})
                 self.who_pub.publish(msg)
             return w
+
+        def _fun(self, who):
+            """The name of a voice that gets her fun personality (see fun_voices), or None.
+            Her voice and Steve's are far apart, so a short "yes" that sounds nearest her
+            counts too - never when it sounds nearest him."""
+            if who is None or who.name is None or self.voices is None or self._owner_speaking(who):
+                return None
+            name = who.name
+            if name.lower() == self.owner.lower():
+                return None
+            if self.fun_voices and name.lower() not in self.fun_voices:
+                return None
+            return name if who.confident or who.score >= self.voices.same else None
 
         def _guest(self, who) -> bool:
             """Not the owner, by voice - only once she knows the owner's voice. Typed words are his."""
@@ -1419,6 +1443,8 @@ def _node_main(args):
                                    + (' to think hard' if think else '') + (' ahead, held' if hold else ''))
             msg = self._String()
             ask = {'text': text, 'lead_in': lead, 'think': think, 'speaker': self._describe(who), 'terse': self.terse}
+            if self.fun_name and not self.terse:
+                ask['fun'] = {'name': self.fun_name, 'relation': self.fun_relation}
             if hold is not None:
                 ask['hold'] = hold
             msg.data = json.dumps(ask)
