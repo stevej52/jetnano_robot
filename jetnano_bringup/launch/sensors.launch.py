@@ -146,6 +146,11 @@ def generate_launch_description():
                 executable='bno055_lean',
                 name='bno055',
                 output='screen',
+                # With the EKF it feeds (odometry.launch.py, nice -10): 2026-09-28, a Nav2
+                # start on the bench took the CPU to 100 % and the IMU, at normal priority,
+                # went quiet for up to 98 ms - the EKF's "stall at a Nav2 start" was exactly
+                # these gaps (same sizes, same moments); the EKF itself was waiting normally.
+                prefix='nice -n -10',
                 # The driver exits on an I2C error at start (a loose ground on
                 # 2026-09-24 left the IMU dead until a full restart); try again.
                 respawn=True,
