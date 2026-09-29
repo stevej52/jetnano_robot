@@ -250,11 +250,12 @@ class BatteryMonitor(Node):
 
 
 def main(args=None):
+    from rclpy.executors import ExternalShutdownException
     rclpy.init(args=args)
     node = BatteryMonitor()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.destroy_node()
