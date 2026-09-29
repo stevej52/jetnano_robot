@@ -376,8 +376,10 @@ class CsiCameras(Node):
         # The CSI cameras that run at all (the D435 relay always does). 2026-09-29, Steve: "What
         # about turning off the rear view for now?" - with the iPad watching, the CSI streams
         # cost gst-launch 15 % + nvargus-daemon 13 % of a core and nvargus held 744 MB; rear
-        # (9.7 fps) was the least used. Add 'rear' back here to bring it back everywhere.
-        self.declare_parameter('cameras', ['front'])
+        # (9.7 fps) was the least used. Back on the same night (Steve: "turn the back camera
+        # back on"); the iPad's mirror stays removed, so rear is served on demand only
+        # (http://<robot>:8082/rear.mjpg / rear.jpg) and drive_log photographs it again.
+        self.declare_parameter('cameras', ['front', 'rear'])
         self.declare_parameter('d435_topic', '/camera/color/image_raw/compressed')
         self.declare_parameter('d435_rotate', 0)      # degrees the pages turn the RealSense picture
         cams = {}
