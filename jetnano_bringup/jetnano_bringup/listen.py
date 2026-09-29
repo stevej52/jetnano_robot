@@ -564,7 +564,10 @@ def _node_main(args):
             # A voice this high that is not strongly his (his own long phrases score 0.86+):
             self.declare_parameter('fun_pitch_hz', 165.0)
             self.declare_parameter('fun_max_owner', 0.75)
-            self.declare_parameter('fun_unknown', 'not Steve - most likely his wife Diane, maybe a guest')
+            # Steve: "any woman's voice can be Diane for now. Not too many women here" - a high
+            # voice is Diane; one that is only clearly not his (a man) is a guest
+            self.declare_parameter('fun_woman', "Diane, Steve's wife")
+            self.declare_parameter('fun_unknown', 'not Steve - a guest whose name you do not know')
             self.declare_parameter('voice_actions', False)            # see ROBOT_ACTIONS
             self.declare_parameter('voice_match', speaker.MATCH)         # cosine: confidently that person
             self.declare_parameter('same_voice', speaker.SAME)           # cosine: the voice she is talking with
@@ -622,6 +625,7 @@ def _node_main(args):
             self.fun_max_owner = float(p('fun_max_owner'))
             self._pitch_memo = (None, None)     # (id of the audio, its pitch): once per utterance
             self.fun_unknown = str(p('fun_unknown'))
+            self.fun_woman = str(p('fun_woman'))
             self.fun_name = None            # who gets the fun personality now ("Name, Steve's wife"), if anyone
             self.voices = None
             voice_model = os.path.expanduser(str(p('voice_model')))
@@ -1151,11 +1155,12 @@ def _node_main(args):
             if who.seconds < speaker.SURE_SECONDS:
                 return None                                       # too short to be sure it is not him
             owner = self._owner_score(who)
-            if owner < self.not_owner_below or self._high_voice(who):
+            woman = self._high_voice(who)
+            if woman or owner < self.not_owner_below:
                 self.get_logger().info(f'not his voice ({owner:.2f} like his'
                                        + (f', {self._pitch_memo[1]:.0f} Hz' if self._pitch_memo[1] else '')
-                                       + '): the fun personality')
-                return self.fun_unknown
+                                       + ('): Diane, the fun personality' if woman else '): a guest, the fun personality'))
+                return self.fun_woman if woman else self.fun_unknown
             return None
 
         def _owner_score(self, who) -> float:
@@ -1491,7 +1496,8 @@ def _node_main(args):
             self.get_logger().info(f'asks the brain "{text[:80]}"' + (f' after "{lead}"' if lead else '')
                                    + (' to think hard' if think else '') + (' ahead, held' if hold else ''))
             msg = self._String()
-            ask = {'text': text, 'lead_in': lead, 'think': think, 'speaker': self._describe(who), 'terse': self.terse}
+            ask = {'text': text, 'lead_in': lead, 'think': think, 'terse': self.terse,
+                   'speaker': self.fun_name if self.fun_name and not self.terse else self._describe(who)}
             if self.fun_name and not self.terse:
                 ask['fun'] = {'who': self.fun_name}
             if hold is not None:
