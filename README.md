@@ -476,7 +476,9 @@ Vin−, GND to GND, nothing through the shunt - the breakout's 0.1 Ω shunt is
 rated ~3 A and the motor rail stalls at ten times that. `battery_monitor`
 publishes `battery` (`sensor_msgs/BatteryState`), the page shows it, and at
 3.3 V/cell the node raises the `e_stop` lock every second until the pack is
-charged. A pack below 6 V (the robot on its wall supply) is "absent" and
+charged; if the pack stays there for 60 s it powers her off cleanly (parked she
+still draws ~20 W, so a forgotten pack would go flat). **Until this board is
+wired in, nothing watches the battery.** A pack below 6 V (the robot on its wall supply) is "absent" and
 never trips anything. For current on the motor rail, later: an external
 10 mΩ shunt and `battery_voltage_only:=false shunt_ohms:=0.01`.
 
