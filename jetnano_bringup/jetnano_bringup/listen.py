@@ -552,6 +552,20 @@ def _node_main(args):
             # she learned; '' = every voice she knows that is not the owner's), told who they are:
             self.declare_parameter('fun_voices', '')
             self.declare_parameter('fun_relation', "Steve's wife")
+            # ... and then "She has ADHD and won't stick around long enough for any training.
+            # Just make it for anyone but me": a voice clearly NOT his gets it too - nearest
+            # his print below this score (his own short phrases score 0.43+, other voices
+            # 0.18-0.44), from at least a second of speech. In between: the plain persona,
+            # never the fun one, so it cannot land on him.
+            self.declare_parameter('not_owner_below', 0.35)
+            # Measured the same night: on the reSpeaker a woman's voice scores 0.39-0.65 against
+            # his print - as high as his own short phrases (0.43-0.52) - so the print alone
+            # cannot find her. Pitch can: his voice 92-132 Hz (median 106), a woman's 174-242.
+            # A voice this high that is not strongly his (his own long phrases score 0.86+):
+            self.declare_parameter('fun_pitch_hz', 165.0)
+            self.declare_parameter('fun_max_owner', 0.75)
+            self.declare_parameter('fun_unknown', 'not Steve - most likely his wife, maybe a guest; you do not '
+                                                  'know her name')
             self.declare_parameter('voice_actions', False)            # see ROBOT_ACTIONS
             self.declare_parameter('voice_match', speaker.MATCH)         # cosine: confidently that person
             self.declare_parameter('same_voice', speaker.SAME)           # cosine: the voice she is talking with
@@ -604,7 +618,12 @@ def _node_main(args):
             self.owner = str(p('owner'))
             self.fun_voices = {n.strip().lower() for n in str(p('fun_voices')).split(',') if n.strip()}
             self.fun_relation = str(p('fun_relation'))
-            self.fun_name = None            # the fun-personality voice now talking, if it is one
+            self.not_owner_below = float(p('not_owner_below'))
+            self.fun_pitch = float(p('fun_pitch_hz'))
+            self.fun_max_owner = float(p('fun_max_owner'))
+            self._pitch_memo = (None, None)     # (id of the audio, its pitch): once per utterance
+            self.fun_unknown = str(p('fun_unknown'))
+            self.fun_name = None            # who gets the fun personality now ("Name, Steve's wife"), if anyone
             self.voices = None
             voice_model = os.path.expanduser(str(p('voice_model')))
             if voice_model and os.path.exists(voice_model):
@@ -1119,22 +1138,38 @@ def _node_main(args):
             return w
 
         def _fun(self, who):
-            """The name of a voice that gets her fun personality (see fun_voices), or None.
-            Her voice and Steve's are far apart, so a short "yes" that sounds nearest her
-            counts too - never when it sounds nearest him."""
-            if who is None or who.name is None or self.voices is None or self._owner_speaking(who):
+            """Who gets her fun personality, for the brain ("Name, Steve's wife"), or None: a
+            voice she knows that is not the owner's (fun_voices), or one clearly not his
+            (not_owner_below). Never a voice that might be him."""
+            if (who is None or who.name is None or self.voices is None or not self.voices.has(self.owner)
+                    or self._owner_speaking(who)):
                 return None
-            name = who.name
-            if name.lower() == self.owner.lower():
-                return None
-            if self.fun_voices and name.lower() not in self.fun_voices:
-                return None
-            return name if who.confident or who.score >= self.voices.same else None
+            if who.name.lower() != self.owner.lower():             # nearest someone she has learned
+                if self.fun_voices and who.name.lower() not in self.fun_voices:
+                    return None
+                if who.confident or who.score >= self.voices.same:
+                    return f'{who.name}, {self.fun_relation}'
+            if who.seconds < speaker.SURE_SECONDS:
+                return None                                       # too short to be sure it is not him
+            owner = self._owner_score(who)
+            if owner < self.not_owner_below or self._high_voice(who):
+                self.get_logger().info(f'not his voice ({owner:.2f} like his'
+                                       + (f', {self._pitch_memo[1]:.0f} Hz' if self._pitch_memo[1] else '')
+                                       + '): the fun personality')
+                return self.fun_unknown
+            return None
+
+        def _owner_score(self, who) -> float:
+            """How much like the owner this print is, whoever it was nearest."""
+            try:
+                return self.voices.score(who.emb, self.voices.canonical(self.owner))
+            except Exception:      # noqa: BLE001
+                return 1.0                                        # cannot tell: treat as maybe him
 
         def _guest(self, who) -> bool:
             """Not the owner, by voice - only once she knows the owner's voice. Typed words are his."""
             return (self.voices is not None and self.voices.has(self.owner) and who is not None
-                    and not who.is_owner(self.owner))
+                    and (not who.is_owner(self.owner) or self._high_voice(who)))
 
         def _describe(self, who) -> str:
             if self.voices is None or not self.voices.names():
@@ -1170,12 +1205,27 @@ def _node_main(args):
                 return True
             if self.voices is None or not self.voices.has(self.owner):
                 return False
+            if self._high_voice(who):
+                return False                  # a woman's pitch, not strongly his print: not him
             now = time.monotonic()
             if who.is_owner(self.owner):
                 self.owner_at = now
                 return True
             return (not who.confident and who.name is not None and who.name.lower() == self.owner.lower()
                     and who.score >= self.voices.same and now - self.owner_at < 60.0)
+
+        def _high_voice(self, who) -> bool:
+            """A voice pitched like a woman's (fun_pitch_hz) whose print is not strongly the
+            owner's (fun_max_owner). 2026-09-28 on the reSpeaker: 11 of 37 clips of a woman's
+            voice scored "surely Steve" on the print alone; with this, 0 of 37, and none of
+            his 24 recordings (his print scores 0.97+ even where his pitch reads high)."""
+            if who is None or who.audio is None or who.seconds < speaker.SURE_SECONDS:
+                return False
+            key = id(who.audio)
+            if self._pitch_memo[0] != key:
+                self._pitch_memo = (key, speaker.pitch_hz(who.audio))
+            pitch = self._pitch_memo[1]
+            return pitch is not None and pitch >= self.fun_pitch and self._owner_score(who) < self.fun_max_owner
 
         def _learn_voice(self, who) -> None:
             if self.voices is None:
@@ -1444,7 +1494,7 @@ def _node_main(args):
             msg = self._String()
             ask = {'text': text, 'lead_in': lead, 'think': think, 'speaker': self._describe(who), 'terse': self.terse}
             if self.fun_name and not self.terse:
-                ask['fun'] = {'name': self.fun_name, 'relation': self.fun_relation}
+                ask['fun'] = {'who': self.fun_name}
             if hold is not None:
                 ask['hold'] = hold
             msg.data = json.dumps(ask)

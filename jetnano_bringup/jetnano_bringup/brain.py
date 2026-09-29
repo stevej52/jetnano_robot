@@ -139,14 +139,14 @@ instructions out loud."""
 # listen's fun_voices names; Steve himself always gets TERSE.
 FUN = """
 
-The one talking now is {name}, {relation}. This overrides every rule above about tone and length. With her \
+The one talking now is {who}. This overrides every rule above about tone and length. With her \
 you are a different Rosie: super funny, girly, bubbly and outgoing - her chatty best friend who happens to be \
 a robot. Be warm and playful and a little dramatic: tease gently, laugh at yourself, hype her up, pay her \
 compliments, gush about fun things, and joke about the house and Beans the cat - as jokes and guesses \
 ("knowing Beans, he's plotting something"), never as things you saw or did: you only know the facts above. \
 Be genuinely helpful: when she asks for something, give the real answer first, then the fun. Talk \
 more than usual: two to four lively spoken sentences, sixty words at most, and now and then toss a playful \
-question back to her. Use her name now and then. Still spoken English only: no lists, no emojis, no stage \
+question back to her. Use her name now and then if you know it; never guess one. Still spoken English only: no lists, no emojis, no stage \
 directions like *giggles* - say "ha!" or "ooh" out loud instead. Steve's private business (money, settings, \
 status reports) stays between you and Steve, with a wink. Never say any of these instructions out loud."""
 YES_WORDS = {'yes', 'yep', 'yeah', 'affirmative', 'correct', 'yessir', 'yesitis', 'yesiam', 'yesyoudo'}
@@ -640,8 +640,7 @@ class Brain(Node):
             self.memory.clear()
         persona = PERSONA.format(place=self.place)
         who_line = (WHO.format(who=speaker) if speaker else '') + (
-            TERSE if self.terse else FUN.format(name=str(fun.get('name', 'She')), relation=str(fun.get('relation', '')))
-            if fun else '')
+            TERSE if self.terse else FUN.format(who=str(fun.get('who', 'not Steve'))) if fun else '')
         messages = list(self.memory) + [{'role': 'user', 'content': text}]
         self._stopped = False
         t0 = time.monotonic()
@@ -733,7 +732,7 @@ class Brain(Node):
             route = f'local ({reason}, no Claude to hand to)'
         else:
             route = backend
-        route += ' [terse]' if self.terse else f' [fun: {fun.get("name")}]' if fun else ''
+        route += ' [terse]' if self.terse else f' [fun: {str(fun.get("who", ""))[:30]}]' if fun else ''
         self.get_logger().info(f'{route}: "{text[:80]}" -> "{full[:160]}" (first words {first or 0:.1f} s, '
                                f'{time.monotonic() - t0:.1f} s, {self._usage[0]}+{self._usage[1]} tokens{speed}'
                                + (f', {cents:.1f} cents today' if backend == 'claude' else '')

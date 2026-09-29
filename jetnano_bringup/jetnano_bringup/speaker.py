@@ -57,6 +57,30 @@ PERCENT_LOW, PERCENT_HIGH = 0.15, 0.65
 MAX_SAMPLES = 30
 
 
+def pitch_hz(samples: np.ndarray, rate: int = 16000):
+    """Median voice pitch (Hz) of the voiced 40 ms frames, or None if too few. Normalised
+    autocorrelation over 60-400 Hz; a frame counts when its peak is strong and it is among
+    the louder half. 2026-09-28: on the reSpeaker a voice print alone could not tell a
+    woman's voice from Steve's short phrases; pitch can (men ~85-155 Hz, women ~165-255)."""
+    x = np.asarray(samples, dtype=np.float64)
+    n, hop = int(0.04 * rate), int(0.02 * rate)
+    lo, hi = int(rate / 400), int(rate / 60)
+    if len(x) < n * 4:
+        return None
+    frames = np.lib.stride_tricks.sliding_window_view(x, n)[::hop]
+    energy = (frames ** 2).mean(axis=1)
+    loud = frames[energy >= np.median(energy)]
+    loud = loud - loud.mean(axis=1, keepdims=True)
+    spec = np.fft.rfft(loud, 2 * n, axis=1)
+    ac = np.fft.irfft(spec * np.conj(spec), axis=1)[:, :n]            # every frame's autocorrelation at once
+    ok = ac[:, 0] > 0
+    ac = ac[ok] / ac[ok, :1]
+    lags = lo + np.argmax(ac[:, lo:hi], axis=1)
+    strong = ac[np.arange(len(ac)), lags] > 0.5
+    f0 = rate / lags[strong]
+    return float(np.median(f0)) if len(f0) >= 5 else None
+
+
 def cosine(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b) / ((np.linalg.norm(a) * np.linalg.norm(b)) + 1e-9))
 
