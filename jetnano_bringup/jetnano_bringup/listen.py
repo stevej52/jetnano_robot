@@ -528,6 +528,7 @@ def _node_main(args):
             self.declare_parameter('turn_model', turn.DEFAULT_MODEL)   # '' = the words alone decide
             self.declare_parameter('turn_threads', 2)
             self.declare_parameter('turn_done_p', 0.5)              # Smart Turn: finished at or above this
+            self.declare_parameter('turn_sure_p', 0.8)              # ... so sure it overrules a dangling last word
             self.declare_parameter('hold_maybe_s', 2.0)
             self.declare_parameter('hold_unfinished_s', 20.0)
             self.declare_parameter('hold_name_s', 2.5)              # just "Rosie" - and then?
@@ -621,6 +622,12 @@ def _node_main(args):
             self.chat_timeout = float(p('chat_timeout_s'))
             self.open_chat = bool(p('open_chat'))
             self.turn_done_p = float(p('turn_done_p'))
+            self.turn_sure_p = float(p('turn_sure_p'))
+            # The voice print beside the speech-to-text (sherpa-onnx lets go of Python's lock):
+            # a 10.8 s sentence took 1381 ms one after the other, 806 ms side by side (bench,
+            # 2026-09-29); at most the last 8 s of speech (4 s dropped his print 0.96 -> 0.78).
+            self.who_pool = concurrent.futures.ThreadPoolExecutor(1, thread_name_prefix='listen-who')
+            self.who_max = 8 * 16000
             self.hold_maybe = float(p('hold_maybe_s'))
             self.hold_unfinished = float(p('hold_unfinished_s'))
             self.hold_name = float(p('hold_name_s'))
@@ -919,6 +926,8 @@ def _node_main(args):
             if barged:
                 overlapped = False
             if self.voice_off:
+                if seconds > 3.5:
+                    return                  # the code word is short; a TV evening need not all be transcribed
                 text = transcribe(self.recognizer, samples)
                 if text and code_word(text) == 'on':
                     self._voice(True, text)
@@ -933,13 +942,18 @@ def _node_main(args):
                 audio = samples if self.turn is None else np.concatenate(
                     [np.concatenate([a, np.zeros(4800, dtype=np.float32)]) for a in self.turn['audio']] + [samples])
                 done = self.turn_pool.submit(self.turn_model.complete, audio)
+            who_f = self.who_pool.submit(self._who, samples[-self.who_max:])
             t0 = time.monotonic()
             text = transcribe(self.recognizer, samples)
             took = time.monotonic() - t0
             if not text:
                 self.get_logger().info(f'speech with no words ({seconds:.1f} s at {db:.0f} dBFS)')
                 return
-            who = self._who(samples)
+            try:
+                who = who_f.result(timeout=3.0)
+            except Exception as exc:      # noqa: BLE001 - never lose the words over the voice
+                self.get_logger().warning(f'voice print: {exc}')
+                who = None
             if barged:
                 text = beyond_her_voice(text, ' '.join(list(self.own_text)[-3:])) or text
                 self.get_logger().info(f'the one she stopped for: "{text[:80]}"')
@@ -1023,7 +1037,14 @@ def _node_main(args):
             if code_word(said):
                 self._turn_end('a code word')         # "over and out" / "rise and shine": no waiting
                 return
-            if turn.unfinished(said):
+            hang = turn.unfinished(said)
+            if hang == 'word' and (said.rstrip().endswith('?') or (p is not None and p >= self.turn_sure_p)):
+                # "Rosie, what's the weather like?" ends on a dangling word but is a whole
+                # question: his voice landed (or the recogniser heard a question) - no 20 s wait
+                self.get_logger().info(f'"{said[-40:]}" ends on "{said.split()[-1]}", but '
+                                       + ('it is a question' if said.rstrip().endswith('?') else f'his voice landed ({p:.2f})'))
+                hang = None
+            if hang:
                 why, hold = 'his words stop mid-sentence', self.hold_unfinished
             elif words in (NAME, f'hey {NAME}', f'ok {NAME}', f'okay {NAME}', f'hi {NAME}'):
                 why, hold = 'just her name', self.hold_name
@@ -1050,8 +1071,8 @@ def _node_main(args):
                 return
             said = ' '.join(t['texts'])
             who = t['who']
-            if len(t['audio']) > 1:                   # all of it: a longer print is a surer one
-                who = self._who(np.concatenate(t['audio'])) or who
+            if len(t['audio']) > 1:                   # all of it (up to 8 s): a longer print is a surer one
+                who = self._who(np.concatenate(t['audio'])[-self.who_max:]) or who
             self._partial('', 0.0)
             bearing = self._direction(t['t0'], t.get('t1', time.monotonic()))
             self.heard_from = ''

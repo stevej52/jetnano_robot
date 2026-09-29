@@ -21,7 +21,9 @@ voltage, current (negative while discharging, per the message's convention),
 a percentage from the LiPo discharge curve, and a status. Below
 ``warn_v_per_cell`` it warns; below ``stop_v_per_cell`` it raises the
 ``e_stop`` lock every second, which twist_mux honours until the pack is
-charged - GO on the page does not win an argument with a flat battery.
+charged - GO on the page does not win an argument with a flat battery. At or
+below ``poweroff_v_per_cell`` for ``poweroff_after_s`` it powers her off
+(``poweroff_cmd``): parked she still draws ~20 W, and a forgotten pack goes flat.
 
 Wiring notes that cost a board if ignored:
 
@@ -39,6 +41,8 @@ is reported as "no battery"; nothing is raised for that.
 the system without the board.
 """
 
+import shlex
+import subprocess
 import time
 
 import rclpy
@@ -85,6 +89,15 @@ class BatteryMonitor(Node):
         self.declare_parameter('cells', 3)
         self.declare_parameter('warn_v_per_cell', 3.5)
         self.declare_parameter('stop_v_per_cell', 3.3)
+        # 2026-09-29: parked she still draws ~20.7 W at the battery (Steve's meter; the Jetson
+        # module is 9.5 W of it), so a forgotten Rosie empties a 5200 mAh 3S pack in ~2.5 h and
+        # nothing turned her off. Now a pack at or below poweroff_v_per_cell for poweroff_after_s
+        # (driving sag passes; a reading 0.05 V/cell above resets it) powers her off, cleanly.
+        self.declare_parameter('poweroff', True)
+        self.declare_parameter('poweroff_v_per_cell', 3.3)
+        self.declare_parameter('poweroff_after_s', 60.0)
+        self.declare_parameter('poweroff_cmd', 'sudo -n systemctl poweroff')
+        self.declare_parameter('simulate_start_v', 12.4)
         self.declare_parameter('present_above_v', 6.0)
         self.declare_parameter('rate', 2.0)
         self.declare_parameter('simulate', False)
@@ -97,6 +110,12 @@ class BatteryMonitor(Node):
         self.stop_v = float(self.get_parameter('stop_v_per_cell').value) * self.cells
         self.present_v = float(self.get_parameter('present_above_v').value)
         self.simulate = bool(self.get_parameter('simulate').value)
+        self.poweroff_on = bool(self.get_parameter('poweroff').value)
+        self.poweroff_v = float(self.get_parameter('poweroff_v_per_cell').value) * self.cells
+        self.poweroff_after = float(self.get_parameter('poweroff_after_s').value)
+        self.poweroff_cmd = str(self.get_parameter('poweroff_cmd').value)
+        self._low_since = None
+        self._powering_off = False
 
         self.pub = self.create_publisher(BatteryState, 'battery', 10)
         self.stop_pub = self.create_publisher(Bool, 'e_stop', 10)
@@ -104,7 +123,7 @@ class BatteryMonitor(Node):
         self._last_error = 0.0
         self._warned = False
         self._stopped = False
-        self._sim_v = 12.4
+        self._sim_v = float(self.get_parameter('simulate_start_v').value)
         if not self.simulate:
             self._open()
         self.create_timer(1.0 / float(self.get_parameter('rate').value), self._tick)
@@ -187,7 +206,9 @@ class BatteryMonitor(Node):
 
         if not present:
             self._warned = self._stopped = False
+            self._low_since = None
             return
+        self._poweroff_check(voltage)
         if voltage <= self.stop_v:
             if not self._stopped:
                 self.get_logger().error(f'battery {voltage:.2f} V is below {self.stop_v:.2f} V: stopping the robot')
@@ -201,6 +222,31 @@ class BatteryMonitor(Node):
                 self._warned = True
         else:
             self._warned = self._stopped = False
+
+
+    def _poweroff_check(self, voltage: float) -> None:
+        if not self.poweroff_on or self._powering_off:
+            return
+        now = time.monotonic()
+        if voltage <= self.poweroff_v:
+            if self._low_since is None:
+                self._low_since = now
+                self.get_logger().error(f'battery {voltage:.2f} V is at or below {self.poweroff_v:.2f} V: '
+                                        f'powering off in {self.poweroff_after:.0f} s unless it recovers')
+            elif now - self._low_since >= self.poweroff_after:
+                self._powering_off = True
+                self.get_logger().error(f'battery {voltage:.2f} V for {self.poweroff_after:.0f} s: powering off now '
+                                        f'to save the pack ({self.poweroff_cmd})')
+                stop = Bool()
+                stop.data = True
+                self.stop_pub.publish(stop)
+                try:
+                    subprocess.Popen(shlex.split(self.poweroff_cmd))
+                except OSError as exc:
+                    self.get_logger().error(f'could not power off: {exc}')
+        elif voltage > self.poweroff_v + 0.05 * self.cells and self._low_since is not None:
+            self.get_logger().warning(f'battery back to {voltage:.2f} V: not powering off')
+            self._low_since = None
 
 
 def main(args=None):

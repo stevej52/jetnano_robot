@@ -59,15 +59,23 @@ DANGLING = {
 FILLER = re.compile(r"(\.\.\.|…|,|;|:|-)\s*$")
 
 
-def unfinished(text: str) -> bool:
-    """The words stop mid-sentence (see DANGLING) or on a comma, colon or dash."""
+FILLERS = {'um', 'uh', 'er', 'erm', 'hmm', 'mm', 'uhm', 'ah', 'well'}
+
+
+def unfinished(text: str):
+    """Why the words look unfinished, or None: 'mark' (they stop on a comma, colon or dash),
+    'filler' (on an um or uh), 'word' (on a word from DANGLING). A 'word' can still end a
+    real question - "what's the weather like?", "what are you up to?" - so listen lets his
+    voice (Smart Turn) or a question mark overrule that one."""
     t = text.strip()
     if not t:
-        return False
+        return None
     if FILLER.search(t):
-        return True
+        return 'mark'
     words = re.findall(r"[a-z']+", t.lower())
-    return bool(words) and words[-1] in DANGLING
+    if not words or words[-1] not in DANGLING:
+        return None
+    return 'filler' if words[-1] in FILLERS else 'word'
 
 
 def _hz_to_mel(f):
