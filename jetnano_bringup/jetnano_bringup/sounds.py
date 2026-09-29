@@ -92,8 +92,10 @@ class Sounds(Node):
         # ('full_control') so this one alone sets her loudness. Measured 2026-09-28 with
         # the reSpeaker's own mics: 90 % (-6 dB) is loud and the echo canceller still
         # takes ~18 dB of her voice out; at 100 % the little speaker distorts and only
-        # ~12 dB comes out.
-        self.declare_parameter('volume_percent', 90)
+        # ~12 dB comes out. Steve, by ear: 100 % "5 % distorted", 95 % (-3 dB) it is -
+        # the speaker is a 4 ohm 3 W driver and the reSpeaker's amp on USB power gives
+        # it about 3 W at 0 dB, ~1.5 W here.
+        self.declare_parameter('volume_percent', 95)
         self.declare_parameter('full_control', 'PCM,1')   # '' = none
         # "over and out" (listen) leaves this flag: she starts silent after a reboot
         # 'over and out' (listen's voice_off flag) no longer mutes her sounds: Steve,
