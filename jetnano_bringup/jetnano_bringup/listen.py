@@ -783,6 +783,10 @@ def _node_main(args):
             others = self._others_talking(now)
             if len(others) >= max(2, int(self.barge_hold * 10)):
                 self.barged_at = now
+                if self.voice_off:              # "over and out": not listening, so not stopping either
+                    self.get_logger().info(f'barge-in (talking is off, not stopping): someone from '
+                                           f'{np.median(others):.0f} degrees, her speaker at {self.speaker_doa:.0f}')
+                    return
                 self.get_logger().info(f'barge-in: someone talking over her from {np.median(others):.0f} degrees '
                                        f'(her speaker at {self.speaker_doa:.0f}): she stops and listens')
                 self._stop()
