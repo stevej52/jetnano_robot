@@ -10,8 +10,10 @@
 <meta name="theme-color" content="#05070c">
 <title>Rosie · Dashboard</title>
 <!--
-  Rosie's iPad dashboard (Steve, 2026-09-27): every camera - the rear one as a
-  rear-view mirror in the main view - every sensor and everything she knows.
+  Rosie's iPad dashboard (Steve, 2026-09-27): every camera, every sensor and
+  everything she knows. The rear camera's mirror in the main view was taken out on
+  2026-09-29 (Steve: "Remove the rear view mirror from the iPad view"); the rear
+  camera itself is off in csi_cameras.
   No driving here; STOP raises the same e_stop_web lock as the phone page.
   Served by jetnano_teleop web_teleop at http://<robot>:8081/dash (or /ipad).
   Cameras: all three from jetnano_bringup csi_cameras (:8082) - the D435 relayed
@@ -113,15 +115,6 @@
   .bar::after { content: ""; position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: rgba(255,255,255,0.5); }
   .barlabel { font: 600 9px/1 var(--mono); letter-spacing: 0.2em; color: var(--dim); text-align: center; }
 
-  /* the rear-view mirror */
-  #mirror { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); width: 34%; aspect-ratio: 16 / 6;
-    border-radius: 18px / 40%; overflow: hidden; background: #000;
-    box-shadow: 0 0 0 3px #10151f, 0 0 0 5px rgba(94,242,255,0.35), 0 10px 26px rgba(0,0,0,0.7); }
-  #mirror img { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); display: block; }
-  #mirror::after { content: ""; position: absolute; inset: 0; pointer-events: none;
-    background: linear-gradient(160deg, rgba(255,255,255,0.14), transparent 40%); }
-  #mirror .lbl { position: absolute; bottom: 5px; right: 10px; font: 700 9px/1 var(--mono); letter-spacing: 0.2em;
-    color: rgba(255,255,255,0.7); text-shadow: 0 1px 2px #000; }
 
   #pan { grid-area: pan; }
   #pan .feed { top: 30px; height: calc(100% - 30px); touch-action: none; cursor: grab; }
@@ -214,7 +207,6 @@
   <section id="cam" class="panel">
     <div class="nofeed">FRONT CAMERA · CONNECTING</div>
     <img id="camimg" class="feed" alt="">
-    <div id="mirror"><img id="rearimg" alt=""><span class="lbl">REAR</span></div>
     <div class="hud">
       <div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
       <div class="cross"></div>
@@ -293,9 +285,6 @@
   // the RealSense is upside down since 2026-09-27; the relay says how far to turn it
   fetch('http://' + host + ':8082/config.json').then(function (r) { return r.json(); }).then(function (c) {
     $('camimg').style.transform = c.d435_rotate ? 'rotate(' + c.d435_rotate + 'deg)' : '';
-    // the rear view only when the relay runs that camera (off since 2026-09-29, csi_cameras 'cameras')
-    if (!c.cameras || c.cameras.indexOf('rear') >= 0) stream($('rearimg'), 'http://' + host + ':8082/rear.mjpg');
-    else $('mirror').style.display = 'none';
   }).catch(function () {});
   stream($('panimg'), 'http://' + host + ':8082/front.mjpg', document.querySelector('#pan .nofeed'));
 
