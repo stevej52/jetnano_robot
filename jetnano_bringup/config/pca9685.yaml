@@ -19,6 +19,9 @@
     # chip kept its last pulses through a 2 min 46 s crash-and-reboot; she was parked).
     output_enable_pin: 7
     output_enable_active_high: true
+    # Toggle pin 7 at 20 Hz for the relay watchdog (a XIAO RP2040 between pin 7 and the
+    # relay: docs/relay-watchdog.md). ONLY once it is fitted - without it the relay chatters.
+    # output_enable_heartbeat_hz: 20.0
     channels: [throttle, steering, rear_steering, pan, tilt]
 
     # Publish servo positions as joint_states. Left off for now: the driver
