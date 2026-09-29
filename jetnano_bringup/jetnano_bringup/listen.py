@@ -75,6 +75,7 @@ Deaf while the motors run.
 """
 
 import collections
+import concurrent.futures
 import difflib
 import glob
 import json
@@ -491,7 +492,7 @@ def _node_main(args):
     from sensor_msgs.msg import BatteryState
     from std_msgs.msg import Bool, Empty, Int16MultiArray, String, UInt32
 
-    from jetnano_bringup import news, speaker, voice
+    from jetnano_bringup import news, speaker, turn, voice
     from jetnano_bringup.health import Health
     from jetnano_bringup.voice import ENGLISH
 
@@ -517,12 +518,21 @@ def _node_main(args):
             self.declare_parameter('echo_guard_s', 0.6)
             self.declare_parameter('highpass_hz', 100.0)
             self.declare_parameter('vad_threshold', 0.35)
-            # a pause this long ends what you said. 0.5 -> 1.0 (Steve, 2026-09-28: "it doesn't
-            # recognize that I'm talking, and then eventually talks over me"): half a second
-            # of thinking mid-sentence was taken as the end, and the rest was lost under her
-            self.declare_parameter('min_silence_s', 1.0)
+            # A pause this long is a CHECK, not the end: is he done? (turn.py: his words, and
+            # the Smart Turn model on his voice). 2026-09-28 Steve: "it doesn't recognize that
+            # I'm talking ... talks over me", and "I have been known to pause for like 15
+            # seconds trying to find the right word". Done: she answers at once. Not done:
+            # she waits for more - hold_maybe_s if only his voice trailed off (the brain
+            # thinks ahead meanwhile), hold_unfinished_s if his words stop mid-sentence.
+            self.declare_parameter('min_silence_s', 0.4)
+            self.declare_parameter('turn_model', turn.DEFAULT_MODEL)   # '' = the words alone decide
+            self.declare_parameter('turn_threads', 2)
+            self.declare_parameter('turn_done_p', 0.5)              # Smart Turn: finished at or above this
+            self.declare_parameter('hold_maybe_s', 2.0)
+            self.declare_parameter('hold_unfinished_s', 20.0)
+            self.declare_parameter('hold_name_s', 2.5)              # just "Rosie" - and then?
             self.declare_parameter('min_speech_s', 0.3)
-            self.declare_parameter('max_speech_s', 10.0)
+            self.declare_parameter('max_speech_s', 30.0)            # 10 cut long sentences in two
             self.declare_parameter('chat_timeout_s', 45.0)          # silence that ends a conversation
             # False: only what has her name in it is for her - no open conversation after
             # "Rosie" (Steve, 2026-09-28, after "Word, the two in series." said to someone
@@ -563,6 +573,24 @@ def _node_main(args):
                                              float(p('min_speech_s')), float(p('max_speech_s')))
             self.chat_timeout = float(p('chat_timeout_s'))
             self.open_chat = bool(p('open_chat'))
+            self.turn_done_p = float(p('turn_done_p'))
+            self.hold_maybe = float(p('hold_maybe_s'))
+            self.hold_unfinished = float(p('hold_unfinished_s'))
+            self.hold_name = float(p('hold_name_s'))
+            self.turn = None                # what he has said so far, while she waits for the rest
+            self.turn_ids = 0               # thinking-ahead asks to the brain, numbered
+            self.turn_model = None
+            path = os.path.expanduser(str(p('turn_model')))
+            if path and os.path.exists(path):
+                try:
+                    self.turn_model = turn.SmartTurn(path, threads=int(p('turn_threads')))
+                    self.turn_model.complete(np.zeros(16000, dtype=np.float32))      # the first run is slow
+                    self.turn_pool = concurrent.futures.ThreadPoolExecutor(1, thread_name_prefix='listen-turn')
+                except Exception as exc:      # noqa: BLE001 - the words alone still decide
+                    self.get_logger().warning(f'no Smart Turn ({exc}): his words alone say when he is done')
+                    self.turn_model = None
+            else:
+                self.get_logger().warning(f'no Smart Turn model at {path or "(none)"}: his words alone decide')
             self.more_timeout = float(p('more_timeout_s'))
             self.still_after = float(p('still_after_s'))
             self.chat_file = str(p('chat_file'))
@@ -590,6 +618,8 @@ def _node_main(args):
             self.speak_pub = self.create_publisher(String, 'speak', 10)
             self.stop_pub = self.create_publisher(Empty, 'sound/stop', 10)
             self.ask_pub = self.create_publisher(String, 'brain/ask', 10)
+            self.turn_pub = self.create_publisher(String, 'brain/turn', 10)     # go / drop a thought-ahead answer
+            self.partial_pub = self.create_publisher(String, 'speech/partial', 10)   # "listening..." for the iPad
             self.who_pub = self.create_publisher(String, 'speech/speaker', 10)
             self.watch_pub = self.create_publisher(String, 'motion/mode', 10)
             self.brain_ready = False
@@ -733,6 +763,8 @@ def _node_main(args):
                     started = time.monotonic() - len(samples) / 16000.0 - self.min_silence
                     overlapped = self.speaking or started < self.speaking_ended + self.echo_guard
                     self._utterance(samples, overlapped)
+                if self.turn is not None and not active and time.monotonic() >= self.turn['until']:
+                    self._turn_end('waited')              # no more came: what he said is what he meant
 
         # ------------------------------------------------------------ words --
 
@@ -748,6 +780,11 @@ def _node_main(args):
             # level as it came off the mic, before the boost
             rms = float(np.sqrt(np.mean(samples * samples))) / self.gain if len(samples) else 0.0
             db = 20.0 * np.log10(max(rms, 1e-6))
+            done = None                 # Smart Turn, on everything he has said this turn, beside the words
+            if self.turn_model is not None and not overlapped:
+                audio = samples if self.turn is None else np.concatenate(
+                    [np.concatenate([a, np.zeros(4800, dtype=np.float32)]) for a in self.turn['audio']] + [samples])
+                done = self.turn_pool.submit(self.turn_model.complete, audio)
             t0 = time.monotonic()
             text = transcribe(self.recognizer, samples)
             took = time.monotonic() - t0
@@ -794,7 +831,112 @@ def _node_main(args):
             msg = self._String()
             msg.data = text
             self.text_pub.publish(msg)
-            self._understand(text, seconds, took, db, who)
+            self._turn_add(text, samples, seconds, took, db, who, done)
+
+        # ------------------------------------------------------------- turns --
+
+        def _turn_add(self, text: str, samples, seconds: float, took: float, db: float, who, done) -> None:
+            """One more stretch of speech: is he done (answer now) or not (wait for the rest)?"""
+            t = self.turn
+            if (t is not None and normalize(text).startswith(NAME)
+                    and not any(re.search(rf'\b{NAME}\b', normalize(x)) for x in t['texts'])):
+                self.get_logger().info(f'dropped, not for her: "{" ".join(t["texts"])[:60]}"')
+                if t['spec'] is not None:
+                    self._turn_go(t['spec'], False)
+                self.turn = t = None                  # a fresh start with her name
+            if t is None:
+                t = self.turn = {'texts': [], 'audio': [], 'seconds': 0.0, 'took': 0.0, 'db': db, 'who': who,
+                                 'spec': None, 'until': 0.0}
+            elif t['spec'] is not None:
+                self._turn_go(t['spec'], False)       # he carried on: the answer she had ready is dropped
+                t['spec'] = None
+            t['texts'].append(text)
+            t['audio'].append(samples)
+            t['seconds'] += seconds
+            t['took'] += took
+            t['db'] = max(t['db'], db)
+            if who is not None and (t['who'] is None or who.score > t['who'].score):
+                t['who'] = who
+            said = ' '.join(t['texts'])
+            p = None
+            if done is not None:
+                try:
+                    p = done.result(timeout=2.0)
+                except Exception as exc:      # noqa: BLE001 - the words still decide
+                    self.get_logger().warning(f'Smart Turn: {exc}')
+            words = normalize(said)
+            action = decide(said, 'idle')[0]
+            if code_word(said):
+                self._turn_end('a code word')         # "over and out" / "rise and shine": no waiting
+                return
+            if turn.unfinished(said):
+                why, hold = 'his words stop mid-sentence', self.hold_unfinished
+            elif words in (NAME, f'hey {NAME}', f'ok {NAME}', f'okay {NAME}', f'hi {NAME}'):
+                why, hold = 'just her name', self.hold_name
+            elif p is not None and p < self.turn_done_p and action in ('chat', None):
+                why, hold = 'his voice trailed off', self.hold_maybe
+            else:
+                self._turn_end('done' + (f' ({p:.2f})' if p is not None else ''))
+                return
+            t['until'] = time.monotonic() + hold
+            self.get_logger().info(f'waiting up to {hold:g} s for more: {why} ("{said[-60:]}"'
+                                   + (f', done {p:.2f}' if p is not None else '') + ')')
+            if re.search(rf'\b{NAME}\b', words) or self.enrol or self.offer_until or self.pending:
+                self._partial(said, hold)             # for her: the iPad shows she is still listening
+            if why == 'his voice trailed off' and action == 'chat' and self._would_ask_brain(said, t['who']):
+                self.turn_ids += 1
+                t['spec'] = self.turn_ids              # the brain thinks meanwhile; nothing is said yet
+                self.terse = self._owner_speaking(t['who'])
+                self._ask_brain(said, who=t['who'], hold=t['spec'])
+
+        def _turn_end(self, why: str) -> None:
+            t, self.turn = self.turn, None
+            if t is None:
+                return
+            said = ' '.join(t['texts'])
+            who = t['who']
+            if len(t['audio']) > 1:                   # all of it: a longer print is a surer one
+                who = self._who(np.concatenate(t['audio'])) or who
+            self._partial('', 0.0)
+            if t['spec'] is not None:                  # the answer is ready: out with it
+                self._turn_go(t['spec'], True)
+                now = time.monotonic()
+                self.last_question, self.last_action = said, 'chat'
+                self.last_heard = now
+                if self.mode != 'chat':
+                    self.mode = 'chat'
+                    self._publish_state()
+                self.get_logger().info(f'heard "{said}" ({t["seconds"]:.1f} s, {t["db"]:.0f} dBFS'
+                                       + (f', {who.label}' if who is not None else '')
+                                       + f') -> chat, thought ahead [{why}]' + (' [terse]' if self.terse else ''))
+                return
+            if len(t['texts']) > 1 or why == 'waited':
+                self.get_logger().info(f'turn over ({why}): {len(t["texts"])} piece(s)')
+            self._understand(said, t['seconds'], t['took'], t['db'], who)
+
+        def _turn_go(self, ask_id: int, go: bool) -> None:
+            msg = self._String()
+            msg.data = json.dumps({'id': ask_id, 'go': go})
+            self.turn_pub.publish(msg)
+
+        def _partial(self, said: str, hold: float) -> None:
+            msg = self._String()
+            msg.data = json.dumps({'text': said, 'hold_s': hold})
+            self.partial_pub.publish(msg)
+
+        def _would_ask_brain(self, text: str, who) -> bool:
+            """Would _understand hand this chat to the brain? (Then it can think ahead.)
+            The same tests in the same order as the chat branches there."""
+            if not (self._words() and self.brain_ready) or robot_talk(text):
+                return False
+            t = normalize(text)
+            if _has(t, THINK_WORDS) or _has(t, REPORT_WORDS):
+                return False
+            if self._guest(who) and _has(t, REPORT_WORDS + SPEND_WORDS + HEALTH_WORDS):
+                return False
+            if _has(t, HEALTH_WORDS) or (self._owner_speaking(who) and _has(t, SYSTEM_WORDS)):
+                return False
+            return not known_subject(text)
 
         def _understand(self, text: str, seconds: float, took: float = 0.0, db: float = None, who=None) -> None:
             now = time.monotonic()
@@ -1265,18 +1407,21 @@ def _node_main(args):
                     self._speak(report.split('\n')[0] + '\nWant a full status report?')
             threading.Thread(target=run, daemon=True, name='listen-howami').start()
 
-        def _ask_brain(self, text: str, think: bool = False, who=None) -> None:
+        def _ask_brain(self, text: str, think: bool = False, who=None, hold: int = None) -> None:
             # "think hard": the brain says "Give me a moment..." itself, no lead-in;
-            # Steve gets no lead-in at all
-            lead = '' if think or self.terse else lead_in(text, self.last_opener)
+            # Steve gets no lead-in at all; nor does an answer thought out ahead (hold:
+            # the brain keeps it until brain/turn says go - he may not be done yet)
+            lead = '' if think or self.terse or hold is not None else lead_in(text, self.last_opener)
             if lead:
                 self._speak(lead)
                 self.last_opener = lead if lead in LEAD_OPENERS else self.last_opener
             self.get_logger().info(f'asks the brain "{text[:80]}"' + (f' after "{lead}"' if lead else '')
-                                   + (' to think hard' if think else ''))
+                                   + (' to think hard' if think else '') + (' ahead, held' if hold else ''))
             msg = self._String()
-            msg.data = json.dumps({'text': text, 'lead_in': lead, 'think': think, 'speaker': self._describe(who),
-                                   'terse': self.terse})
+            ask = {'text': text, 'lead_in': lead, 'think': think, 'speaker': self._describe(who), 'terse': self.terse}
+            if hold is not None:
+                ask['hold'] = hold
+            msg.data = json.dumps(ask)
             self.ask_pub.publish(msg)
 
         def _brief(self, kind: str) -> None:

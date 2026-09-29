@@ -147,15 +147,46 @@ def _plain(text: str) -> str:
     return re.sub(r'[^a-z]', '', text.lower())
 
 
-def sentences(buf: str):
-    """Split off complete sentences; returns (list of sentences, remainder)."""
+def sentences(buf: str, clause: bool = False):
+    """Split off complete sentences; returns (list of sentences, remainder). With clause,
+    the first one may end at a comma, semicolon, colon or dash instead, once it has
+    CLAUSE_WORDS words: her voice starts on "The Dodgers won," while the rest is still
+    coming (Steve, 2026-09-28: squeeze the response time)."""
     out = []
     while True:
         m = re.search(r'^(.+?[.!?]["\')]?)(\s+)', buf, re.S)
+        if clause and not out:
+            c = re.search(r'^(.+?[,;:]|.+? -)(\s+)', buf, re.S)
+            if c and (not m or c.end() < m.end()) and len(c.group(1).split()) >= CLAUSE_WORDS:
+                m = c
         if not m:
             return out, buf
         out.append(m.group(1).strip())
         buf = buf[m.end():]
+        clause = False
+
+
+CLAUSE_WORDS = 4
+
+# Questions about the world go straight to Claude (Steve, 2026-09-28, "Direct"):
+# the local model would only answer PASS to them, half a second later. The same
+# kinds its HAND_OVER lists - names, dates, numbers, events, science, history, how
+# things work, sports, current affairs - asked with a question word; but not about
+# her, Steve, the house or the moment (the local model has those facts).
+FACT_QUESTION = re.compile(
+    r"^(?:(?:hey|ok|okay|so|and|um|uh|well)\s+)*(?:who (?:is|was|were|won|invented|wrote|discovered|made|built|"
+    r"founded|painted|played|sang|directed)|what (?:is|was|are|were) the|what's the|what year|what does .+ mean|"
+    r"when (?:did|was|were|is|does|will)|where (?:is|was|are|were|did|does)|which|how (?:many|much|far|long|old|"
+    r"big|tall|deep|fast|heavy|hot|cold|does|do|did|is|are|was|were)|why (?:do|does|did|is|are|was|were)|"
+    r"tell me about|explain|define|what happened)\b", re.I)
+NOT_WORLD = re.compile(r"\b(you|your|yourself|rosie|me|my|i|i'm|steve|beans|house|home|room|kitchen|battery|"
+                       r"lidar|camera|robot|time|today|tonight|tomorrow|weather|news|now|here)\b", re.I)
+
+
+def fact_question(text: str) -> bool:
+    """A question about the world, for Claude directly (see FACT_QUESTION)."""
+    t = re.sub(r"^\W*(?:hey |ok |okay )?rosie\W*", '', text.strip(), flags=re.I)
+    return bool(FACT_QUESTION.search(t)) and not NOT_WORLD.search(t)
 
 
 class Brain(Node):
@@ -215,6 +246,13 @@ class Brain(Node):
             Bool, 'brain/ready', QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
         self.create_subscription(String, 'brain/ask', lambda m: self.queue.put(m.data), 10)
         self.create_subscription(Empty, 'sound/stop', lambda m: self._stop(), 10)
+        # An ask with 'hold' is thought out AHEAD while Steve may still be talking: what
+        # it would say is kept back until listen says go (brain/turn), or dropped. Only
+        # the free local model thinks ahead; Claude waits for the go.
+        self.create_subscription(String, 'brain/turn', self._on_turn, 10)
+        self._gate_lock = threading.Lock()
+        self._gate = None                   # the held answer being thought out, if any
+        self._decisions = {}                # go / drop that came before its ask started
         self.create_subscription(BatteryState, 'battery', self._on_battery, 10)
         self.create_subscription(Float32, 'sound/level', self._on_level, 10)
         self.battery = None
@@ -400,14 +438,54 @@ class Brain(Node):
         self._stopped = True
 
     def _say(self, text: str) -> None:
-        msg = String()
-        msg.data = text
-        self.speak_pub.publish(msg)
+        self._emit(self.speak_pub, text)
 
     def _sound(self, mood: str) -> None:
+        self._emit(self.say_pub, mood)
+
+    def _emit(self, pub, text: str) -> None:
+        with self._gate_lock:
+            g = self._gate
+            if g is not None and not g['open']:
+                if not g['dropped']:
+                    g['held'].append((pub, text))      # he may not be done: not yet
+                return
         msg = String()
-        msg.data = mood
-        self.say_pub.publish(msg)
+        msg.data = text
+        pub.publish(msg)
+
+    def _on_turn(self, msg) -> None:
+        """listen: the held answer goes out (he was done) or is dropped (he carried on)."""
+        try:
+            d = json.loads(msg.data)
+            ask_id, go = int(d['id']), bool(d['go'])
+        except (ValueError, KeyError, TypeError):
+            return
+        with self._gate_lock:
+            g = self._gate
+            if g is None or g['id'] != ask_id:
+                self._decisions[ask_id] = go           # its ask has not started yet
+                while len(self._decisions) > 20:
+                    self._decisions.pop(next(iter(self._decisions)))
+                return
+            g['go'] = go
+            if go:
+                for pub, text in g['held']:
+                    out = String()
+                    out.data = text
+                    pub.publish(out)
+                g['held'], g['open'] = [], True
+            else:
+                g['held'], g['dropped'] = [], True
+                self._stopped = True
+            g['event'].set()
+
+    def _await_go(self, timeout: float = 25.0) -> bool:
+        """For a held answer: wait for listen's go (True) or drop (False). No hold: True."""
+        g = self._gate
+        if g is None or g['event'].is_set():
+            return g is None or bool(g['go'])
+        return g['event'].wait(timeout) and bool(g['go'])
 
     def _out(self, sent: str) -> None:
         """One sentence out loud; to Steve a bare yes or no is her robot sound."""
@@ -438,8 +516,14 @@ class Brain(Node):
                              str(ask.get('then_say', '')).strip())
             elif text:
                 self.terse = bool(ask.get('terse', False))
-                self._answer(text, str(ask.get('lead_in', '')).strip(), bool(ask.get('think', False)),
-                             speaker=str(ask.get('speaker', '')).strip())
+                hold = ask.get('hold')
+                try:
+                    self._answer(text, str(ask.get('lead_in', '')).strip(), bool(ask.get('think', False)),
+                                 speaker=str(ask.get('speaker', '')).strip(),
+                                 hold=int(hold) if hold is not None else None)
+                finally:
+                    with self._gate_lock:
+                        self._gate = None
 
     def _banter(self, text: str, lead_in: str, report: str, then_say: str) -> None:
         """How she is, in her own words, from the real report - on the local
@@ -466,6 +550,10 @@ class Brain(Node):
         self.memory.append({'role': 'assistant', 'content': (full.strip() + ' ' + then_say).strip()})
         self.get_logger().info(f'banter ({how}): "{full.strip()[:140]}" ({time.monotonic() - t0:.1f} s)')
 
+    def _dropped(self, text: str, took: float = 0.0) -> None:
+        self.get_logger().info(f'thought ahead about "{text[:60]}": he carried on, dropped'
+                               + (f' ({took:.1f} s of thinking)' if took else ''))
+
     def _claude_ok(self) -> bool:
         return self.client is not None and self.backend in ('auto', 'claude') and self._spent() < self.budget
 
@@ -487,7 +575,7 @@ class Brain(Node):
                 m = WORD.match(full)
                 if m:
                     return full, first, 'think' if m.group(1).lower() == 'think' else 'passed'
-            done, buf = sentences(buf)
+            done, buf = sentences(buf, clause=not spoke)     # the first words out on a comma
             for sent in done:
                 if check and not spoke and UNSURE.search(sent):
                     return full, first, 'unsure'
@@ -506,7 +594,16 @@ class Brain(Node):
             self._out(rest)
         return full, first, None
 
-    def _answer(self, text: str, lead_in: str, think: bool = False, speaker: str = '') -> None:
+    def _answer(self, text: str, lead_in: str, think: bool = False, speaker: str = '', hold: int = None) -> None:
+        if hold is not None:
+            with self._gate_lock:
+                decided = self._decisions.pop(hold, None)
+                if decided is None:
+                    self._gate = {'id': hold, 'open': False, 'held': [], 'event': threading.Event(), 'go': None,
+                                  'dropped': False}
+            if decided is False:
+                self.get_logger().info(f'thought ahead about "{text[:60]}": he carried on, dropped before starting')
+                return
         backend = self._pick()
         if backend is None:
             self._say(self._plainly("I can't think right now. My brain is asleep.", 'Brain offline.'))
@@ -522,7 +619,7 @@ class Brain(Node):
         messages = list(self.memory) + [{'role': 'user', 'content': text}]
         self._stopped = False
         t0 = time.monotonic()
-        handed, reason = False, None
+        handed, reason, direct = False, None, False
 
         def claude(heavy: bool, said: str):
             """Opus, told what she has already said out loud."""
@@ -541,6 +638,12 @@ class Brain(Node):
                     self._sound('hm')                  # Steve: a sound, not "Give me a moment" 
                 backend = 'claude'
                 full, first, _ = claude(True, (lead_in + ' ' + bridge).strip())
+            elif backend == 'local' and self.hand_over and self._claude_ok() and fact_question(text):
+                if not self._await_go():                # Claude costs: never on a maybe
+                    self._dropped(text)
+                    return
+                backend, direct = 'claude', True
+                full, first, _ = claude(False, lead_in)
             elif backend == 'local':
                 check = self.hand_over
                 facts = (FACTS.format(facts=self._facts()) + who_line
@@ -549,6 +652,9 @@ class Brain(Node):
                                                 said=lead_in)
                 if reason:
                     if self._claude_ok():
+                        if not self._await_go():            # Claude costs: never on a maybe
+                            self._dropped(text)
+                            return
                         handed, backend = True, 'claude'
                         heavy = reason == 'think'
                         said = lead_in
@@ -580,6 +686,9 @@ class Brain(Node):
             self._say(self._plainly("I can't reach my brain right now.", 'Brain unreachable.'))
             return
         cents = self._add_spend(*self._usage) if backend == 'claude' else self._spent()
+        if hold is not None and not self._await_go():  # thought out; was he done?
+            self._dropped(text, time.monotonic() - t0)
+            return
         self.last_exchange = time.monotonic()
         full = full.strip()
         self.memory.append({'role': 'user', 'content': text})
@@ -591,7 +700,7 @@ class Brain(Node):
         if self._timings and self._timings.get('predicted_per_second'):
             speed = f', {self._timings["predicted_per_second"]:.0f} tokens/s'
         if backend == 'claude':
-            route = ('claude (' + (f'local {reason}, handed over, ' if handed else '')
+            route = ('claude (' + (f'local {reason}, handed over, ' if handed else '') + ('direct, ' if direct else '')
                      + ('thinking hard' if think or reason == 'think' else 'quick')
                      + (', it thought' if self._thought else '') + ')')
         elif reason:

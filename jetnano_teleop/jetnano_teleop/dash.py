@@ -169,6 +169,7 @@ class Dashboard:
         self.obstacles, self.obstacles_t = [], 0.0
         self.heard, self.speaker, self.said, self.sound = None, None, None, None
         self.speech_state = None
+        self.partial, self.partial_until = '', 0.0      # what he has said so far, while she waits for the rest
         self.level, self.buzz = None, None
         self.log = deque(maxlen=40)
         self.map_png, self.map_info, self.map_version, self.map_t = None, None, 0, 0.0
@@ -188,6 +189,7 @@ class Dashboard:
         sub(Twist, 'cmd_vel', self._on_cmd, 10)
         sub(String, 'speech/text', lambda m: self._event('heard', m.data, 'heard'), 10)
         sub(String, 'speech/speaker', self._on_speaker, 10)
+        sub(String, 'speech/partial', self._on_partial, 10)
         sub(String, 'speech/state', lambda m: setattr(self, 'speech_state', m.data), 10)
         sub(String, 'speak', lambda m: self._event('said', m.data.replace('\n', ' '), 'said'), 10)
         sub(String, 'say', self._on_sound, 10)
@@ -342,6 +344,15 @@ class Dashboard:
             self.obstacles_t = time.monotonic()
         finally:
             self._pc_busy = False
+
+    def _on_partial(self, msg) -> None:
+        """listen is waiting for the rest of a sentence (JSON text, hold_s): 'Listening' on the page."""
+        try:
+            d = json.loads(msg.data)
+            self.partial = str(d.get('text', ''))
+            self.partial_until = time.monotonic() + float(d.get('hold_s', 0.0)) + 1.0 if self.partial else 0.0
+        except (ValueError, TypeError):
+            pass
 
     def _on_speaker(self, msg) -> None:
         try:
@@ -513,7 +524,7 @@ class Dashboard:
             'scan': self.scan if now - self.scan_t < 2.0 else None,
             'obstacles': self.obstacles if now - self.obstacles_t < 3.0 else [],
             'speech': {'heard': heard, 'said': said, 'sound': sound, 'state': self.speech_state,
-                       'speaker': self.speaker},
+                       'speaker': self.speaker, 'partial': self.partial if now < self.partial_until else ''},
             'level': self.level, 'buzz': self.buzz,
             'system': {**(wd or {}).get('system', {}), **self.sys},
             'map': map_info, 'pose': self._pose_on_map(), 'wami': self.wami,

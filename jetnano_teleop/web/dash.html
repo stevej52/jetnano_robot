@@ -176,6 +176,7 @@
   .vtext { font-size: 15px; margin-top: 3px; min-height: 20px; color: #fff; overflow: hidden; display: -webkit-box;
     -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   .vtext.said { color: var(--cyan); }
+  .vtext.listening { color: var(--amber); animation: blink 1.6s infinite; }
   .who { font: 700 10px/1 var(--mono); letter-spacing: 0.1em; padding: 3px 6px; border-radius: 5px; margin-left: 6px;
     background: rgba(155,140,255,0.15); color: var(--violet); vertical-align: 2px; }
   .chips { display: flex; flex-wrap: wrap; gap: 5px; padding: 8px 14px 0; }
@@ -250,7 +251,7 @@
 
   <section id="voice" class="panel">
     <h2>Voice &amp; senses <span class="tag" id="vtag"></span></h2>
-    <div class="vrow"><div class="vlabel">Heard <span id="who"></span></div><div class="vtext" id="heard">—</div></div>
+    <div class="vrow"><div class="vlabel"><span id="hlabel">Heard</span> <span id="who"></span></div><div class="vtext" id="heard">—</div></div>
     <div class="vrow"><div class="vlabel">She said</div><div class="vtext said" id="said">—</div></div>
     <div class="meters">
       <div><div class="vlabel">Room <span id="lvl"></span></div><div class="meter"><i id="lvlbar"></i></div></div>
@@ -476,7 +477,10 @@
 
     // voice
     var sp = S.speech || {}, who = sp.speaker;
-    $('heard').textContent = sp.heard || '—';
+    // she is waiting for the rest of what he is saying (listen's turn-taking)
+    $('hlabel').textContent = sp.partial ? 'Listening…' : 'Heard';
+    $('heard').className = 'vtext' + (sp.partial ? ' listening' : '');
+    $('heard').textContent = sp.partial ? sp.partial + ' …' : (sp.heard || '—');
     $('said').textContent = sp.said || (sp.sound ? '♪ ' + sp.sound : '—');
     $('who').innerHTML = who ? '<span class="who">' + esc(who.name || ('unknown' + (who.nearest ? ' · nearest ' + who.nearest : ''))) + ' ' + who.percent + '%</span>' : '';
     var lv = S.level; $('lvl').textContent = lv != null ? lv.toFixed(0) + ' dBFS' : '';
