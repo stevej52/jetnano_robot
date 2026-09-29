@@ -545,8 +545,8 @@ def _node_main(args):
             # output (ears: sound/talk_level) has her voice suppressed ~30 dB, so the rule became:
             # her detector hears speech AND that level is barge_talk_db over its level while only
             # she talks (95th percentile, learned), for barge_hold_s. Direction: barge_by_direction.
-            self.declare_parameter('barge_talk_db', 12.0)
-            self.declare_parameter('her_talk_level_dbfs', -45.0)   # until learned
+            self.declare_parameter('barge_talk_db', 25.0)            # over the talk channel's median while she talks
+            self.declare_parameter('her_talk_level_dbfs', -55.0)   # that median, until learned
             self.declare_parameter('barge_by_direction', False)
             self.declare_parameter('barge_margin_deg', 30.0)
             self.declare_parameter('barge_hold_s', 0.3)
@@ -640,6 +640,7 @@ def _node_main(args):
             self.own_doa = collections.deque(maxlen=60)     # the chip's direction of her own voice
             self.speaking_started = 0.0
             self.barged_at = -1e9
+            self.near_miss_at = -1e9
             self.turn = None                # what he has said so far, while she waits for the rest
             self.turn_ids = 0               # thinking-ahead asks to the brain, numbered
             self.turn_model = None
@@ -796,7 +797,8 @@ def _node_main(args):
                 self.own_talk.append(float(msg.data))       # only her voice (a barge-in would have stopped her)
 
         def _her_talk_level(self) -> float:
-            return float(np.percentile(self.own_talk, 95)) if len(self.own_talk) >= 30 else self.her_talk_default
+            """The talk channel's median while only she speaks (her voice mostly suppressed; its peaks leak)."""
+            return float(np.median(self.own_talk)) if len(self.own_talk) >= 30 else self.her_talk_default
 
         def _barge_check(self, active: bool) -> None:
             now = time.monotonic()
@@ -807,17 +809,26 @@ def _node_main(args):
             base = self._her_talk_level()
             loud = [lv for t, lv in self.talk if now - t <= self.barge_hold + 0.05 and lv >= base + self.barge_talk_db]
             others = self._others_talking(now)
-            if len(loud) >= need or (self.barge_by_direction and len(others) >= need):
-                self.barged_at = now
-                why = (f'talk channel {max(loud):.0f} dBFS over her {base:.0f}' if len(loud) >= need
-                       else 'direction only')
-                self.get_logger().info(f'barge-in signal: {why}' + (f', from {np.median(others):.0f} degrees'
-                                                                    if others else ''))
-                if self.voice_off:              # "over and out": not listening, so not stopping either
-                    self.get_logger().info('barge-in: talking is off, so she does not stop')
-                    return
-                self.get_logger().info('barge-in: someone talking over her - she stops and listens')
-                self._stop()
+            # BOTH, since neither is clean alone (bench, 2026-09-29): her own voice leaked into the
+            # talk channel up to -17 dBFS (median -55) and wandered 83-142 degrees
+            if not ((len(loud) >= need and len(others) >= 2) or (self.barge_by_direction and len(others) >= need)):
+                if (len(loud) >= need or len(others) >= need) and now - self.near_miss_at > 2.0:
+                    self.near_miss_at = now       # one signal only: logged for tuning, she carries on
+                    self.get_logger().info(
+                        f'barge-in? no - talk channel {max((lv for _, lv in self.talk), default=-99):.0f} dBFS '
+                        f'(her median {base:.0f}, needs +{self.barge_talk_db:.0f}), {len(others)} readings away '
+                        f'from her speaker at {self.speaker_doa:.0f} degrees'
+                        + (f' (at {np.median(others):.0f})' if others else ''))
+                return
+            self.barged_at = now
+            self.get_logger().info(f'barge-in signal: talk channel {max(loud, default=-99):.0f} dBFS (her median '
+                                   f'{base:.0f}), voice from {np.median(others):.0f} degrees (her speaker at '
+                                   f'{self.speaker_doa:.0f})')
+            if self.voice_off:                  # "over and out": not listening, so not stopping either
+                self.get_logger().info('barge-in: talking is off, so she does not stop')
+                return
+            self.get_logger().info('barge-in: someone talking over her - she stops and listens')
+            self._stop()
 
         def _direction(self, t0: float, t1: float):
             """Where the voice heard between t0 and t1 came from: degrees in her frame (+ left), or None."""
