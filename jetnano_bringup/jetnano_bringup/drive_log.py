@@ -318,7 +318,16 @@ def main():
     p.add_argument('--stop-after', type=float, default=7200.0, help='seconds')
     p.add_argument('--stop-cmd', default='')
     a = p.parse_args()
-    log = DriveLog(a.folder, [c for c in a.cameras.split(',') if c], a.stop_after, a.stop_cmd)
+    cams = [c for c in a.cameras.split(',') if c]
+    try:                    # only the cameras the relay runs (rear is off since 2026-09-29)
+        import json
+        with urllib.request.urlopen(CAMERA_URL + '/config.json', timeout=5) as r:
+            running = json.loads(r.read()).get('cameras')
+        if running:
+            cams = [c for c in cams if c in running]
+    except (OSError, ValueError):
+        pass
+    log = DriveLog(a.folder, cams, a.stop_after, a.stop_cmd)
     signal.signal(signal.SIGTERM, lambda *_: log.done.set())
     signal.signal(signal.SIGINT, lambda *_: log.done.set())
     log.run()

@@ -293,8 +293,10 @@
   // the RealSense is upside down since 2026-09-27; the relay says how far to turn it
   fetch('http://' + host + ':8082/config.json').then(function (r) { return r.json(); }).then(function (c) {
     $('camimg').style.transform = c.d435_rotate ? 'rotate(' + c.d435_rotate + 'deg)' : '';
+    // the rear view only when the relay runs that camera (off since 2026-09-29, csi_cameras 'cameras')
+    if (!c.cameras || c.cameras.indexOf('rear') >= 0) stream($('rearimg'), 'http://' + host + ':8082/rear.mjpg');
+    else $('mirror').style.display = 'none';
   }).catch(function () {});
-  stream($('rearimg'), 'http://' + host + ':8082/rear.mjpg');
   stream($('panimg'), 'http://' + host + ':8082/front.mjpg', document.querySelector('#pan .nofeed'));
 
   // ------------------------------------------------------------------- STOP

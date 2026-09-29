@@ -373,19 +373,28 @@ class CsiCameras(Node):
         self.declare_parameter('day_until', 18.5)
         self.declare_parameter('front', [0, 960, 540, 15, 80])     # sensor, width, height, fps, quality
         self.declare_parameter('rear', [1, 640, 360, 10, 70])
+        # The CSI cameras that run at all (the D435 relay always does). 2026-09-29, Steve: "What
+        # about turning off the rear view for now?" - with the iPad watching, the CSI streams
+        # cost gst-launch 15 % + nvargus-daemon 13 % of a core and nvargus held 744 MB; rear
+        # (9.7 fps) was the least used. Add 'rear' back here to bring it back everywhere.
+        self.declare_parameter('cameras', ['front'])
         self.declare_parameter('d435_topic', '/camera/color/image_raw/compressed')
         self.declare_parameter('d435_rotate', 0)      # degrees the pages turn the RealSense picture
         cams = {}
+        wanted = [str(c) for c in self.get_parameter('cameras').value]
         for name in ('front', 'rear'):
+            if name not in wanted:
+                continue
             s, w, h, f, q = [int(v) for v in self.get_parameter(name).value]
             cams[name] = Camera(self, name, s, w, h, f, q)
         cams['d435'] = RosCamera(self, 'd435', str(self.get_parameter('d435_topic').value))
         port = int(self.get_parameter('port').value)
-        config = {'d435_rotate': int(self.get_parameter('d435_rotate').value) % 360}
+        # the pages and drive_log ask which cameras there are, and show / photograph only those
+        config = {'d435_rotate': int(self.get_parameter('d435_rotate').value) % 360, 'cameras': list(cams)}
         self.server = ThreadingHTTPServer(('0.0.0.0', port), make_handler(cams, config))
         self.server.daemon_threads = True
         threading.Thread(target=self.server.serve_forever, daemon=True, name='csi-http').start()
-        self.get_logger().info(f'cameras on http://0.0.0.0:{port}/: front, rear, d435 (.mjpg / .jpg, on demand)')
+        self.get_logger().info(f'cameras on http://0.0.0.0:{port}/: {", ".join(cams)} (.mjpg / .jpg, on demand)')
 
 
 def main(args=None):
