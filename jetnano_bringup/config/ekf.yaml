@@ -15,6 +15,15 @@ ekf_filter_node:
     # rate" warnings are more frequent at a 10 ms budget but are not staler output.
     # Costs ~11 % of a core parked (EKF +4, /tf listeners +7) and ~15 % more in Nav2.
     frequency: 100.0
+    # Publish every cycle, the pose predicted to "now". Without it the output carries the
+    # stamp of the last measurement used and a cycle with no new one publishes nothing:
+    # the IMU's samples jitter (gaps 5-15 ms), ~10 % of cycles had none, and the output ran
+    # 84-93/s with gaps to 21 ms. Shadow EKFs side by side on the live inputs (2026-09-29,
+    # parked, 45 s): without -> 101/s, stamp gaps p99 15.3 ms, the newest pose p50 14.1 /
+    # p99 21.0 ms old; with -> 101/s, gaps p99 10.6 ms, newest pose p50 5.9 / p99 11.1 ms
+    # old, CPU 10.2 -> 10.7 % of a core. TF is then always there up to "now", so lookups at
+    # a fresh sensor stamp don't wait for the next IMU sample.
+    predict_to_current_time: true
     sensor_timeout: 0.2
     two_d_mode: true              # ground vehicle: pin z, roll and pitch
     publish_tf: true
