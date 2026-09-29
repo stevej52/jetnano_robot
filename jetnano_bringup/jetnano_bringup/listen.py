@@ -24,9 +24,10 @@
 Takes the microphone stream the ears publish (``sound/audio``, 16 kHz), cuts
 it into utterances with a voice activity detector and turns each into text
 with a small speech-to-text model on the CPU (sherpa-onnx; nothing leaves the
-robot). Her name wakes her; once she is being talked to (a "conversation")
-you can talk normally without it, until an ending or ``chat_timeout_s`` of
-silence:
+robot). Her name wakes her. Since 2026-09-28 (``open_chat`` false) EVERY
+sentence for her needs her name, except answers to her own questions; with
+``open_chat`` true, once she is being talked to (a "conversation") you can
+talk normally without it, until an ending or ``chat_timeout_s`` of silence:
 
     "Rosie, ..."                 anything with her name gets a reply and opens
                                  the conversation
@@ -516,10 +517,18 @@ def _node_main(args):
             self.declare_parameter('echo_guard_s', 0.6)
             self.declare_parameter('highpass_hz', 100.0)
             self.declare_parameter('vad_threshold', 0.35)
-            self.declare_parameter('min_silence_s', 0.5)            # a pause this long ends what you said
+            # a pause this long ends what you said. 0.5 -> 1.0 (Steve, 2026-09-28: "it doesn't
+            # recognize that I'm talking, and then eventually talks over me"): half a second
+            # of thinking mid-sentence was taken as the end, and the rest was lost under her
+            self.declare_parameter('min_silence_s', 1.0)
             self.declare_parameter('min_speech_s', 0.3)
             self.declare_parameter('max_speech_s', 10.0)
             self.declare_parameter('chat_timeout_s', 45.0)          # silence that ends a conversation
+            # False: only what has her name in it is for her - no open conversation after
+            # "Rosie" (Steve, 2026-09-28, after "Word, the two in series." said to someone
+            # else got "UNKNOWN" and "Okay." got "Anything on your mind?"). Answers to her
+            # own questions (a name, "want to hear more?") still need no name.
+            self.declare_parameter('open_chat', False)
             self.declare_parameter('more_timeout_s', 25.0)          # how long "want to hear more?" waits
             self.declare_parameter('still_after_s', 2.0)
             self.declare_parameter('chat_file', '/tmp/rosie_chat.wav')
@@ -553,6 +562,7 @@ def _node_main(args):
             self.vad, self.window = make_vad(model_dir, float(p('vad_threshold')), self.min_silence,
                                              float(p('min_speech_s')), float(p('max_speech_s')))
             self.chat_timeout = float(p('chat_timeout_s'))
+            self.open_chat = bool(p('open_chat'))
             self.more_timeout = float(p('more_timeout_s'))
             self.still_after = float(p('still_after_s'))
             self.chat_file = str(p('chat_file'))
@@ -829,7 +839,7 @@ def _node_main(args):
                     self.last_heard = now
                     return
             self.terse = self._owner_speaking(who)
-            action, mode = decide(text, self.mode)
+            action, mode = decide(text, self.mode if self.open_chat else 'idle')
             level = f', {db:.0f} dBFS' if db is not None else ', typed'
             voice_note = f', {who.label}' if who is not None else ''
             self.get_logger().info(f'heard "{text}" ({seconds:.1f} s{level}{voice_note}, decoded in {took:.2f} s)'

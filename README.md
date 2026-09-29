@@ -425,7 +425,7 @@ and the full rebuild in robot-environment `REBUILD.md`.
 | Node | What it does |
 |---|---|
 | `ears` | owns the mic (the reSpeaker, card `L16K6Ch`, its echo-cancelled speech channel): the room's level on `sound/level`, the audio on `sound/audio`, "huh?" at a clap |
-| `listen` | speech detection and speech-to-text on the CPU (sherpa-onnx, Moonshine); decides what was meant; her name wakes her, a conversation then runs without it; knows voices apart (`speaker.py`, WeSpeaker via sherpa-onnx) |
+| `listen` | speech detection and speech-to-text on the CPU (sherpa-onnx, Moonshine); decides what was meant; only a sentence with her name in it is for her (no open conversation: `open_chat`), a 1 s pause ends what you said; knows voices apart (`speaker.py`, WeSpeaker via sherpa-onnx) |
 | `motion_watch` | the lidar sees someone move while she is parked: by default she reacts only to someone coming right at her; "Rosie, keep watch" turns on watchdog mode (a "huh?" and a look at every mover), "Rosie, stand down" turns it off. Aims the pan-tilt only with `aim:=true` |
 | `settle` | listens for the front steering servo buzzing after a stop (a tone near 1.6 kHz) and wiggles the steering a few degrees until it is quiet |
 | `brain` | answers: small talk on the local model upstairs (llama.cpp, Qwen 2.5 14B), everything real handed to Claude Opus 5.5; "think hard" gets full thinking; a daily budget |
