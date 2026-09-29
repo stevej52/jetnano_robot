@@ -220,6 +220,10 @@ WHO_WORDS = ('who am i', 'who is this', "who's this", 'who is talking', "who's t
              'recognize my voice', 'recognise my voice', 'who do you think i am')
 NAME_PREFIX = re.compile(r"^(?:(?:hi|hello|hey|um|uh|oh|well|it's|its|it is|this is|i am|i'm|im|my name is|"
                          r"my name's|call me|the name is|the name's)\s+)+")
+# words a mishearing leaves where a name should be; never a name
+NOT_NAMES = {'on', 'off', 'and', 'the', 'a', 'an', 'to', 'of', 'in', 'is', 'it', 'at', 'or', 'so', 'but', 'yes',
+             'yeah', 'no', 'nope', 'okay', 'ok', 'what', 'that', 'this', 'there', 'here', 'you', 'your', 'me', 'my',
+             'i', 'we', 'he', 'she', 'they', 'just', 'like', 'name', 'voice', 'sorry', 'thanks', 'please'}
 OWNER_ONLY = ('map_start', 'map_stop')
 # Voice commands that make her DO something. Off until the new microphone array
 # (Steve, 2026-09-27: "the voice commands have been basically unusable ... disable
@@ -506,7 +510,10 @@ def _node_main(args):
             # the tail of her own sentence (and its echo) reaches the mic after
             # the speaking flag clears: 2026-09-25 she answered "I have lots",
             # "Voice section", "Of muscles" - her own last words, ~1 s late, -49 dBFS
-            self.declare_parameter('echo_guard_s', 1.5)
+            # 2026-09-28, the reSpeaker (echo-cancelled, her speaker on the same board):
+            # her voice is gone 0.1-0.2 s after the flag clears, and the 1.5 s guard
+            # threw away Steve's quick "My name is Steve." -> 0.6 s
+            self.declare_parameter('echo_guard_s', 0.6)
             self.declare_parameter('highpass_hz', 100.0)
             self.declare_parameter('vad_threshold', 0.35)
             self.declare_parameter('min_silence_s', 0.5)            # a pause this long ends what you said
@@ -741,6 +748,12 @@ def _node_main(args):
             if overlapped and code_word(text) == 'off':
                 self._understand(text, seconds, took, db)
                 return
+            if overlapped and not self.speaking and who is not None and who.confident:
+                # after she stopped, in the echo guard: her echo never sounds like a voice
+                # she knows (2026-09-28: Steve's quick answer was dropped as her echo)
+                self.get_logger().info(f'a known voice right after her own ({who.label}): taken')
+                overlapped = False
+                text = beyond_her_voice(text, ' '.join(list(self.own_text)[-3:])) or text
             if overlapped:
                 action = over_her_voice(text, ' '.join(self.own_text))
                 if action is None:
@@ -752,7 +765,8 @@ def _node_main(args):
                         self.text_pub.publish(msg)
                         self._understand(rest, seconds, took, db, who)
                         return
-                    self.get_logger().info(f'ignored over her own voice: "{text[:80]}" ({db:.0f} dBFS)')
+                    self.get_logger().info(f'ignored over her own voice: "{text[:80]}" ({db:.0f} dBFS, '
+                                           f'{who.label if who else "no voice print"})')
                 if action == 'map_stop':
                     self.get_logger().info(f'heard "{text}" over her own voice -> stop mapping')
                     self._stop()
@@ -1019,15 +1033,20 @@ def _node_main(args):
                 return True
             if who is None or who.emb is None:
                 return True                                  # too short to use
-            if self.voices.cosine(who.emb, e['first']) < self.voices.same:
-                self.get_logger().info(f'learning a voice: a different one ({who.label}), ignored')
+            # like any sample so far, not just the first: that one can be short and poor
+            # (2026-09-28: Steve's own next sentence scored "a different one" against it)
+            if max(self.voices.cosine(who.emb, x) for x in e['embs']) < self.voices.same:
+                self.get_logger().info(f'learning a voice: a different one ({who.label}), ignored: "{text[:60]}"')
                 return True
             if e['name'] is None:
                 name = NAME_PREFIX.sub('', t).strip().split(' ')[0] if t else ''
-                if len(name) < 2 or name == NAME:
+                # 2026-09-28 she took "On" for Steve's name and learned him as "On"
+                if len(name) < 2 or name == NAME or name in NOT_NAMES:
+                    self.get_logger().info(f'learning a voice: no name in "{text[:60]}"')
                     self._speak("Sorry, I didn't catch your name. Just your name, please.")
                     return True
-                e['name'] = name[0].upper() + name[1:]
+                e['name'] = self.voices.canonical(name[0].upper() + name[1:])
+                self.get_logger().info(f'learning a voice: the name is {e["name"]}, from "{text[:60]}"')
                 e['embs'].append(who.emb)
                 e['audio'].append(who.audio)
                 self._speak(f"Nice to meet you, {e['name']}. Say a few more sentences to me.")
