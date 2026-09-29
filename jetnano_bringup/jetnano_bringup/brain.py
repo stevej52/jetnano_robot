@@ -155,14 +155,18 @@ def sentences(buf: str, clause: bool = False):
     out = []
     while True:
         m = re.search(r'^(.+?[.!?]["\')]?)(\s+)', buf, re.S)
+        cut = m.end(1) if m else None
         if clause and not out:
-            c = re.search(r'^(.+?[,;:]|.+? -)(\s+)', buf, re.S)
-            if c and (not m or c.end() < m.end()) and len(c.group(1).split()) >= CLAUSE_WORDS:
-                m = c
-        if not m:
+            for c in re.finditer(r'[,;:](?=\s)|\s-(?=\s)', buf):
+                if cut is not None and c.end() > cut:
+                    break
+                if len(buf[:c.end()].split()) >= CLAUSE_WORDS:
+                    cut = c.end()
+                    break
+        if cut is None:
             return out, buf
-        out.append(m.group(1).strip())
-        buf = buf[m.end():]
+        out.append(buf[:cut].strip())
+        buf = buf[cut:].lstrip()
         clause = False
 
 
@@ -186,7 +190,7 @@ NOT_WORLD = re.compile(r"\b(you|your|yourself|rosie|me|my|i|i'm|steve|beans|hous
 def fact_question(text: str) -> bool:
     """A question about the world, for Claude directly (see FACT_QUESTION)."""
     t = re.sub(r"^\W*(?:hey |ok |okay )?rosie\W*", '', text.strip(), flags=re.I)
-    return bool(FACT_QUESTION.search(t)) and not NOT_WORLD.search(t)
+    return bool(FACT_QUESTION.search(t)) and not NOT_WORLD.search(re.sub(r'^tell me\b', '', t, flags=re.I))
 
 
 class Brain(Node):

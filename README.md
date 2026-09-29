@@ -425,10 +425,10 @@ and the full rebuild in robot-environment `REBUILD.md`.
 | Node | What it does |
 |---|---|
 | `ears` | owns the mic (the reSpeaker, card `L16K6Ch`, its echo-cancelled speech channel): the room's level on `sound/level`, the audio on `sound/audio`, "huh?" at a clap |
-| `listen` | speech detection and speech-to-text on the CPU (sherpa-onnx, Moonshine); decides what was meant; only a sentence with her name in it is for her (no open conversation: `open_chat`), a 1 s pause ends what you said; knows voices apart (`speaker.py`, WeSpeaker via sherpa-onnx) |
+| `listen` | speech detection and speech-to-text on the CPU (sherpa-onnx, Moonshine); decides what was meant; only a sentence with her name in it is for her (no open conversation: `open_chat`); at each 0.4 s pause she asks whether you are done - your words (`turn.py`: a sentence stopping on "and", "the", "um"... is not) and your voice (Pipecat's Smart Turn model) - and answers at once, or waits for the rest (2 s while the brain thinks ahead, 20 s for a sentence left hanging; the iPad shows "Listening…"); knows voices apart (`speaker.py`, WeSpeaker via sherpa-onnx) |
 | `motion_watch` | the lidar sees someone move while she is parked: by default she reacts only to someone coming right at her; "Rosie, keep watch" turns on watchdog mode (a "huh?" and a look at every mover), "Rosie, stand down" turns it off. Aims the pan-tilt only with `aim:=true` |
 | `settle` | listens for the front steering servo buzzing after a stop (a tone near 1.6 kHz) and wiggles the steering a few degrees until it is quiet |
-| `brain` | answers: small talk on the local model upstairs (llama.cpp, Qwen 2.5 14B), everything real handed to Claude Opus 5.5; "think hard" gets full thinking; a daily budget |
+| `brain` | answers: small talk on the local model upstairs (llama.cpp, Qwen 2.5 14B), everything real handed to Claude Opus 5.5 (questions about the world go straight there); her voice starts on the answer's first clause; "think hard" gets full thinking; a daily budget |
 | `speak` | text to her English voice (Piper), sentence by sentence, cached |
 | `sounds` | plays everything on the speaker (on the reSpeaker, card `L16K6Ch`, so the mic's echo canceller hears it), one sound at a time; `mute` |
 | `health` (in listen) | her real status for "how are you" and the spoken report |
