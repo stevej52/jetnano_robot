@@ -540,6 +540,14 @@ def _node_main(args):
             # places it barge_margin_deg or more away from her speaker's direction (learned
             # while she talks), for barge_hold_s -> she stops and listens.
             self.declare_parameter('barge_in', True)
+            # Then on the bench the same night her own voice read 83-142 degrees (reflections; four
+            # mics 10 cm apart): direction alone would stop her for her own voice. The chip's TALK
+            # output (ears: sound/talk_level) has her voice suppressed ~30 dB, so the rule became:
+            # her detector hears speech AND that level is barge_talk_db over its level while only
+            # she talks (95th percentile, learned), for barge_hold_s. Direction: barge_by_direction.
+            self.declare_parameter('barge_talk_db', 12.0)
+            self.declare_parameter('her_talk_level_dbfs', -45.0)   # until learned
+            self.declare_parameter('barge_by_direction', False)
             self.declare_parameter('barge_margin_deg', 30.0)
             self.declare_parameter('barge_hold_s', 0.3)
             self.declare_parameter('barge_after_s', 0.5)           # not in her first half second
@@ -617,6 +625,11 @@ def _node_main(args):
             self.hold_unfinished = float(p('hold_unfinished_s'))
             self.hold_name = float(p('hold_name_s'))
             self.barge_in = bool(p('barge_in'))
+            self.barge_talk_db = float(p('barge_talk_db'))
+            self.her_talk_default = float(p('her_talk_level_dbfs'))
+            self.barge_by_direction = bool(p('barge_by_direction'))
+            self.talk = collections.deque(maxlen=50)        # (time, dBFS) of the chip's talk output
+            self.own_talk = collections.deque(maxlen=300)   # ... while only she talks: her baseline
             self.barge_margin = float(p('barge_margin_deg'))
             self.barge_hold = float(p('barge_hold_s'))
             self.barge_after = float(p('barge_after_s'))
@@ -681,6 +694,7 @@ def _node_main(args):
             self.partial_pub = self.create_publisher(String, 'speech/partial', 10)   # "listening..." for the iPad
             self.direction_pub = self.create_publisher(Float32, 'speech/direction', 10)  # degrees, + left
             self.create_subscription(Float32MultiArray, 'sound/doa', self._on_doa, 50)
+            self.create_subscription(Float32, 'sound/talk_level', self._on_talk_level, 50)
             self.who_pub = self.create_publisher(String, 'speech/speaker', 10)
             self.watch_pub = self.create_publisher(String, 'motion/mode', 10)
             self.brain_ready = False
@@ -775,20 +789,34 @@ def _node_main(args):
             return [d for t, d, s in self.doa
                     if s and now - t <= self.barge_hold + 0.05 and abs(d - self.speaker_doa) >= self.barge_margin]
 
+        def _on_talk_level(self, msg) -> None:
+            now = time.monotonic()
+            self.talk.append((now, float(msg.data)))
+            if self.speaking and now - self.speaking_started > self.barge_after and now - self.barged_at > 3.0:
+                self.own_talk.append(float(msg.data))       # only her voice (a barge-in would have stopped her)
+
+        def _her_talk_level(self) -> float:
+            return float(np.percentile(self.own_talk, 95)) if len(self.own_talk) >= 30 else self.her_talk_default
+
         def _barge_check(self, active: bool) -> None:
             now = time.monotonic()
             if (not self.barge_in or not self.speaking or not active or now - self.barged_at < 3.0
                     or now - self.speaking_started < self.barge_after):
                 return
+            need = max(2, int(self.barge_hold * 10))
+            base = self._her_talk_level()
+            loud = [lv for t, lv in self.talk if now - t <= self.barge_hold + 0.05 and lv >= base + self.barge_talk_db]
             others = self._others_talking(now)
-            if len(others) >= max(2, int(self.barge_hold * 10)):
+            if len(loud) >= need or (self.barge_by_direction and len(others) >= need):
                 self.barged_at = now
+                why = (f'talk channel {max(loud):.0f} dBFS over her {base:.0f}' if len(loud) >= need
+                       else 'direction only')
+                self.get_logger().info(f'barge-in signal: {why}' + (f', from {np.median(others):.0f} degrees'
+                                                                    if others else ''))
                 if self.voice_off:              # "over and out": not listening, so not stopping either
-                    self.get_logger().info(f'barge-in (talking is off, not stopping): someone from '
-                                           f'{np.median(others):.0f} degrees, her speaker at {self.speaker_doa:.0f}')
+                    self.get_logger().info('barge-in: talking is off, so she does not stop')
                     return
-                self.get_logger().info(f'barge-in: someone talking over her from {np.median(others):.0f} degrees '
-                                       f'(her speaker at {self.speaker_doa:.0f}): she stops and listens')
+                self.get_logger().info('barge-in: someone talking over her - she stops and listens')
                 self._stop()
 
         def _direction(self, t0: float, t1: float):

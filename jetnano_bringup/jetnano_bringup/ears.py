@@ -119,6 +119,13 @@ class Ears(Node):
         # a voice came from.
         self.declare_parameter('doa_hz', 10.0)
         self.doa_pub = self.create_publisher(Float32MultiArray, 'sound/doa', 10)
+        # ... and the level of the chip's TALK output (channel 0: echo-cancelled AND echo-suppressed,
+        # ~30 dB of her own voice gone), per 100 ms on sound/talk_level: while she speaks it stays
+        # low unless someone else speaks too - listen's barge-in signal. (Her own voice's direction
+        # turned out to wander, 83-142 degrees, on the bench on 2026-09-29.)
+        self.declare_parameter('talk_channel', 0)
+        self.talk_channel = int(self.get_parameter('talk_channel').value)
+        self.talk_pub = self.create_publisher(Float32, 'sound/talk_level', 10)
         self.level_pub = self.create_publisher(Float32, 'sound/level', 10)
         self.audio_pub = self.create_publisher(Int16MultiArray, 'sound/audio', 10)
         self.loud_pub = self.create_publisher(Bool, 'sound/loud', 10)
@@ -172,7 +179,13 @@ class Ears(Node):
                 if len(data) < frames * width:
                     break
                 if self.channels > 1:
-                    data = np.frombuffer(data, dtype=np.int16).reshape(-1, self.channels)[:, self.channel].tobytes()
+                    x = np.frombuffer(data, dtype=np.int16).reshape(-1, self.channels)
+                    if 0 <= self.talk_channel < self.channels:
+                        t = x[:, self.talk_channel].astype(np.float32)
+                        m = Float32()
+                        m.data = 20.0 * math.log10(max(float(np.sqrt(np.mean(t * t))), 1.0) / 32767.0)
+                        self.talk_pub.publish(m)
+                    data = x[:, self.channel].tobytes()
                 self._chunk(data)
             err = proc.stderr.read().decode(errors='replace').strip() if proc.stderr else ''
             proc.kill()
