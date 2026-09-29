@@ -142,6 +142,12 @@ FILLERS = {'um', 'uh', 'erm', 'hmm', 'okay', 'ok', 'so', 'hey', 'alright', 'now'
 VOICE_OFF_FLAG = os.path.expanduser('~/voice/voice_off')
 
 
+def words_in(text: str) -> str:
+    """'7 words': all that is written down of words that were not for her."""
+    n = len(re.findall(r"[\w']+", text))
+    return f'{n} word' + ('' if n == 1 else 's')
+
+
 def code_word(text: str):
     """'off', 'on' or None - only when the code word is all that was said.
     Near misses count: the recognizer makes "rising shine" or "rise in shine"
@@ -947,7 +953,7 @@ def _node_main(args):
                 if text and code_word(text) == 'on':
                     self._voice(True, text)
                 elif text:
-                    self.get_logger().info(f'talking is off; heard "{text[:60]}" and let it pass')
+                    self.get_logger().info(f'talking is off; heard {words_in(text)} and let it pass')
                 return
             # level as it came off the mic, before the boost
             rms = float(np.sqrt(np.mean(samples * samples))) / self.gain if len(samples) else 0.0
@@ -971,7 +977,7 @@ def _node_main(args):
                 who = None
             if barged:
                 text = beyond_her_voice(text, ' '.join(list(self.own_text)[-3:])) or text
-                self.get_logger().info(f'the one she stopped for: "{text[:80]}"')
+                self.get_logger().info(f'the one she stopped for: {words_in(text)}')
             if overlapped and code_word(text) == 'off':
                 self._understand(text, seconds, took, db)
                 return
@@ -986,10 +992,8 @@ def _node_main(args):
                 if action is None:
                     rest = beyond_her_voice(text, ' '.join(list(self.own_text)[-3:]))
                     if rest:
-                        self.get_logger().info(f'heard after her own voice: "{rest[:80]}" ({db:.0f} dBFS)')
-                        msg = self._String()
-                        msg.data = rest
-                        self.text_pub.publish(msg)
+                        self.get_logger().info(f'heard after her own voice: {words_in(rest)} ({db:.0f} dBFS)')
+                        self._heard_out(rest, self._for_her(rest))
                         self._understand(rest, seconds, took, db, who)
                         return
                     self.get_logger().info(f'ignored over her own voice: "{text[:80]}" ({db:.0f} dBFS, '
@@ -1008,9 +1012,6 @@ def _node_main(args):
                     self.mode = 'idle'
                     self._publish_state()
                 return
-            msg = self._String()
-            msg.data = text
-            self.text_pub.publish(msg)
             self._turn_add(text, samples, seconds, took, db, who, done, started)
 
         # ------------------------------------------------------------- turns --
@@ -1022,7 +1023,7 @@ def _node_main(args):
             t = self.turn
             if (t is not None and normalize(text).startswith(NAME)
                     and not any(re.search(rf'\b{NAME}\b', normalize(x)) for x in t['texts'])):
-                self.get_logger().info(f'dropped, not for her: "{" ".join(t["texts"])[:60]}"')
+                self.get_logger().info(f'dropped, not for her: {words_in(" ".join(t["texts"]))}')
                 if t['spec'] is not None:
                     self._turn_go(t['spec'], False)
                 self.turn = t = None                  # a fresh start with her name
@@ -1049,6 +1050,9 @@ def _node_main(args):
                     self.get_logger().warning(f'Smart Turn: {exc}')
             words = normalize(said)
             action = decide(said, 'idle')[0]
+            mine = action is not None or self._for_her(said)
+            self._heard_out(text, mine)                # the iPad: this piece, or just how many words
+            shown = f'"{said[-60:]}"' if mine else words_in(said)
             if code_word(said):
                 self._turn_end('a code word')         # "over and out" / "rise and shine": no waiting
                 return
@@ -1056,7 +1060,8 @@ def _node_main(args):
             if hang == 'word' and (said.rstrip().endswith('?') or (p is not None and p >= self.turn_sure_p)):
                 # "Rosie, what's the weather like?" ends on a dangling word but is a whole
                 # question: his voice landed (or the recogniser heard a question) - no 20 s wait
-                self.get_logger().info(f'"{said[-40:]}" ends on "{said.split()[-1]}", but '
+                self.get_logger().info((f'"{said[-40:]}" ends on "{said.split()[-1]}", but ' if mine
+                                        else 'it ends on a dangling word, but ')
                                        + ('it is a question' if said.rstrip().endswith('?') else f'his voice landed ({p:.2f})'))
                 hang = None
             if hang:
@@ -1069,7 +1074,7 @@ def _node_main(args):
                 self._turn_end('done' + (f' ({p:.2f})' if p is not None else ''))
                 return
             t['until'] = time.monotonic() + hold
-            self.get_logger().info(f'waiting up to {hold:g} s for more: {why} ("{said[-60:]}"'
+            self.get_logger().info(f'waiting up to {hold:g} s for more: {why} ({shown}'
                                    + (f', done {p:.2f}' if p is not None else '') + ')')
             if re.search(rf'\b{NAME}\b', words) or self.enrol or self.offer_until or self.pending:
                 self._partial(said, hold)             # for her: the iPad shows she is still listening
@@ -1123,6 +1128,25 @@ def _node_main(args):
             msg = self._String()
             msg.data = json.dumps({'text': said, 'hold_s': hold})
             self.partial_pub.publish(msg)
+
+        def _for_her(self, said: str) -> bool:
+            """Are these words meant for her? Her name is in them, or they answer something she
+            asked (a voice lesson, "want a full status report?", "want to hear more?"), or -
+            with open_chat - she is in a conversation. Only then are the words themselves
+            written anywhere: her log (and so /rosout in the drive recordings) and speech/text
+            (the iPad). Anything else is "heard 7 words" (Steve, 2026-09-29: her log had been
+            keeping the household's conversations word for word)."""
+            now = time.monotonic()
+            return bool(re.search(rf'\b{NAME}\b', normalize(said)) or self.enrol
+                        or (self.offer_until and now < self.offer_until)
+                        or (self.pending and now < self.pending_until)
+                        or (self.open_chat and self.mode == 'chat'))
+
+        def _heard_out(self, text: str, mine: bool) -> None:
+            """speech/text: the words when they are for her, else only how many."""
+            msg = self._String()
+            msg.data = text if mine else f'({words_in(text)}, not for her)'
+            self.text_pub.publish(msg)
 
         def _would_ask_brain(self, text: str, who) -> bool:
             """Would _understand hand this chat to the brain? (Then it can think ahead.)
@@ -1185,7 +1209,8 @@ def _node_main(args):
             action, mode = decide(text, self.mode if self.open_chat else 'idle')
             level = f', {db:.0f} dBFS' if db is not None else ', typed'
             voice_note = f', {who.label}' if who is not None else ''
-            self.get_logger().info(f'heard "{text}" ({seconds:.1f} s{level}{voice_note}{self.heard_from}, '
+            shown = f'"{text}"' if action or self._for_her(text) else f'{words_in(text)}, not for her'
+            self.get_logger().info(f'heard {shown} ({seconds:.1f} s{level}{voice_note}{self.heard_from}, '
                                    f'decoded in {took:.2f} s)'
                                    + (f' -> {action}' if action else '') + (' [terse]' if self.terse else ''))
             if action and not self._for_me(text, action, who):
@@ -1362,7 +1387,7 @@ def _node_main(args):
                 elif who.seconds >= 2.0 and self.voices.cosine(who.emb, self.chat_voice) < self.voices.same:
                     # (a word or two is too short to judge: Steve's own "Hello" was
                     # taken for another voice with nobody enrolled yet, 2026-09-27)
-                    self.get_logger().info(f'another voice ({who.label}), not talking to me: "{text[:60]}"')
+                    self.get_logger().info(f'another voice ({who.label}), not talking to me: {words_in(text)}')
                     return False
             if action in OWNER_ONLY and self._guest(who):
                 self.get_logger().info(f'{action} asked by {who.label}: only {self.owner} may')
@@ -1435,7 +1460,7 @@ def _node_main(args):
             # like any sample so far, not just the first: that one can be short and poor
             # (2026-09-28: Steve's own next sentence scored "a different one" against it)
             if max(self.voices.cosine(who.emb, x) for x in e['embs']) < self.voices.same:
-                self.get_logger().info(f'learning a voice: a different one ({who.label}), ignored: "{text[:60]}"')
+                self.get_logger().info(f'learning a voice: a different one ({who.label}), ignored: {words_in(text)}')
                 return True
             if e['name'] is None:
                 name = NAME_PREFIX.sub('', t).strip().split(' ')[0] if t else ''

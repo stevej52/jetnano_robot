@@ -47,6 +47,16 @@ shine" is what she often hears).
 
 Off stays off through a restart or a reboot until "rise and shine".
 
+## What she writes down
+
+She hears everything in the room, but she writes down only what is said to her:
+anything with her name in it, and answers to her own questions ("Want a full
+status report?", "Want to hear more?", a voice lesson). Everything else goes in
+her log and on the iPad only as a count - "heard 7 words, not for her" - never
+the words. That goes for "over and out" too. The speech model runs on her own
+processor; only what is said to her goes on to her brain (the PC upstairs, or
+Claude).
+
 ## Power on, power off
 
 She hums up as soon as her speaker has power, about twenty seconds after
