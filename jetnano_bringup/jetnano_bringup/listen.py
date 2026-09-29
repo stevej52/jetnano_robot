@@ -443,20 +443,35 @@ def english_reply(text: str, battery=None, rng=random, health=None) -> str:
 
 # ------------------------------------------------------------------ models --
 
+ASR_MODELS = ('moonshine-tiny', 'moonshine-base', 'parakeet', 'whisper-tiny')
+
+
 def make_recognizer(model_dir: str, asr: str, threads: int):
+    """Her speech recogniser. On 24 of Steve's recorded clips on Rosie (2026-09-29, 2 threads,
+    the robot running), time for a ~2 s command / a ~10 s sentence, and what it got wrong:
+    moonshine-tiny 94 ms / 0.62 s - "voice proof", "matte scores", "you didn't wear it in my
+    voice", "Rosie's chop, bring, fix", "the back dem off"; moonshine-base 165 ms / 1.07 s -
+    about half of those right, new ones ("light-hour", "Becky Moth"); parakeet (NVIDIA
+    Parakeet TDT 0.6B v2) 302 ms / 1.54 s - all of them right, keeps his "um"s; whisper
+    base.en was as good but 0.7 s on every command (it pads to 30 s), so it is not offered."""
     import sherpa_onnx
     if asr == 'whisper-tiny':
         m = os.path.join(model_dir, 'sherpa-onnx-whisper-tiny.en')
         return sherpa_onnx.OfflineRecognizer.from_whisper(
             encoder=f'{m}/tiny.en-encoder.int8.onnx', decoder=f'{m}/tiny.en-decoder.int8.onnx',
             tokens=f'{m}/tiny.en-tokens.txt', num_threads=threads, language='en', task='transcribe')
-    if asr == 'moonshine-tiny':
-        m = os.path.join(model_dir, 'sherpa-onnx-moonshine-tiny-en-int8')
+    if asr in ('moonshine-tiny', 'moonshine-base'):
+        m = os.path.join(model_dir, f'sherpa-onnx-{asr}-en-int8')
         return sherpa_onnx.OfflineRecognizer.from_moonshine(
             preprocessor=f'{m}/preprocess.onnx', encoder=f'{m}/encode.int8.onnx',
             uncached_decoder=f'{m}/uncached_decode.int8.onnx', cached_decoder=f'{m}/cached_decode.int8.onnx',
             tokens=f'{m}/tokens.txt', num_threads=threads)
-    raise ValueError(f'unknown asr "{asr}" (moonshine-tiny or whisper-tiny)')
+    if asr == 'parakeet':
+        m = os.path.join(model_dir, 'sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8')
+        return sherpa_onnx.OfflineRecognizer.from_transducer(
+            encoder=f'{m}/encoder.int8.onnx', decoder=f'{m}/decoder.int8.onnx', joiner=f'{m}/joiner.int8.onnx',
+            tokens=f'{m}/tokens.txt', num_threads=threads, model_type='nemo_transducer')
+    raise ValueError(f'unknown asr "{asr}" (one of {", ".join(ASR_MODELS)})')
 
 
 def make_vad(model_dir: str, threshold: float, min_silence: float, min_speech: float, max_speech: float):
@@ -501,7 +516,7 @@ def _node_main(args):
         def __init__(self):
             super().__init__('listen')
             self.declare_parameter('model_dir', MODEL_DIR)
-            self.declare_parameter('asr', 'moonshine-tiny')          # or whisper-tiny
+            self.declare_parameter('asr', 'moonshine-tiny')          # ASR_MODELS, make_recognizer
             self.declare_parameter('threads', 2)
             # The mic is tiny and inside the robot: a person a few feet away
             # reaches it far quieter than her own speaker does (2026-09-25,
