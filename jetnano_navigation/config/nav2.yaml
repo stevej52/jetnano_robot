@@ -78,9 +78,12 @@ controller_server:
       plugin: "nav2_controller::SimpleGoalChecker"
       stateful: true
       xy_goal_tolerance: 0.10   # 2026-09-27: 0.20 stopped her 19 cm short every time; 0.10 -> 3-10 cm
-      # Generous: a steering robot cannot fine-tune its final heading on the
-      # spot, so demanding a tight yaw tolerance makes it shuffle forever.
-      yaw_goal_tolerance: 0.50
+      # Any heading: a steering robot cannot turn on the spot, so one that reaches the goal
+      # pointing the wrong way shuffles there until the goal times out. 2026-09-29 (floor,
+      # same 9-leg loop): at 0.50 rad a leg reached its spot 55-70 deg off and shuffled 100 s,
+      # 111 direction changes; at 3.14 none did. Her heading still comes out roughly as
+      # planned (the path ends pointing that way): 1-33 deg off on that drive.
+      yaw_goal_tolerance: 3.14
 
     FollowPath:
       plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
@@ -226,7 +229,7 @@ planner_server:
       angle_quantization_bins: 72
       minimum_turning_radius: 0.40             # measured 2026-09-27: 0.33 right / 0.39 left at full lock
       reverse_penalty: 2.0
-      change_penalty: 0.0
+      change_penalty: 0.0           # 1.5 tried 2026-09-29: worse (6 of 9, 288 s, 181 direction changes vs 8, 156 s, 20)
       non_straight_penalty: 1.2
       cost_penalty: 2.0
       analytic_expansion_ratio: 3.5
