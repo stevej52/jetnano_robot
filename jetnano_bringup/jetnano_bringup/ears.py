@@ -17,8 +17,8 @@
     ros2 run jetnano_bringup ears
     ros2 topic echo /sound/level          # dBFS, ten times a second
 
-Reads the USB microphone continuously through arecord (16 kHz mono), passes
-the raw audio on as ``sound/audio`` (Int16MultiArray, 100 ms a message, for
+Reads the USB microphone continuously through arecord (16 kHz, one channel
+kept), passes the raw audio on as ``sound/audio`` (Int16MultiArray, 100 ms a message, for
 ``listen``: one process owns the mic) and publishes the level in dBFS on
 ``sound/level``. A sharp noise - a clap, a
 dropped pan, a door - is a jump of ``loud_above_db`` over the room's rolling
@@ -30,9 +30,12 @@ while she herself speaks (``sound/speaking`` from the sounds node; the
 speaker is right next to the mic), and she never listens to *words* here:
 this is a level meter, not a microphone feed to anything.
 
-The mic is named by ALSA card (``arecord -l``); a C-Media "USB PnP Sound
-Device" appears as card "Device". Its Auto Gain Control is left off: a level
-meter wants the whole range, and it made no difference on the bench anyway.
+The mic is named by ALSA card (``arecord -l``). Since 2026-09-28 it is the
+reSpeaker Flex XVF3800 (linear, 16 kHz, 6 channels: card "L16K6Ch"); its
+first channels are the XVF3800's processed outputs (echo-cancelled, beamed),
+the last four the raw mics, and ``channel`` picks the one she listens to. The
+old C-Media "USB PnP Sound Device" was card "Device", one channel; its Auto
+Gain Control is left off: a level meter wants the whole range.
 Watch what she hears with ``ros2 topic echo /sound/level`` and tune the two
 thresholds if claps go unheard or the TV gets answered.
 """
@@ -54,7 +57,13 @@ class Ears(Node):
 
     def __init__(self):
         super().__init__('ears')
-        self.declare_parameter('card', 'Device')
+        self.declare_parameter('card', 'L16K6Ch')
+        self.declare_parameter('channels', 6)            # what the card records (the old mic: 1)
+        # The one she hears. reSpeaker (as shipped): 0 the talk output (echo-cancelled,
+        # noise-suppressed, auto-gain: it swallows her own voice, ~30 dB, but its gain
+        # moves), 1 the speech-recognition output (echo-cancelled, fixed gain: a level
+        # meter and a recogniser both want that), 2-5 the raw mics before any gain.
+        self.declare_parameter('channel', 1)
         self.declare_parameter('rate', 16000)
         # Measured 2026-09-25 on the bench: a quiet room reads -46 dBFS, her own
         # speaker at 80 % only -24 at the mic; gain and AGC hardly move either.
@@ -69,8 +78,11 @@ class Ears(Node):
         # floor there -43.5 dBFS (-50.5 above 100 Hz).
         # 2026-09-26 Steve: still a touch too sensitive, 5 % less - 20 -> 21 dB over
         # the background and -27 -> -26 dBFS (the mic moved onto foam on the 25th)
+        # 2026-09-28, the reSpeaker: its speech channel's quiet room is -64 dBFS, ~20 dB
+        # under the old mic's, so the floor moves down by the same 20 dB. PROVISIONAL
+        # until Steve claps at her.
         self.declare_parameter('loud_above_db', 21.0)
-        self.declare_parameter('loud_min_dbfs', -26.0)
+        self.declare_parameter('loud_min_dbfs', -46.0)
         self.declare_parameter('still_after_s', 2.0)
         self.declare_parameter('say_min_gap_s', 6.0)
         # Steve, 2026-09-25: an instant reply is too fast - "a clap, then a
@@ -80,6 +92,8 @@ class Ears(Node):
         self.declare_parameter('deaf_after_speaking_s', 0.6)   # the speaker is an inch from the mic
 
         self.card = str(self.get_parameter('card').value)
+        self.channels = max(1, int(self.get_parameter('channels').value))
+        self.channel = min(max(0, int(self.get_parameter('channel').value)), self.channels - 1)
         self.rate = int(self.get_parameter('rate').value)
         self.chunk = float(self.get_parameter('chunk_s').value)
         self.bg_s = float(self.get_parameter('background_s').value)
@@ -112,7 +126,8 @@ class Ears(Node):
         self.background = None
         self._warned = False
         threading.Thread(target=self._listen, daemon=True, name='ears-arecord').start()
-        self.get_logger().info(f'listening on card {self.card} at {self.rate} Hz, gain {gain} %')
+        self.get_logger().info(f'listening on card {self.card} channel {self.channel + 1} of {self.channels} '
+                               f'at {self.rate} Hz, gain {gain} %')
 
     def _on_cmd(self, msg: Twist) -> None:
         if msg.linear.x != 0.0 or msg.angular.z != 0.0:
@@ -133,8 +148,10 @@ class Ears(Node):
 
     def _listen(self) -> None:
         frames = int(self.rate * self.chunk)
+        width = 2 * self.channels
         while rclpy.ok():
-            cmd = ['arecord', '-q', '-D', f'plughw:{self.card}', '-f', 'S16_LE', '-r', str(self.rate), '-c', '1', '-t', 'raw']
+            cmd = ['arecord', '-q', '-D', f'plughw:{self.card}', '-f', 'S16_LE', '-r', str(self.rate),
+                   '-c', str(self.channels), '-t', 'raw']
             try:
                 proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             except OSError as exc:
@@ -142,9 +159,11 @@ class Ears(Node):
                 time.sleep(10)
                 continue
             while rclpy.ok():
-                data = proc.stdout.read(frames * 2)
-                if len(data) < frames * 2:
+                data = proc.stdout.read(frames * width)
+                if len(data) < frames * width:
                     break
+                if self.channels > 1:
+                    data = np.frombuffer(data, dtype=np.int16).reshape(-1, self.channels)[:, self.channel].tobytes()
                 self._chunk(data)
             err = proc.stderr.read().decode(errors='replace').strip() if proc.stderr else ''
             proc.kill()

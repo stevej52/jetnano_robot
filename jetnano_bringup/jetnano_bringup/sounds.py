@@ -83,9 +83,18 @@ class Sounds(Node):
         self.declare_parameter('sound_dir', os.path.expanduser('~/sounds'))
         # The USB speaker by ALSA card NAME, not number: numbers shuffle when a
         # microphone is plugged in. 'aplay -l' shows the name in brackets.
-        self.declare_parameter('card', 'UACDemoV10')
+        # 2026-09-28: the speaker hangs off the reSpeaker Flex (card L16K6Ch; the old
+        # USB speaker was UACDemoV10), so the mic's echo canceller hears what she says
+        self.declare_parameter('card', 'L16K6Ch')
         self.declare_parameter('device', '')          # aplay -D ...; empty = plughw:<card>
-        self.declare_parameter('volume_percent', 80)  # set on the card's PCM control at start
+        # Set on the card's PCM control at start. The reSpeaker has two volume controls
+        # in series, PCM,0 and PCM,1 (both boot at -20 dB); the second is held at full
+        # ('full_control') so this one alone sets her loudness. Measured 2026-09-28 with
+        # the reSpeaker's own mics: 90 % (-6 dB) is loud and the echo canceller still
+        # takes ~18 dB of her voice out; at 100 % the little speaker distorts and only
+        # ~12 dB comes out.
+        self.declare_parameter('volume_percent', 90)
+        self.declare_parameter('full_control', 'PCM,1')   # '' = none
         # "over and out" (listen) leaves this flag: she starts silent after a reboot
         # 'over and out' (listen's voice_off flag) no longer mutes her sounds: Steve,
         # 2026-09-26, wants her noises to carry on with only the talking switched off
@@ -102,6 +111,10 @@ class Sounds(Node):
         if card:
             for control in ('PCM', 'Speaker', 'Master'):
                 subprocess.run(['amixer', '-q', '-c', card, 'sset', control, f'{volume}%'],
+                               capture_output=True, timeout=5)
+            full = str(self.get_parameter('full_control').value)
+            if full:
+                subprocess.run(['amixer', '-q', '-c', card, 'sset', full, '100%'],
                                capture_output=True, timeout=5)
         self.min_gap = float(self.get_parameter('min_gap_s').value)
         self.queue = queue.Queue()

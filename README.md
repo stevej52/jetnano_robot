@@ -11,7 +11,7 @@ Jetson Nano on ROS 2 Eloquent to an Orin Nano on Jazzy.
 | Lidar | RPLidar A1M8 |
 | Cameras | Intel RealSense D435 (odometry, depth, the video feed); two Raspberry-Pi-style IMX219 CSI cameras, one on the pan-tilt (streaming, not yet in ROS) |
 | IMU | BNO055 |
-| Audio | USB microphone (ALSA card `Device`) and USB speaker (card `UACDemoV10`) |
+| Audio | reSpeaker Flex XVF3800 linear 4-mic array (USB, ALSA card `L16K6Ch`, firmware 1.0.3): 16 kHz, 6 channels, echo cancelling; her speaker on its JST output |
 | Odometry | visual (NVIDIA cuVSLAM on the GPU at 89 Hz, or rtabmap on the CPU) + IMU, optionally + lidar (MOLA), fused by robot_localization — **no wheel encoders** |
 | Driving | the phone page (below); a Thrustmaster HOTAS or Xbox pad is supported by `jetnano_teleop` but not started at boot |
 
@@ -424,13 +424,13 @@ and the full rebuild in robot-environment `REBUILD.md`.
 
 | Node | What it does |
 |---|---|
-| `ears` | owns the USB mic (ALSA card `Device`): the room's level on `sound/level`, the raw audio on `sound/audio`, "huh?" at a clap |
+| `ears` | owns the mic (the reSpeaker, card `L16K6Ch`, its echo-cancelled speech channel): the room's level on `sound/level`, the audio on `sound/audio`, "huh?" at a clap |
 | `listen` | speech detection and speech-to-text on the CPU (sherpa-onnx, Moonshine); decides what was meant; her name wakes her, a conversation then runs without it; knows voices apart (`speaker.py`, WeSpeaker via sherpa-onnx) |
 | `motion_watch` | the lidar sees someone move while she is parked: by default she reacts only to someone coming right at her; "Rosie, keep watch" turns on watchdog mode (a "huh?" and a look at every mover), "Rosie, stand down" turns it off. Aims the pan-tilt only with `aim:=true` |
 | `settle` | listens for the front steering servo buzzing after a stop (a tone near 1.6 kHz) and wiggles the steering a few degrees until it is quiet |
 | `brain` | answers: small talk on the local model upstairs (llama.cpp, Qwen 2.5 14B), everything real handed to Claude Opus 5.5; "think hard" gets full thinking; a daily budget |
 | `speak` | text to her English voice (Piper), sentence by sentence, cached |
-| `sounds` | plays everything on the USB speaker (card `UACDemoV10`), one sound at a time; `mute` |
+| `sounds` | plays everything on the speaker (on the reSpeaker, card `L16K6Ch`, so the mic's echo canceller hears it), one sound at a time; `mute` |
 | `health` (in listen) | her real status for "how are you" and the spoken report |
 | `topic_watch` (jetnano_watchdog, C++) | a cheap live count of the important streams |
 | `watchdog` | restarts whatever goes silent, step by step and within limits; shows problems on the driving page; `~/watchdog/events.jsonl`; checks the GPU every 30 s and, if it failed to start at boot, reboots her once (never while driving or mapping) |
