@@ -63,6 +63,11 @@ POSES = ('/vo', '/odometry/filtered', '/lidar_odom')
 TWISTS = ('/cmd_vel_web', '/cmd_vel_mux', '/cmd_vel')
 GUARD = '/collision_guard/state'
 HOLD = '/odom_hold'
+# MOLA's own output, before lidar_odom_relay's outlier gate: only its times are kept, to tell
+# a gap the gate made (MOLA talking, its samples refused) from MOLA itself going quiet. Drive 7,
+# 2026-09-29: "gaps: 14, worst 6.2 s" read as lost lidar odometry; it was the gate refusing
+# MOLA through the parking shuffles, where it got the direction wrong.
+MOLA = '/lidar_odometry/pose'
 
 
 def open_reader(bag):
@@ -87,13 +92,16 @@ def load(bag):
                   for i in reader.get_metadata().topics_with_message_count}
     except (AttributeError, RuntimeError):
         counts = {}
-    wanted = [t for t in POSES + TWISTS + (GUARD, HOLD) if t in types]
+    wanted = [t for t in POSES + TWISTS + (GUARD, HOLD, MOLA) if t in types]
     reader.set_filter(StorageFilter(topics=wanted))
     msgs = defaultdict(list)
     while reader.has_next():
         topic, data, t = reader.read_next()
-        m = deserialize_message(data, types[topic])
         t /= 1e9
+        if topic == MOLA:
+            msgs[topic].append((t,))                 # the time is all it is read for
+            continue
+        m = deserialize_message(data, types[topic])
         if topic in POSES:
             p = m.pose.pose
             msgs[topic].append((t, p.position.x, p.position.y, yaw_of(p.orientation)))
@@ -202,6 +210,12 @@ def window_diffs(A, B, span=2.0, step=1.0, a_must_be_clean=False):
     return sorted(dist), sorted(turn)
 
 
+def gated(mola_times, a, b, min_hz=4.0):
+    """Did MOLA keep publishing through the gap (a, b) - at least min_hz, and twice?"""
+    n = sum(1 for (t,) in mola_times if a < t < b)
+    return n >= max(2, min_hz * (b - a) * 0.5)
+
+
 def report(bag):
     msgs, counts = load(bag)
     lines = []
@@ -222,9 +236,14 @@ def report(bag):
             continue
         length = sum(math.hypot(b[1] - a[1], b[2] - a[2]) for a, b in zip(P, P[1:]))
         jumps = sum(1 for a, b in zip(P, P[1:]) if math.hypot(b[1] - a[1], b[2] - a[2]) > 0.10)
-        gaps = [b[0] - a[0] for a, b in zip(P, P[1:]) if b[0] - a[0] > 0.5]
+        spans = [(a[0], b[0]) for a, b in zip(P, P[1:]) if b[0] - a[0] > 0.5]
+        gaps = [b - a for a, b in spans]
+        why = ''
+        if name == 'lidar odometry' and spans and msgs.get(MOLA):
+            held = sum(1 for a, b in spans if gated(msgs[MOLA], a, b))
+            why = f': {held} held back by the outlier gate (MOLA talking), {len(spans) - held} MOLA itself quiet'
         say(f'{name}: {len(P) / (P[-1][0] - P[0][0]):.1f} Hz, path {length:.1f} m, jumps >10 cm: {jumps}, '
-            f'gaps >0.5 s: {len(gaps)}' + (f' (worst {max(gaps):.1f} s)' if gaps else ''))
+            f'gaps >0.5 s: {len(gaps)}' + (f' (worst {max(gaps):.1f} s)' if gaps else '') + why)
     if len(vo) > 1:
         again = restarts(vo)
         if again:
