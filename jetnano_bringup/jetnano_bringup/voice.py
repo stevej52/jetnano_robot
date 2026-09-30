@@ -79,7 +79,7 @@ ENGLISH = {
     'ok': ["Okay.", "Got it.", "Sure.", "Alright.", "You got it.", "Righto.", "Affirmative."],
     'no': ["Nope.", "I can't go that way.", "Something is in the way."],
     'alarm': ["Emergency halt!", "Halting!"],      # not "stop": she would hear her own stop word
-    'sad': ["My battery is getting low.", "I could use a charge soon."],
+    'sad': ["Oh no.", "That's not good."],
     'happy': ["Yay!", "I made it!", "Woo hoo!"],
     'curious': ["Who's there?", "Hello? Is somebody there?"],
     'sleepy': ["I'm so sleepy. Going to sleep now.", "Time for a nap."],
