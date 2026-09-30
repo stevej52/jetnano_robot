@@ -612,6 +612,7 @@
              placed: 'where am I: found (fit ' + b + ') · ' + (w.action || ''),
              unsure: 'where am I: unsure, ' + c.length + ' places fit alike · move her and ask again',
              not_on_map: 'where am I: not on the map (best fit ' + b + ', needs ' + (w.accept || '') + ')',
+             bench: 'where am I: on the bench (scan match ' + (w.place_score || '') + ') · nothing drives',
              no_map: 'where am I: no saved map',
              error: 'where am I: failed (' + (w.why || '') + ')' }[w.state] || ('where am I: ' + w.state);
   }

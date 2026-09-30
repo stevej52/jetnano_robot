@@ -137,11 +137,14 @@ def main():
 
     rclpy.init()
     n = rclpy.create_node('nav_goal')
-    st = {'cmd': [], 'lock': None, 'grid': None}
+    st = {'cmd': [], 'lock': None, 'grid': None, 'where': None}
     n.create_subscription(Twist, '/cmd_vel_nav', lambda m: st['cmd'].append((m.linear.x, m.angular.z)), 20)
     n.create_subscription(Bool, '/e_stop_motion', lambda m: st.__setitem__('lock', m.data), 10)
     latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                          durability=DurabilityPolicy.TRANSIENT_LOCAL)
+    # where_am_i's verdict (latched): on the bench, nothing drives (2026-09-30)
+    n.create_subscription(String, '/where_am_i/state', lambda m: st.__setitem__('where', m.data),
+                          QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
     costmap_sub = n.create_subscription(OccupancyGrid, '/global_costmap/costmap',
                                         lambda m: st.__setitem__('grid', m), latched)
     client = ActionClient(n, NavigateToPose, 'navigate_to_pose')
@@ -152,6 +155,15 @@ def main():
         end = time.time() + seconds
         while time.time() < end and not until():
             rclpy.spin_once(n, timeout_sec=0.05)
+
+    # 0. not on the bench
+    spin_for(1.0, lambda: st['where'] is not None)
+    try:
+        where = json.loads(st['where'] or '{}')
+    except ValueError:
+        where = {}
+    if where.get('state') == 'bench':
+        raise SystemExit(f'she is on the bench ({where.get("why", "")}): not sending the goal')
 
     # 1. the motion check's lock (it is re-sent every second while it holds)
     spin_for(1.5, lambda: st['lock'] is not None)

@@ -24,7 +24,10 @@ is standing still, one lidar scan is matched against the whole saved map
     unsure      several places fit alike: nothing is started; searched again the moment
                 she moves (25 cm or 20 degrees - driven, carried or put down), and again
                 and again while she keeps moving, until one search places her
-    not_on_map  nothing fits well (the bench, a room the map lacks): the same
+    not_on_map  nothing fits well (a room the map lacks): the same
+    bench       the scan looks like the one remembered from the bench (~/remember_bench,
+                places.py; Steve 2026-09-30): nothing is started, and nav_goal refuses to
+                drive her; searched again the moment she moves, as above
 
 A search takes ~7 s and she may be moving: the answer is her pose when the scan was
 taken, so it is carried forward with the odometry before localization gets it.
@@ -61,6 +64,7 @@ from std_srvs.srv import Trigger
 from tf2_msgs.msg import TFMessage
 import tf2_ros
 
+from jetnano_navigation import places
 from jetnano_navigation.global_locate import judge, locate, MapModel
 
 LATCHED = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
@@ -105,6 +109,10 @@ class WhereAmI(Node):
         self.pose_file = os.path.expanduser(p('start_pose_file', '~/.ros/where_am_i.env').value)
         self.base_frame = p('base_frame', 'base_footprint').value
         odom_topic = p('odom_topic', 'lidar_odom').value
+        # places that are not on the map, known by their lidar scan (places.py): the bench.
+        # ~/remember_bench saves the scan she sees right now under "bench".
+        self.places_file = os.path.expanduser(p('places_file', '~/maps/places.json').value)
+        self.place_accept = float(p('place_accept', 0.6).value)
 
         self.model, self.model_mtime = None, None
         self.scan = None
@@ -126,6 +134,7 @@ class WhereAmI(Node):
         self.odom_topic, self.odom_sub = odom_topic, None
         self._follow_odom(True)
         self.create_service(Trigger, '~/locate', self._on_locate)
+        self.create_service(Trigger, '~/remember_bench', self._on_remember_bench)
         self.create_timer(1.0, self._tick)
         self._publish()
         self.get_logger().info(
@@ -190,6 +199,32 @@ class WhereAmI(Node):
         response.message = 'searching' + ('' if self._still() or self.odom is None
                                          else ' (she is moving - the answer may be off)')
         return response
+
+    def _on_remember_bench(self, request, response):
+        """Save the scan she sees now as "bench" (she must be standing on it)."""
+        if self.busy.locked():
+            response.success, response.message = False, 'busy searching: try again in a moment'
+            return response
+        m = self._fresh_scan()
+        if m is None:
+            response.success, response.message = False, 'no lidar scan'
+            return response
+        old = places.load_places(self.places_file).get('bench')
+        same = places.place_match(m.ranges, [np.nan if v is None else v for v in old['ranges']]) if old else None
+        places.save_place(self.places_file, 'bench', m.ranges, 'remembered by ~/remember_bench')
+        response.success = True
+        response.message = (f'bench remembered from {len(m.ranges)} beams in {self.places_file}'
+                            + (f' (matched the old bench scan {same:.2f})' if same is not None else ''))
+        self.get_logger().info(response.message)
+        return response
+
+    def _known_place(self, scan):
+        """(name, score) if the scan looks like a remembered place, else (None, score)."""
+        known = places.load_places(self.places_file)
+        if not known or scan is None:
+            return None, 0.0
+        name, score = places.best_place(scan.ranges, known)
+        return (name if score >= self.place_accept else None), score
 
     # ------------------------------------------------------------------ logic --
     def _tick(self) -> None:
@@ -259,11 +294,17 @@ class WhereAmI(Node):
             scan_time = st.sec + st.nanosec * 1e-9
             self._set({'state': 'searching', 'why': why})
             t0 = time.monotonic()
-            cands = locate(self.model, pts)
-            verdict, reason = judge(cands, self.accept, self.margin)
+            # a remembered place first (the bench): cheap, and the map would only say "not
+            # on the map" there
+            place, place_score = self._known_place(self.scan)
+            if place is not None:
+                verdict, reason, cands = place, f'the lidar sees the {place} (scan match {place_score:.2f})', []
+            else:
+                cands = locate(self.model, pts)
+                verdict, reason = judge(cands, self.accept, self.margin)
             took = time.monotonic() - t0
             result = {'state': verdict, 'why': reason, 'trigger': why, 'took_s': round(took, 1),
-                      'scan_time': scan_time,
+                      'scan_time': scan_time, 'place_score': round(place_score, 3),
                       'points': int(len(pts)), 'accept': self.accept, 'margin': self.margin,
                       'candidates': [{'score': round(c[0], 3), 'x': round(c[1], 2),
                                       'y': round(c[2], 2), 'yaw': round(c[3], 3)} for c in cands]}
