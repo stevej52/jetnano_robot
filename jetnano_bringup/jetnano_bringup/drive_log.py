@@ -297,6 +297,18 @@ class DriveLog:
                     self.rotate['d435'] = 180
         except (OSError, ValueError):
             pass
+        # only the cameras the server has: its front page lists them ("cameras: front.mjpg
+        # front.jpg, ..."). The rear one went off 2026-09-30 (broken); asking for it every
+        # second would only log misses.
+        try:
+            with urllib.request.urlopen(f'{CAMERA_URL}/', timeout=3) as r:
+                listed = {w.split('.')[0] for w in r.read().decode(errors='replace').split() if w.endswith('.jpg')}
+            missing = [c for c in self.cameras if c not in listed]
+            if missing:
+                self.note(f'not on the camera server, skipped: {", ".join(missing)}')
+                self.cameras = [c for c in self.cameras if c in listed]
+        except (OSError, ValueError):
+            pass
         self.note(f'started: cameras {", ".join(self.cameras) or "none"}, '
                   f'stops by itself after {self.stop_after / 60:.0f} min')
         threads = [threading.Thread(target=self.system, daemon=True),

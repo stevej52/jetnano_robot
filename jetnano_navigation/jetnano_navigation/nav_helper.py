@@ -338,7 +338,9 @@ class NavHelper(Node):
                 pass
         views.append(('depth camera, fixed, ahead', self._picture('d435')))
         views.append(('rear camera, behind her', self._picture('rear')))
-        return views
+        # a camera that is off (the rear one since 2026-09-30, broken) or failed gives None:
+        # not a blank tile for Claude to wonder about
+        return [v for v in views if v[1] is not None]
 
     def build_packet(self, sweep=True):
         """-> (directory, [{path, label}], facts text)."""

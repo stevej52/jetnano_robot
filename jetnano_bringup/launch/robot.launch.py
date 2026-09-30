@@ -27,6 +27,8 @@ into the host PC; the web page is on by default because it lives on the robot.
 ROS_DOMAIN_ID must match on both machines; it is 7 for this robot.
 """
 
+from typing import List
+
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription, LogInfo
 from launch.conditions import IfCondition
@@ -137,6 +139,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'use_csi_cameras', default_value='true',
             description='the two Pi cameras (pan-tilt front, rear) as MJPEG on port 8082, only while watched'),
+        DeclareLaunchArgument(
+            'use_rear_camera', default_value='true',
+            description='false: the rear camera is not served at all (broken 2026-09-30) - the recorder '
+                        'and the stuck-help packet then skip it'),
         DeclareLaunchArgument(
             'use_web_teleop', default_value='true',
             description='serve the driving web page (camera + arrows) on port 8081'),
@@ -254,7 +260,10 @@ def generate_launch_description():
             respawn_delay=10.0,
             # the RealSense is mounted upside down since 2026-09-27 (jetnano.urdf.xacro
             # camera_rpy): the web pages turn its picture back
-            parameters=[{'d435_rotate': 180}],
+            parameters=[{'d435_rotate': 180,
+                         'cameras': ParameterValue(PythonExpression([
+                             "['front', 'rear'] if '", LaunchConfiguration('use_rear_camera'),
+                             "' == 'true' else ['front']"]), value_type=List[str])}],
             condition=IfCondition(LaunchConfiguration('use_csi_cameras')),
         ),
 
