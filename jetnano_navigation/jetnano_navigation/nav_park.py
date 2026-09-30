@@ -21,12 +21,15 @@ Nav2 no longer insists on a final heading (nav2.yaml yaw_goal_tolerance, 2026-09
 steering robot that reaches its spot pointing the wrong way cannot turn on the spot and
 shuffled there for 100 s. Parking needs the heading, so:
 
-1. nav_goal to a point `pre` metres out in front of the spot, any heading;
-2. straighten there: short forward-and-back shuffles at full lock - forward steering one
-   way, back steering the other, both turn her the same way - until her heading is within
-   `tol` degrees (each pair turns about 2 d / R: 10 cm legs at R 0.37 m, ~30 deg);
+1. nav_goal to a point `pre` metres out in front of the spot, facing the way she is already
+   going (the bearing from where she starts). Drive 7, 2026-09-29: asked to arrive facing the
+   spot's heading, the planner put a 128 deg turn in the last half metre and she dithered
+   there - five forward/reverse switches in 3 s - and arrived 59 deg off anyway;
+2. turn there: forward and back at full lock - forward steering one way, back steering the
+   other, both turn her the same way - until her heading is within `tol` degrees. The point
+   is in the open, so the legs may be 30 cm: a big turn is a three-point turn;
 3. nav_goal to the spot: a straight reverse in;
-4. straighten again there if the reverse in curved.
+4. straighten again there, with short legs (the wall is close), if the reverse in curved.
 
 Step 2 drives on cmd_vel_nav, Nav2's own input to twist_mux, while Nav2 is idle - so the
 joystick outranks it and the e-stop lock, collision guard and motion check all apply. It
@@ -49,6 +52,9 @@ STEER = 2.2               # steering units, just short of the translator's 2.4 l
 THROTTLE_FWD = 0.18       # at full lock: the translator's crawl plus its lock boost
 THROTTLE_REV = 0.20       # reverse is the weaker side
 LEG_MIN_M, LEG_MAX_M = 0.04, 0.12
+# At the point in front of the spot there is room for a proper three-point turn: the house map
+# is clear for 1.35 m all round (1.2, 0). On the spot itself the wall is 0.58 m away: short legs.
+LEG_MAX_OPEN_M = 0.30
 LEAD_RAD = math.radians(1.5)   # she coasts on a little after the throttle drops
 SMALL_RAD = math.radians(20)   # below this much to go: half lock, finer
 LEG_TIMEOUT_S = 2.5       # a leg that has not got there by then is stuck: the motion check is 1.5 s
@@ -79,20 +85,25 @@ class Shuffles:
 
     SINGLE_RAD = math.radians(14)
 
-    def __init__(self):
+    def __init__(self, leg_max_m=LEG_MAX_M):
         self.coast = LEAD_RAD
         self.last_single = -1.0
+        # the most one full-lock leg can turn her before its length runs out (10 % in hand)
+        self.max_turn = 0.9 * leg_max_m / TURN_RADIUS_M
 
     def next_legs(self, err):
-        """-> [(throttle sign, steering, turn to stop at)] for this correction."""
+        """-> [(throttle sign, steering, turn to stop at)] for this correction: one leg for a
+        small one, else as few alternating legs as the leg length allows, forward first - with
+        room (LEG_MAX_OPEN_M), 125 deg is a three-point turn: forward, back, forward."""
         s = 1.0 if err > 0 else -1.0                 # + turns her left (counter-clockwise)
         steer = steer_for(err)
         if abs(err) < self.SINGLE_RAD:
             self.last_single = -self.last_single
             sign = self.last_single                   # forward and back in turn
             return [(sign, sign * s * steer, max(0.0, abs(err) - self.coast))]
-        each = abs(err) / 2.0
-        return [(1.0, s * steer, max(0.0, each - self.coast)), (-1.0, -s * steer, max(0.0, each - self.coast))]
+        n = max(2, math.ceil(abs(err) / self.max_turn))
+        each = max(0.0, abs(err) / n - self.coast)
+        return [((1.0 if k % 2 == 0 else -1.0), (1.0 if k % 2 == 0 else -1.0) * s * steer, each) for k in range(n)]
 
     def observe(self, stop_at, turned):
         """How far she turned on a leg that was stopped at `stop_at`: learn the coast."""
@@ -114,9 +125,10 @@ def nav_goal(x, y, h_deg, timeout=90, exact=False):
 class Straighten:
     """Shuffle at full lock until she faces `heading` (map frame)."""
 
-    def __init__(self, node, heading, tol):
+    def __init__(self, node, heading, tol, leg_max_m=LEG_MAX_M):
         self.n, self.heading, self.tol = node, heading, tol
-        self.plan = Shuffles()
+        self.leg_max = leg_max_m
+        self.plan = Shuffles(leg_max_m)
         self.pub = node.create_publisher(Twist, 'cmd_vel_nav', 10)
         self.odom = None
         self.lock = False
@@ -135,13 +147,20 @@ class Straighten:
         while time.time() < end:
             rclpy.spin_once(self.n, timeout_sec=0.02)
 
-    def map_heading(self):
+    def map_pose(self):
+        """(x, y, heading) on the map, or None."""
         for _ in range(50):
             if self.buf.can_transform('map', 'base_footprint', rclpy.time.Time()):
-                q = self.buf.lookup_transform('map', 'base_footprint', rclpy.time.Time()).transform.rotation
-                return math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+                tr = self.buf.lookup_transform('map', 'base_footprint', rclpy.time.Time()).transform
+                q = tr.rotation
+                return (tr.translation.x, tr.translation.y,
+                        math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z)))
             self.spin(0.1)
         return None
+
+    def map_heading(self):
+        pose = self.map_pose()
+        return None if pose is None else pose[2]
 
     def send(self, throttle, steer, seconds):
         m = Twist()
@@ -163,8 +182,9 @@ class Straighten:
         m = Twist()
         m.linear.x, m.angular.z = throttle, steer
         t0 = time.time()
-        while not self.lock and time.time() - t0 < LEG_TIMEOUT_S:
-            if abs(wrap(self.odom[2] - h0)) >= turn or math.hypot(self.odom[0] - x0, self.odom[1] - y0) >= LEG_MAX_M:
+        timeout = max(LEG_TIMEOUT_S, self.leg_max / 0.1)      # a long leg at a crawl (0.1 m/s)
+        while not self.lock and time.time() - t0 < timeout:
+            if abs(wrap(self.odom[2] - h0)) >= turn or math.hypot(self.odom[0] - x0, self.odom[1] - y0) >= self.leg_max:
                 break
             self.pub.publish(m)
             self.spin(0.02)
@@ -211,20 +231,29 @@ def main():
     px, py = x + pre * math.cos(h), y + pre * math.sin(h)   # in front of the spot: she reverses in
 
     print(f'parking at ({x:+.2f}, {y:+.2f}) facing {h_deg:+.0f} deg, from ({px:+.2f}, {py:+.2f})', flush=True)
-    if not nav_goal(px, py, h_deg):
-        raise SystemExit('could not reach the point in front of the spot')
     rclpy.init()
     node = rclpy.create_node('nav_park')
+    ok = False
     try:
-        straighten = Straighten(node, h, tol)
-        print('-- straightening', flush=True)
+        straighten = Straighten(node, h, tol, LEG_MAX_OPEN_M)
+        here = straighten.map_pose()
+        approach = h_deg
+        if here is not None and math.hypot(px - here[0], py - here[1]) > 0.6:
+            approach = math.degrees(math.atan2(py - here[1], px - here[0]))   # the way she is going
+        if not nav_goal(px, py, approach):
+            raise SystemExit('could not reach the point in front of the spot')
+        print('-- turning to face the spot\'s heading', flush=True)
         straighten.run()
         ok = nav_goal(x, y, h_deg, exact=True)   # her spot, even if the costmap calls it tight
         if ok:
             # 2026-09-29 drive 6: straight at the point in front (+4 deg), then the reverse in
             # curved - the shuffles had moved her sideways off the line - and ended -21 deg.
-            # The shuffles stay on the spot (forward and back in turn), so straighten again.
+            # Short legs here, forward and back in turn: the wall is 0.58 m behind the spot.
             print('-- straightening on the spot', flush=True)
+            coast = straighten.plan.coast                  # what it learned out there still holds
+            straighten.leg_max = LEG_MAX_M
+            straighten.plan = Shuffles(LEG_MAX_M)
+            straighten.plan.coast = coast
             straighten.run()
     finally:
         node.destroy_node()
