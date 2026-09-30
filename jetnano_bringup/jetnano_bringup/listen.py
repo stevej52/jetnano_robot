@@ -756,6 +756,7 @@ def _node_main(args):
             # A heartbeat from the listening thread itself, for the watchdog:
             # it stops if that thread hangs, even while the node looks alive.
             self.worked = 0.0
+            self.busy_since = None          # an utterance being transcribed and understood (see _beat)
             self.beat_pub = self.create_publisher(UInt32, 'speech/heartbeat', 10)
             self.beats = 0
             self.create_timer(2.0, self._beat)
@@ -935,7 +936,11 @@ def _node_main(args):
                     # did this start while she was talking? then it is mostly her
                     started = time.monotonic() - len(samples) / 16000.0 - self.min_silence
                     overlapped = self.speaking or started < self.speaking_ended + self.echo_guard
-                    self._utterance(samples, overlapped, started)
+                    self.busy_since = time.monotonic()
+                    try:
+                        self._utterance(samples, overlapped, started)
+                    finally:
+                        self.busy_since = None
                 if self.turn is not None and not active and time.monotonic() >= self.turn['until']:
                     self._turn_end('waited')              # no more came: what he said is what he meant
 
@@ -1645,7 +1650,14 @@ def _node_main(args):
             self._say(self.chat_file)
 
         def _beat(self) -> None:
-            if time.monotonic() - self.worked < 3.0:
+            # Busy is not hung: a long overheard sentence (max_speech_s = 30) takes the
+            # listening thread 10 s or more to transcribe, print and understand, and on
+            # 2026-09-30 11:10 the watchdog took that silence for a hang and restarted a
+            # healthy listen (24 s deaf, the model loaded again). While an utterance is in
+            # hand the beat goes on, up to a minute - a real hang still shows.
+            now = time.monotonic()
+            busy = self.busy_since is not None and now - self.busy_since < 60.0
+            if now - self.worked < 3.0 or busy:
                 self.beats += 1
                 msg = UInt32()
                 msg.data = self.beats
