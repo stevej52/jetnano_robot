@@ -129,3 +129,23 @@ def test_all_zero_quaternion_still_raises_for_the_stock_main_to_skip():
     lean = _service(LeanSensorService, bytes(45), subscribers=0)
     with pytest.raises(ZeroDivisionError):
         lean.get_sensor_data()
+
+
+def test_imu_base_is_imu_data_in_base_link():
+    from jetnano_bringup.imu_mount import Mount
+    from sensor_msgs.msg import Imu
+    data = bytes(range(1, 46))
+    lean = _service(LeanSensorService, data, subscribers=1)
+    lean.pub_base = _Publisher(1)
+    lean._mount = Mount()
+    lean._base_frame = 'base_link'
+    lean.get_sensor_data()
+    imu, base = lean.pub_imu.sent[0], lean.pub_base.sent[0]
+    assert _imu_fields(base) == _imu_fields(Mount().to_base(imu, Imu(), 'base_link'))
+
+
+def test_imu_base_skipped_while_unread():
+    lean = _service(LeanSensorService, bytes(range(1, 46)), subscribers=1)
+    lean.pub_base = _Publisher(0)
+    lean.get_sensor_data()
+    assert lean.pub_base.sent == []

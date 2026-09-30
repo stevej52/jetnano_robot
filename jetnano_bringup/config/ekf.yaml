@@ -58,14 +58,16 @@ ekf_filter_node:
     # zero at wherever the robot is; fused as an absolute pose, that snapped
     # the filter back to the origin at every restart - 7 jumps on the first
     # lap of 2026-09-24, and SLAM drew the house three times, rotated. Fed
-    # velocities, the filter integrates straight through a restart. Heading
-    # then rests on the two rate gyros (VO's and the BNO055's); SLAM's
-    # map -> odom correction absorbs the slow drift, as it is meant to.
+    # velocities, the filter integrates straight through a restart.
+    # Speed only, since 2026-09-29: not the yaw rate. It reads every turn 5.7 %
+    # short (an hour of floor driving against SLAM, tools/drive_analysis/
+    # heading_drift.py) and dragged the heading down with it; heading is the
+    # BNO055's alone now (imu0 below).
     odom0: vo
     odom0_config: [false, false, false,
                    false, false, false,
                    true,  true,  false,
-                   false, false, true,
+                   false, false, false,
                    false, false, false]
     odom0_differential: false
     odom0_relative: false
@@ -111,25 +113,32 @@ ekf_filter_node:
     odom2_relative: false
     odom2_queue_size: 10
 
-    # BNO055: yaw RATE only.
-    imu0: imu/data
-    # Not yaw itself: the visual odometry already supplies an absolute heading
-    # in the odom frame, and a second absolute heading (the BNO055's
-    # magnetometer, uncalibrated, and offset by the mount's yaw) made the
-    # filter flip between the two, tens of degrees a second, with the robot
-    # standing still (measured 2026-09-22).
-    # Not acceleration either: it was meant to ride out short VO dropouts,
-    # and instead it is what ran the filter away when VO was rejected
-    # (2026-09-24, above) - the chip's "gravity-free" acceleration carries a
-    # bias (~0.08 m/s2 measured) and integrates into a velocity that nothing
-    # pulls back. A VO dropout now leaves the filter coasting at its last
-    # velocity, which VO corrects on return.
+    # BNO055: its fused HEADING, as changes (differential), since 2026-09-29 - the
+    # only heading input now. Until then this was the chip's raw yaw rate, with the
+    # camera's: an hour of floor driving (3700 deg of turning) against SLAM, the
+    # gyro read every turn 3.6 % short and the camera 5.7 %, the EKF ended 63 deg off
+    # and odom had drifted 7.7 m / 72 deg from the map - which placed nvblox's older
+    # obstacles in the wrong spots: ghost walls, and a planner that found no way home.
+    # The chip's own fusion ended 12.4 deg off in the hour, scale right (0.998), 95 %
+    # of 5-minute stretches within 5 deg (the EKF's: 40). tools/drive_analysis/.
+    # imu/base, not imu/data: bno055_lean turns the chip's orientation into base_link
+    # itself (the chip is mounted upside down and turned), so nothing here depends on
+    # how the EKF would treat a mounted IMU's orientation.
+    # Differential, not absolute: an absolute magnetic heading alongside another
+    # absolute one made the filter flip between the two, tens of degrees a second,
+    # standing still (2026-09-22, when VO's pose was fused); as changes it has
+    # nothing to fight, and the odom frame starts where she stands.
+    # Not acceleration: it was meant to ride out short VO dropouts, and instead it
+    # is what ran the filter away when VO was rejected (2026-09-24, above) - the
+    # chip's "gravity-free" acceleration carries a bias (~0.08 m/s2 measured) and
+    # integrates into a velocity that nothing pulls back.
+    imu0: imu/base
     imu0_config: [false, false, false,
-                  false, false, false,
-                  false, false, false,
                   false, false, true,
+                  false, false, false,
+                  false, false, false,
                   false, false, false]
-    imu0_differential: false
+    imu0_differential: true
     imu0_relative: false
     imu0_queue_size: 10
     # The bno055 driver's imu/data carries the chip's own gravity-free

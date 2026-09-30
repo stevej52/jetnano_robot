@@ -30,6 +30,7 @@ setup(
             'tilt_guard = jetnano_bringup.tilt_guard:main',
             'grid_to_points = jetnano_bringup.grid_to_points:main',
             'bno055_lean = jetnano_bringup.bno055_lean:main',
+            'imu_base_relay = jetnano_bringup.imu_base_relay:main',
             'vo_watchdog = jetnano_bringup.vo_watchdog:main',
             'lidar_odom_relay = jetnano_bringup.lidar_odom_relay:main',
             'drive_report = jetnano_bringup.drive_report:main',

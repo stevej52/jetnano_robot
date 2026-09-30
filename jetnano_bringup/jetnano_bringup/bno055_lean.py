@@ -24,7 +24,8 @@ This is the stock driver - its node, parameters, calibration offsets and I2C con
 with the per-cycle read replaced and a lighter executor. The read unpacks the 45 bytes
 in one go, builds imu/imu exactly as the stock driver does (same fields, units and
 covariances), and builds the other four only while something subscribes to them, so
-`ros2 topic echo /imu/mag` still works. main() is the stock one's timers and error
+`ros2 topic echo /imu/mag` still works. It adds imu/base, the same reading in base_link
+for the EKF (jetnano_bringup.imu_mount), also only while something reads it. main() is the stock one's timers and error
 handling, spun by rclpy's EventsExecutor (see main).
 """
 
@@ -36,6 +37,7 @@ from bno055 import registers
 from bno055.error_handling.exceptions import BusOverRunException
 from bno055.sensor.SensorService import SensorService
 from geometry_msgs.msg import Vector3
+from jetnano_bringup.imu_mount import BASE_MOUNT_RPY, Mount
 import numpy as np
 import rclpy
 from rclpy.executors import ExternalShutdownException
@@ -57,6 +59,17 @@ class LeanSensorService(SensorService):
     """The stock SensorService; get_sensor_data builds only what someone reads."""
 
     _fixed = None
+    pub_base = None                                 # imu/base (enable_base): off in the tests
+
+    def enable_base(self):
+        """Also publish imu/base (jetnano_bringup.imu_mount), while something reads it."""
+        node = self.node
+        self._base_frame = node.declare_parameter('base_frame', 'base_link').value
+        self._mount = Mount(tuple(float(a) for a in
+                                  node.declare_parameter('base_mount_rpy', list(BASE_MOUNT_RPY)).value))
+        prefix = getattr(self.param, 'ros_topic_prefix', None)
+        prefix = prefix.value if prefix is not None else 'imu/'
+        self.pub_base = node.create_publisher(Imu, prefix + 'base', 10)
 
     def _constants(self):
         # the stock NodeParameters holds Parameter snapshots taken at start-up, so
@@ -98,6 +111,9 @@ class LeanSensorService(SensorService):
         imu.angular_velocity.z = v[8] / gyr_f
         imu.angular_velocity_covariance = cov_gyr
         self.pub_imu.publish(imu)
+
+        if self.pub_base is not None and self.pub_base.get_subscription_count():
+            self.pub_base.publish(self._mount.to_base(imu, Imu(), self._base_frame))
 
         if self.pub_imu_raw.get_subscription_count():
             raw = Imu()
@@ -143,6 +159,7 @@ def main(args=None):
     node = upstream.Bno055Node()
     try:
         node.setup()
+        node.sensor.enable_base()
 
         def read_data():
             try:

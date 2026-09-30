@@ -186,6 +186,17 @@ def generate_launch_description():
             condition=IfCondition(LaunchConfiguration('lidar_odom')),
             launch_arguments={'use_sim_time': use_sim_time}.items()),
 
+        # The EKF's heading comes from imu/base (ekf.yaml imu0). On the robot bno055_lean
+        # publishes it; Gazebo's IMU publishes only imu/data, so turn it here.
+        Node(
+            package='jetnano_bringup',
+            executable='imu_base_relay',
+            name='imu_base_relay',
+            output='screen',
+            parameters=[{'use_sim_time': use_sim_time}],
+            condition=IfCondition(PythonExpression(["'", use_sim_time, "' == 'true'"])),
+        ),
+
         Node(
             package='robot_localization',
             executable='ekf_node',
