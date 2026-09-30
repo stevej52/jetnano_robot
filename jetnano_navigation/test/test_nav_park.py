@@ -89,7 +89,10 @@ def test_small_corrections_use_half_lock_and_one_leg():
     assert nav_park.steer_for(math.radians(10)) == 0.5 * nav_park.STEER
     assert nav_park.steer_for(math.radians(40)) == nav_park.STEER
     assert len(nav_park.Shuffles().next_legs(math.radians(10))) == 1
-    assert len(nav_park.Shuffles().next_legs(math.radians(40))) == 2
+    # a 12 cm leg at full lock turns her at most ~17 deg: 40 deg is three legs on the spot,
+    # a pair in the open (30 cm legs)
+    assert len(nav_park.Shuffles().next_legs(math.radians(40))) == 3
+    assert len(nav_park.Shuffles(nav_park.LEG_MAX_OPEN_M).next_legs(math.radians(40))) == 2
 
 
 def test_learns_the_coast():
