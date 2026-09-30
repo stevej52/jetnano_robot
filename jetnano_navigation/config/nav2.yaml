@@ -162,8 +162,16 @@ local_costmap:
         subscribe_to_updates: false
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.35
+        # Trimmed 2026-09-29 (Steve: the kitchen has two or three times the room she needs):
+        # 0.35 / 3.0 -> 0.31 / 6.0 - the costly band ends 4 cm sooner and falls off twice as fast.
+        # 0.31 is the least that keeps Smac's quick outline checks (her padded outline reaches
+        # 0.309 m from the centre). Tested offline on the house map (tools/drive_analysis/
+        # planner_margins.py): clear-floor routes unchanged; round the open dishwasher (the
+        # camera's catch that blocked the kitchen leg on every loop that night) 7.8 -> 7.2 m,
+        # 6 -> 4 direction changes. The 3 cm footprint_padding stays (tyres swing out at full
+        # lock: the TV cabinet, 2026-09-28); the collision guard and monitor are unchanged.
+        cost_scaling_factor: 6.0
+        inflation_radius: 0.31
 
 global_costmap:
   global_costmap:
@@ -216,8 +224,16 @@ global_costmap:
       # map_clearing_radius_m), and the heading no longer drifts that way (ekf.yaml imu0).
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.35
+        # Trimmed 2026-09-29 (Steve: the kitchen has two or three times the room she needs):
+        # 0.35 / 3.0 -> 0.31 / 6.0 - the costly band ends 4 cm sooner and falls off twice as fast.
+        # 0.31 is the least that keeps Smac's quick outline checks (her padded outline reaches
+        # 0.309 m from the centre). Tested offline on the house map (tools/drive_analysis/
+        # planner_margins.py): clear-floor routes unchanged; round the open dishwasher (the
+        # camera's catch that blocked the kitchen leg on every loop that night) 7.8 -> 7.2 m,
+        # 6 -> 4 direction changes. The 3 cm footprint_padding stays (tyres swing out at full
+        # lock: the TV cabinet, 2026-09-28); the collision guard and monitor are unchanged.
+        cost_scaling_factor: 6.0
+        inflation_radius: 0.31
 
 planner_server:
   ros__parameters:
