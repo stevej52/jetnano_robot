@@ -30,6 +30,7 @@ TIMEOUT_S (default 45), and ends with the pose error (from localization) and wha
 translator sent the driver.
 
     ros2 run jetnano_navigation nav_goal X Y HEADING_DEG [TIMEOUT_S] --rescue
+    ros2 run jetnano_navigation nav_goal X Y HEADING_DEG [TIMEOUT_S] --exact    (no margin check)
 
 --rescue (2026-09-29): if the goal fails, back out along her own track (nav_helper
 ~/retrace) and try again; if that fails too, ask Claude with pictures (nav_helper ~/ask:
@@ -100,7 +101,8 @@ def clear_goal(grid, gx, gy):
 def main():
     check_only = '--check' in sys.argv
     rescue = '--rescue' in sys.argv
-    args = [a for a in sys.argv[1:] if a not in ('--check', '--rescue')]
+    exact = '--exact' in sys.argv          # nav_park's last leg: her own spot, however tight
+    args = [a for a in sys.argv[1:] if a not in ('--check', '--rescue', '--exact')]
     gx, gy, gh = float(args[0]), float(args[1]), math.radians(float(args[2]))
     timeout = float(args[3]) if len(args) > 3 else 45.0
 
@@ -133,7 +135,9 @@ def main():
     # 2. somewhere she fits
     spin_for(5.0, lambda: st['grid'] is not None)
     n.destroy_subscription(costmap_sub)
-    if st['grid'] is None:
+    if exact:
+        print(f'goal ({gx:+.2f}, {gy:+.2f}) taken as it is (--exact)', flush=True)
+    elif st['grid'] is None:
         print('no costmap from the planner in 5 s: goal not checked', flush=True)
     else:
         found = clear_goal(st['grid'], gx, gy)
