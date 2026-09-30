@@ -74,18 +74,19 @@ def generate_launch_description():
         source_file=LaunchConfiguration('params_file'),
         replacements={'__BT_DIR__': os.path.join(nav_pkg, 'behavior_trees')})
 
-    # nvblox:=true adds the camera's 3D obstacle layer to the local costmap, and
-    # (2026-09-28) the same grid laid on the map to the planner's global costmap, by
-    # rewriting the plugin lists in a copy of the params file. The layers' own
-    # parameters are always in nav2.yaml; only the lists decide whether Nav2
-    # loads the plugins, so the simulator (no nvblox there) is untouched.
+    # nvblox:=true adds the camera's 3D obstacle layer to the local costmap, and has the
+    # planner's global costmap read /planner_map - the house map with the camera's
+    # obstacles on it, from grid_to_points - instead of /map (2026-09-29; before, a
+    # second StaticLayer, which fought /map over the costmap's size: nav2.yaml), by
+    # rewriting a copy of the params file. The layers' own parameters are always in
+    # nav2.yaml, so the simulator (no nvblox there) is untouched.
     params_file = ReplaceString(
         source_file=bt_params,
         replacements={
             'plugins: ["obstacle_layer", "inflation_layer"]':
             'plugins: ["obstacle_layer", "nvblox_layer", "inflation_layer"]',
-            'plugins: ["static_layer", "obstacle_layer", "inflation_layer"]':
-            'plugins: ["static_layer", "obstacle_layer", "camera_layer", "inflation_layer"]',
+            'map_topic: /map                          # PLANNER_MAP':
+            'map_topic: /planner_map                  # PLANNER_MAP',
             # and the collision monitor's approach check sees the camera too (nav2.yaml)
             'observation_sources: ["scan"]':
             'observation_sources: ["scan", "camera"]',

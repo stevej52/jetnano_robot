@@ -184,6 +184,9 @@ global_costmap:
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: true
+        # The house map. navigation.launch.py nvblox:=true swaps in /planner_map: the same
+        # map with the camera's obstacles stamped on (grid_to_points), one grid - see below.
+        map_topic: /map                          # PLANNER_MAP
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: true
@@ -196,19 +199,21 @@ global_costmap:
           data_type: "LaserScan"
           raytrace_max_range: 10.0
           obstacle_max_range: 8.0
-      # The camera's obstacles for the planner too (navigation.launch.py nvblox:=true
-      # adds it to the list). grid_to_points lays nvblox's grid, which is in the odom
-      # frame, on /map's cells through SLAM's map -> odom, twice a second; unknown stays
-      # unknown (track_unknown_space above) and, by maximum, it only adds what the
-      # camera sees under the lidar's plane - boxes, bags, cushions - to the saved map
-      # and the lidar. 2026-09-28: without it the planner sent her through a box and a
-      # floor cushion the controller could see and would not drive into, twice.
-      camera_layer:
-        plugin: "nav2_costmap_2d::StaticLayer"
-        enabled: true
-        map_topic: /nvblox_node/map_grid
-        map_subscribe_transient_local: true
-        subscribe_to_updates: false
+      # The camera's obstacles for the planner too (nvblox:=true). grid_to_points lays
+      # nvblox's grid, which is in the odom frame, on /map's cells through SLAM's
+      # map -> odom and stamps its obstacles onto /map, publishing the result as
+      # /planner_map, which the static layer above then reads - boxes, bags, cushions
+      # under the lidar's plane. 2026-09-28: without it the planner sent her through a
+      # box and a floor cushion the controller could see and would not drive into, twice.
+      # Until 2026-09-29 the camera grid was a second StaticLayer (camera_layer) here. Each
+      # StaticLayer resizes the whole costmap to its own map: /map in localization grows
+      # and shrinks by a few cells as scans are added, the camera's copy followed a moment
+      # later, and each mismatch (58 in the hour) wiped the other layer until its next
+      # message - at times the planner saw only camera blobs and no walls. And nvblox's
+      # grid, built in a drifting odom frame over the whole session, had by then put old
+      # obstacles in the wrong places (ghost walls; odom was 72 deg off the map). Now one
+      # grid, nvblox keeps only what is within 3 m of her (cuvslam_nvblox_d435.launch.py
+      # map_clearing_radius_m), and the heading no longer drifts that way (ekf.yaml imu0).
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0

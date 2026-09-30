@@ -22,14 +22,23 @@ threshold into one point at a fixed height, in the grid's own frame, each time
 a grid arrives (40 Hz, a few hundred points), so the guard can stop the robot
 for something the lidar's single plane cannot see.
 
-It also redraws the grid onto the house map (``map_grid_topic``, 2 a second) for
-Nav2's route planner. nvblox's grid is in the odom frame and the planner's costmap
-in the map frame, and Nav2's StaticLayer only moves a map between frames in a
-rolling costmap, so the grid is turned through SLAM's map -> odom here and laid on
-/map's own cells. Before this (2026-09-28) the planner had only the lidar and the
-saved map: a box, a bag and a floor cushion the lidar looks over made it plan
-straight through them twice on one drive, and the controller, which does see the
-camera, refused and gave up.
+It also redraws the grid onto the house map for Nav2's route planner. nvblox's grid
+is in the odom frame and the planner's costmap in the map frame, and Nav2's
+StaticLayer only moves a map between frames in a rolling costmap, so the grid is
+turned through SLAM's map -> odom here and laid on /map's own cells
+(``map_grid_topic``, the camera alone, for the recordings). Before this (2026-09-28)
+the planner had only the lidar and the saved map: a box, a bag and a floor cushion
+the lidar looks over made it plan straight through them twice on one drive, and
+the controller, which does see the camera, refused and gave up.
+
+What the planner reads is ``planner_map_topic``: /map with the camera's obstacles
+stamped on, one grid (2026-09-29). It had read the two as separate StaticLayers,
+and each resizes the whole costmap to its own map's size: /map in localization grows
+and shrinks by a few cells as scans are added, the camera's copy followed a moment
+later, and every mismatch (58 in an hour) wiped the other layer until its next
+message - the planner at times saw only the camera's blobs and no walls. One grid
+has one size. With no fresh camera grid it is /map as it is, so the planner never
+loses the house.
 """
 
 import array
@@ -68,6 +77,10 @@ class GridToPoints(Node):
         self.declare_parameter('map_grid_topic', '/nvblox_node/map_grid')
         self.declare_parameter('map_topic', '/map')
         self.declare_parameter('map_grid_hz', 2.0)
+        # /map plus the camera's obstacles, for the planner (navigation.launch.py nvblox:=true)
+        self.declare_parameter('planner_map_topic', '/planner_map')
+        # a camera grid older than this is not laid on the planner's map
+        self.declare_parameter('grid_max_age_s', 2.0)
 
         self.threshold = int(self.get_parameter('occupied_threshold').value)
         self.height = float(self.get_parameter('height').value)
@@ -79,13 +92,19 @@ class GridToPoints(Node):
             QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE))
 
         self.grid = None                  # nvblox's latest
-        self.map_info = None              # /map's cells: the planner's costmap has the same
+        self.grid_t = 0.0                 # when it came (this node's clock)
+        self.map_msg = None               # /map, all of it: the planner's map is built on it
+        self.map_info = None
+        self.last_planner = None          # (geometry, bytes) last published, to skip repeats
+        self.max_age = float(self.get_parameter('grid_max_age_s').value)
         self.map_to_odom = None           # (x, y, yaw, when)
         topic = str(self.get_parameter('map_grid_topic').value)
         if topic and cv2 is not None:
             latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                                  durability=DurabilityPolicy.TRANSIENT_LOCAL)
             self.map_pub = self.create_publisher(OccupancyGrid, topic, latched)
+            self.planner_pub = self.create_publisher(
+                OccupancyGrid, str(self.get_parameter('planner_map_topic').value), latched)
             self.create_subscription(OccupancyGrid, self.get_parameter('map_topic').value,
                                      self.on_map, latched)
             # /tf comes 140 times a second; only SLAM's map -> odom matters, so the
@@ -100,7 +119,9 @@ class GridToPoints(Node):
             + (f', and onto the map as {topic}' if topic and cv2 is not None else ''))
 
     def on_map(self, msg: OccupancyGrid) -> None:
+        self.map_msg = msg
         self.map_info = msg.info
+        self.publish_map_grid()           # a new /map (maybe a new size): the planner's at once
 
     def on_tf_raw(self, raw: bytes) -> None:
         if MAP_FRAME_CDR not in raw:
@@ -114,6 +135,7 @@ class GridToPoints(Node):
 
     def on_grid(self, grid: OccupancyGrid) -> None:
         self.grid = grid
+        self.grid_t = self.get_clock().now().nanoseconds * 1e-9
         info = grid.info
         res = info.resolution
         ox, oy = info.origin.position.x, info.origin.position.y
@@ -145,31 +167,57 @@ class GridToPoints(Node):
         self.pub.publish(cloud)
 
     def publish_map_grid(self) -> None:
-        """nvblox's grid (odom frame) laid on /map's cells: occupied, free, or unknown (-1)."""
+        """nvblox's grid (odom frame) laid on /map's cells: occupied, free, or unknown (-1),
+        on map_grid_topic; and /map with its occupied cells added, on planner_map_topic."""
         g, m, mo = self.grid, self.map_info, self.map_to_odom
+        if m is None:
+            return                                     # no SLAM: no map to plan on
         now = self.get_clock().now().nanoseconds * 1e-9
-        if g is None or m is None or mo is None or now - mo[3] > 2.0:
-            return                                     # no SLAM (or no camera): nothing to say
-        tx, ty, yaw, _ = mo
-        c, s = math.cos(yaw), math.sin(yaw)
-        res, ox, oy = g.info.resolution, g.info.origin.position.x, g.info.origin.position.y
-        mr, mx, my = m.resolution, m.origin.position.x, m.origin.position.y
-        # map cell (u, v) centre -> map metres -> odom metres (p_odom = R^T (p_map - t))
-        # -> nvblox cell (i, j): one affine map, for warpAffine's inverse mapping
-        k = mr / res
-        ax, ay = mx + 0.5 * mr - tx, my + 0.5 * mr - ty
-        warp = np.array([[c * k, s * k, (c * ax + s * ay - ox) / res - 0.5],
-                         [-s * k, c * k, (-s * ax + c * ay - oy) / res - 0.5]])
-        src = np.asarray(g.data, dtype=np.int8).reshape(g.info.height, g.info.width).astype(np.int16)
-        out = cv2.warpAffine(src, warp, (m.width, m.height),
-                             flags=cv2.INTER_NEAREST | cv2.WARP_INVERSE_MAP,
-                             borderMode=cv2.BORDER_CONSTANT, borderValue=-1)
+        out = None
+        if g is not None and now - self.grid_t <= self.max_age and mo is not None and now - mo[3] <= 2.0:
+            tx, ty, yaw, _ = mo
+            c, s = math.cos(yaw), math.sin(yaw)
+            res, ox, oy = g.info.resolution, g.info.origin.position.x, g.info.origin.position.y
+            mr, mx, my = m.resolution, m.origin.position.x, m.origin.position.y
+            # map cell (u, v) centre -> map metres -> odom metres (p_odom = R^T (p_map - t))
+            # -> nvblox cell (i, j): one affine map, for warpAffine's inverse mapping
+            k = mr / res
+            ax, ay = mx + 0.5 * mr - tx, my + 0.5 * mr - ty
+            warp = np.array([[c * k, s * k, (c * ax + s * ay - ox) / res - 0.5],
+                             [-s * k, c * k, (-s * ax + c * ay - oy) / res - 0.5]])
+            src = np.asarray(g.data, dtype=np.int8).reshape(g.info.height, g.info.width).astype(np.int16)
+            out = cv2.warpAffine(src, warp, (m.width, m.height),
+                                 flags=cv2.INTER_NEAREST | cv2.WARP_INVERSE_MAP,
+                                 borderMode=cv2.BORDER_CONSTANT, borderValue=-1)
+            msg = OccupancyGrid()
+            msg.header.frame_id = 'map'
+            msg.header.stamp = g.header.stamp
+            msg.info = m
+            msg.data = array.array('b', out.astype(np.int8).tobytes())
+            self.map_pub.publish(msg)
+        self.publish_planner_map(out)
+
+    def publish_planner_map(self, camera) -> None:
+        """/map, with the cells the camera has occupied (at the threshold) set to 100."""
+        base = self.map_msg
+        if base is None:
+            return
+        info = base.info
+        grid = np.asarray(base.data, dtype=np.int8)
+        if camera is not None and camera.shape == (info.height, info.width):
+            grid = grid.copy()
+            grid[camera.reshape(-1) >= self.threshold] = 100
+        geometry = (info.width, info.height, info.resolution, info.origin.position.x, info.origin.position.y)
+        data = grid.tobytes()
+        if self.last_planner == (geometry, data):
+            return                                     # nothing new: no re-inflating the whole house
+        self.last_planner = (geometry, data)
         msg = OccupancyGrid()
-        msg.header.frame_id = 'map'
-        msg.header.stamp = g.header.stamp
-        msg.info = m
-        msg.data = array.array('b', out.astype(np.int8).tobytes())
-        self.map_pub.publish(msg)
+        msg.header.frame_id = base.header.frame_id or 'map'
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.info = info
+        msg.data = array.array('b', data)
+        self.planner_pub.publish(msg)
 
 
 def main(args=None):
