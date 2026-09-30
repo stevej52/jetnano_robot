@@ -39,6 +39,9 @@ def generate_launch_description():
                               description='INA219 battery monitor (battery topic, e_stop when flat)'),
         DeclareLaunchArgument('battery_voltage_only', default_value='true',
                               description='nothing flows through the shunt: report the pack voltage only'),
+        DeclareLaunchArgument('battery_i2c_bus', default_value='7',
+                              description='I2C bus the INA219 is on: 7 = header pins 3/5 (with the IMU), '
+                                          '1 = the spare bus on pins 27/28'),
         DeclareLaunchArgument('battery_simulate', default_value='false'),
         DeclareLaunchArgument('use_cliff', default_value='false',
                               description='VL53L0X cliff sensors behind a TCA9548A (fit them first)'),
@@ -184,7 +187,7 @@ def generate_launch_description():
                 respawn=True,
                 respawn_delay=10.0,
                 parameters=[{
-                    'i2c_bus': LaunchConfiguration('imu_i2c_bus'),
+                    'i2c_bus': LaunchConfiguration('battery_i2c_bus'),
                     'address': 0x41,
                     'voltage_only': LaunchConfiguration('battery_voltage_only'),
                     'simulate': LaunchConfiguration('battery_simulate'),

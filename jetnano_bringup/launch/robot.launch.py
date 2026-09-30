@@ -95,6 +95,8 @@ def generate_launch_description():
             description='the four downward VL53L0X (fit them first); the collision guard reads them too'),
         DeclareLaunchArgument('cliff_simulate', default_value='false'),
         DeclareLaunchArgument('cliff_simulated_drops', default_value="['']"),
+        DeclareLaunchArgument('battery_i2c_bus', default_value='7',
+                              description='I2C bus the INA219 is on: 7 = pins 3/5, 1 = the spare pins 27/28'),
         DeclareLaunchArgument(
             'use_sounds', default_value='true',
             description='her voice on the USB speaker (jetnano_bringup sounds); quiet without one'),
@@ -170,6 +172,7 @@ def generate_launch_description():
             'use_cliff': LaunchConfiguration('use_cliff'),
             'cliff_simulate': LaunchConfiguration('cliff_simulate'),
             'cliff_simulated_drops': LaunchConfiguration('cliff_simulated_drops'),
+            'battery_i2c_bus': LaunchConfiguration('battery_i2c_bus'),
         }.items()),
 
         _include('odometry.launch.py',
