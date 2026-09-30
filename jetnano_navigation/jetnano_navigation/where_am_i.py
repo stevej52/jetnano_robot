@@ -205,18 +205,25 @@ class WhereAmI(Node):
         if self.busy.locked():
             response.success, response.message = False, 'busy searching: try again in a moment'
             return response
-        m = self._fresh_scan()
-        if m is None:
-            response.success, response.message = False, 'no lidar scan'
-            return response
-        old = places.load_places(self.places_file).get('bench')
-        same = places.place_match(m.ranges, [np.nan if v is None else v for v in old['ranges']]) if old else None
-        places.save_place(self.places_file, 'bench', m.ranges, 'remembered by ~/remember_bench')
+        # off the executor's thread: a scan cannot arrive while a service callback holds it
+        threading.Thread(target=self._remember_bench, daemon=True).start()
         response.success = True
-        response.message = (f'bench remembered from {len(m.ranges)} beams in {self.places_file}'
-                            + (f' (matched the old bench scan {same:.2f})' if same is not None else ''))
-        self.get_logger().info(response.message)
+        response.message = 'remembering the bench: the result follows on where_am_i/state and in the log'
         return response
+
+    def _remember_bench(self) -> None:
+        with self.busy:
+            m = self._fresh_scan()
+            if m is None:
+                self._set({'state': 'error', 'why': 'remember_bench: no lidar scan'})
+                return
+            old = places.load_places(self.places_file).get('bench')
+            same = places.place_match(m.ranges, [np.nan if v is None else v for v in old['ranges']]) if old else None
+            places.save_place(self.places_file, 'bench', m.ranges, 'remembered by ~/remember_bench')
+            note = (f'bench remembered from {len(m.ranges)} beams in {self.places_file}'
+                    + (f' (matched the old bench scan {same:.2f})' if same is not None else ''))
+            self.get_logger().info(note)
+        self._run('remembered')                      # and show what she makes of it now
 
     def _known_place(self, scan):
         """(name, score) if the scan looks like a remembered place, else (None, score)."""
