@@ -76,6 +76,22 @@ def test_watchdog_events_to_moods(kind, mood):
     assert sounds.watchdog_mood(msg) == mood
 
 
+def test_no_uhoh_on_the_stuck_speaker_itself():
+    sounds = pytest.importorskip('jetnano_bringup.sounds')
+    msg = json.dumps({'kind': 'down', 'what': sounds.SOUND_DEVICE, 'detail': 'stuck'})
+    assert sounds.watchdog_mood(msg) is None
+
+
+def test_stuck_sound_pids(tmp_path):
+    watchdog = pytest.importorskip('jetnano_bringup.watchdog')
+    for pid, comm, state in ((10, 'arecord', 'D'), (11, 'arecord', 'S'), (12, 'aplay', 'D'),
+                             (13, 'python3', 'D'), (14, 'a) b', 'D')):
+        (tmp_path / str(pid)).mkdir()
+        (tmp_path / str(pid) / 'stat').write_text(f'{pid} ({comm}) {state} 1 2 3 4\n')
+    (tmp_path / 'self').mkdir()
+    assert watchdog.stuck_sound_pids(str(tmp_path)) == {10, 12}
+
+
 def test_watchdog_garbage_is_ignored():
     sounds = pytest.importorskip('jetnano_bringup.sounds')
     assert sounds.watchdog_mood('not json') is None

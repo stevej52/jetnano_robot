@@ -78,13 +78,19 @@ except ImportError:  # pragma: no cover
 # going wrong". 'act' (a restart) and 'still_down' are the same trouble again, so no new sound;
 # 'gave_up' has the watchdog's own announcement (sad).
 WATCHDOG_MOODS = {'down': 'uhoh', 'slow': 'uhoh', 'back': 'beeps'}
+# the watchdog's name for the reSpeaker stuck in the kernel: the speaker is on it, so an
+# aplay now would only get stuck with it
+SOUND_DEVICE = 'microphone and speaker'
 
 
 def watchdog_mood(event_json: str):
     """The mood for one /watchdog/events message, or None."""
     try:
-        kind = json.loads(event_json).get('kind')
+        rec = json.loads(event_json)
+        kind, what = rec.get('kind'), rec.get('what')
     except (ValueError, AttributeError):
+        return None
+    if what == SOUND_DEVICE and kind != 'back':
         return None
     return WATCHDOG_MOODS.get(kind)
 

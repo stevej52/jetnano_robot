@@ -40,7 +40,12 @@ ExecStart=/bin/bash -lc 'source /opt/ros/jazzy/setup.bash && source /home/jeston
 # ros2 launch shuts its nodes down on SIGINT (the lidar driver must not be
 # SIGKILLed: the sensor then needs a USB replug). Give it time.
 KillSignal=SIGINT
-TimeoutStopSec=40
+TimeoutStopSec=45
+# The same SIGINT, sent by this script first (as root: "+"), which then powers off at once
+# when all that is left is USB sound stuck in the kernel and the machine is shutting down -
+# instead of systemd waiting over a minute and a half on a process no signal can end
+# (2026-09-29, twice). Installed to /usr/local/sbin by install_isaac_ros_46.sh.
+ExecStop=+/usr/local/sbin/jetnano-robot-stop
 Restart=on-failure
 RestartSec=10
 

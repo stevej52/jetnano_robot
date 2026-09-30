@@ -172,6 +172,24 @@ GIVE_UP_HINT = {
 }
 
 
+def stuck_sound_pids(proc='/proc'):
+    """Pids of arecord/aplay processes in state D (uninterruptible sleep) right now."""
+    pids = set()
+    for name in os.listdir(proc):
+        if not name.isdigit():
+            continue
+        try:
+            with open(os.path.join(proc, name, 'stat')) as f:
+                stat = f.read()
+        except OSError:
+            continue
+        comm = stat[stat.find('(') + 1:stat.rfind(')')]
+        state = stat[stat.rfind(')') + 2:stat.rfind(')') + 3]
+        if comm in ('arecord', 'aplay') and state == 'D':
+            pids.add(int(name))
+    return pids
+
+
 class Item:
     """One thing being watched and where it is on its ladder."""
 
@@ -250,6 +268,7 @@ class Watchdog(Node):
         self.sys = {}
         self.english = False
         self.container_busy_until = 0.0  # one container action at a time
+        self.stuck_sound = set()         # sound processes asleep in the kernel at the last check
         self.slam_active = False
         self.slam_since = 0.0
         self.guard_inactive_since = 0.0
@@ -464,12 +483,23 @@ class Watchdog(Node):
         # Until 2026-09-29 each was a 'system' event every 30 s while it lasted, and never
         # said when it was over.
         hot = max((v for k, v in s.items() if k.startswith('temp_')), default=0)
+        # Sound stuck in the kernel: an arecord/aplay asleep in state D at two checks in a row.
+        # The reSpeaker's USB controller sometimes never hands back the last transfer when a
+        # recording stops (2026-09-29: "usb 1-2.4: timeout: still 1 active urbs on EP #81");
+        # the process can then never end, the mic and speaker are dead, and only a reboot
+        # clears it. The speaker is on the same device, so this one gets no uh-oh: the page
+        # and the log have to say it.
+        stuck_now = stuck_sound_pids()
+        stuck = stuck_now & self.stuck_sound
+        self.stuck_sound = stuck_now
         for key, label, bad, why in (
                 ('disk', 'disk space', s.get('disk_free_gb', 99) < 3, f'nearly full, {s.get("disk_free_gb")} GB free'),
                 ('memory', 'memory', s.get('mem_available_mb', 9999) < 300,
                  f'low, {s.get("mem_available_mb")} MB available'),
                 ('heat', 'temperature', hot > 90, f'running hot, {hot:.0f} C'),
-                ('wifi', 'Wi-Fi', s['wifi_dbm'] is None, 'not connected')):
+                ('wifi', 'Wi-Fi', s['wifi_dbm'] is None, 'not connected'),
+                ('sound', 'microphone and speaker', bool(stuck),
+                 f'USB sound stuck in the kernel (pids {sorted(stuck)}): a reboot clears it')):
             item = self.http_items.setdefault(key, Item(key, label, []))
             if bad:
                 self._bad(item, why, act=False)

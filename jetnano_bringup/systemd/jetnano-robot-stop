@@ -1,0 +1,89 @@
+#!/bin/bash
+# ExecStop of jetnano-robot.service, run as root ("+" in the unit). Installed to
+# /usr/local/sbin/jetnano-robot-stop.
+#
+# 1. Stop the launch as before: SIGINT, and ros2 launch shuts its nodes down (the lidar
+#    driver must not be SIGKILLed: the sensor then needs a USB replug). Up to 35 s.
+# 2. What is left in the service? The reSpeaker's USB sound can get stuck in the kernel
+#    when a recording stops: the controller never hands back the last transfer, and the
+#    arecord (or aplay) waiting for it sleeps for good - state D, deaf to every signal,
+#    SIGKILL included ("usb 1-2.4: timeout: still 1 active urbs on EP #81"). It happened
+#    at 3 of 5 microphone stops on 2026-09-29, twice at shutdown: systemd then waited 40 s
+#    for SIGINT, 40 s more after SIGKILL, and more again at its final kill - over a
+#    minute and a half of a robot that looked switched off but was not.
+#    So if everything else has stopped, only stuck sound processes are left, and the
+#    machine is shutting down anyway: save the clock, flush the disks and power off (or
+#    reboot) at once. At any other time (a service restart) just say what happened: only
+#    a reboot clears it.
+#
+#    DRY_RUN=1 jetnano-robot-stop    reports what it would do, stops nothing.
+set -u
+CG=/sys/fs/cgroup/system.slice/jetnano-robot.service
+log() { echo "jetnano-robot-stop: $*"; }
+
+if [ -z "${DRY_RUN:-}" ] && [ -n "${MAINPID:-}" ] && kill -0 "$MAINPID" 2>/dev/null; then
+    kill -INT "$MAINPID"
+    for _ in $(seq 1 60); do                # 30 s; all of this must fit in TimeoutStopSec (45)
+        kill -0 "$MAINPID" 2>/dev/null || break
+        sleep 0.5
+    done
+fi
+
+# pid comm state, for everything still in the service
+leftovers() {
+    local pid stat rest
+    for pid in $(cat "$CG/cgroup.procs" 2>/dev/null); do
+        stat=$(cat "/proc/$pid/stat" 2>/dev/null) || continue
+        rest=${stat##*) }
+        stat=${stat#*(}
+        echo "$pid ${stat%)*} ${rest%% *}"
+    done
+}
+
+stuck_sound() {           # pids of sound processes asleep in the kernel, twice 2 s apart
+    local first second pid comm state
+    first=$(leftovers | awk '($2 == "arecord" || $2 == "aplay") && $3 == "D" {print $1}')
+    [ -z "$first" ] && return
+    sleep 2
+    while read -r pid comm state; do
+        case " $first " in *" $pid "*) [ "$state" = D ] && second="${second:-} $pid" ;; esac
+    done < <(leftovers)
+    echo ${second:-}
+}
+
+stuck=$(stuck_sound)
+[ -z "$stuck" ] && { log "${DRY_RUN:+(dry run) }nothing stuck"; exit 0; }
+others=$(leftovers | awk -v s=" $stuck " 'index(s, " " $1 " ") == 0 {print $2}' | sort -u | tr '\n' ' ')
+log "USB sound stuck in the kernel (pids $stuck): only a reboot clears it; other processes left: ${others:-none}"
+
+state=$(systemctl is-system-running 2>/dev/null)
+if [ "$state" != stopping ]; then
+    log "not shutting down ($state): leaving it to systemd"
+    exit 0
+fi
+if [ -n "$others" ] && [ -z "${DRY_RUN:-}" ]; then
+    # the launch had its 30 s; the power is going anyway (the lidar is power-cycled with it)
+    for _ in $(seq 1 8); do
+        others=$(leftovers | awk -v s=" $stuck " 'index(s, " " $1 " ") == 0 {print $1}')
+        [ -z "$others" ] && break
+        sleep 0.5
+    done
+    if [ -n "$others" ]; then
+        log "still stopping after 34 s, killed: $(echo $others)"
+        kill -KILL $others 2>/dev/null
+    fi
+fi
+if systemctl list-jobs --no-legend 2>/dev/null | grep -Eq '(reboot|kexec)\.target'; then
+    how=reboot
+else
+    how=poweroff
+fi
+if [ -n "${DRY_RUN:-}" ]; then
+    log "(dry run) would save the clock, sync and $how now"
+    exit 0
+fi
+log "shutting down: saving the clock, flushing the disks and ${how}ing now instead of waiting on it"
+[ -x /usr/local/sbin/rosie-clock ] && /usr/local/sbin/rosie-clock save
+journalctl --sync 2>/dev/null
+sync
+exec systemctl "$how" --force --force
