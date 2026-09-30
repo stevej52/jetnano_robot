@@ -51,6 +51,7 @@ from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, Time
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
+from launch_ros.actions import Node
 
 SIM_TIME = {'use_sim_time': 'true'}
 
@@ -90,6 +91,10 @@ def generate_launch_description():
             'visual_odometry', default_value='true',
             description='the simulated camera odometry (rgbd_odometry); false = lidar odometry and IMU only'),
         DeclareLaunchArgument(
+            'ground_truth_odometry', default_value='false',
+            description="the simulator's exact odometry on /vo instead of rgbd_odometry (ground_truth_vo): "
+                        'the nightly test drive on H2-Host, which tests navigation, not RTAB-Map'),
+        DeclareLaunchArgument(
             'navigation', default_value='false',
             description='The whole of Nav2 (navigation.launch.py, mapping mode); '
                         'it includes slam_toolbox, so slam:= is then ignored'),
@@ -117,7 +122,18 @@ def generate_launch_description():
                     condition=IfCondition(LaunchConfiguration('odometry')),
                     arguments={'use_sim_time': 'true',
                                'lidar_odom': LaunchConfiguration('lidar_odom'),
-                               'use_visual_odometry': LaunchConfiguration('visual_odometry')}),
+                               'use_visual_odometry': LaunchConfiguration('visual_odometry'),
+                               # ground truth on /vo: no rgbd_odometry beside it
+                               'vo': PythonExpression(["'none' if '", LaunchConfiguration('ground_truth_odometry'),
+                                                       "' == 'true' else 'rtabmap'"])}),
+            Node(
+                package='jetnano_gazebo',
+                executable='ground_truth_vo',
+                name='ground_truth_vo',
+                output='screen',
+                parameters=[{'use_sim_time': True}],
+                condition=IfCondition(LaunchConfiguration('ground_truth_odometry')),
+            ),
         ]),
 
         # SLAM last: it needs /scan and a tf tree that already reaches

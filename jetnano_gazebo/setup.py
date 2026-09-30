@@ -41,6 +41,7 @@ setup(
     entry_points={
         'console_scripts': [
             'sim_drive = jetnano_gazebo.drive_node:main',
+            'ground_truth_vo = jetnano_gazebo.ground_truth_vo:main',
         ],
     },
 )
