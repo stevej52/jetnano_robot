@@ -31,6 +31,11 @@ translator sent the driver.
 
     ros2 run jetnano_navigation nav_goal X Y HEADING_DEG [TIMEOUT_S] --rescue
     ros2 run jetnano_navigation nav_goal X Y HEADING_DEG [TIMEOUT_S] --exact    (no margin check)
+    ros2 run jetnano_navigation nav_goal X Y HEADING_DEG [TIMEOUT_S] --home     (allowed on a low battery)
+
+A goal is refused on the bench (where_am_i) and on a low or flat battery (battery/level)
+unless it is the way home (--home, nav_park's legs); "low soon" only gets a warning
+(Steve, 2026-09-30: "don't start what you can't finish, and go home when the countdown plays").
 
 --rescue (2026-09-29): if the goal fails, back out along her own track (nav_helper
 ~/retrace) and try again; if that fails too, ask Claude with pictures (nav_helper ~/ask:
@@ -97,6 +102,23 @@ def grid_from_costmap(cm):
     return Grid(md.resolution, md.size_x, md.size_y, md.origin.position.x, md.origin.position.y, out)
 
 
+def battery_verdict(level_json, home: bool):
+    """(may she go?, a line to print or '') from battery_monitor's battery/level message.
+    low or flat: only the way home (--home). soon: yes, with a warning. Unknown: yes."""
+    try:
+        rec = json.loads(level_json or '{}')
+        level, why = rec.get('level', 'ok'), rec.get('why', '')
+    except ValueError:
+        return True, ''
+    if level in ('low', 'flat'):
+        if home:
+            return True, f'battery {level} ({why}): allowed, this is the way home'
+        return False, f'battery {level} ({why}): she is heading home, not out'
+    if level == 'soon':
+        return True, f'battery low soon ({why}): she may have to head home during this'
+    return True, ''
+
+
 def clear_goal(grid, gx, gy):
     """(x, y, moved_m) nearest (gx, gy) where she fits, or None."""
     i = grid.info
@@ -131,7 +153,8 @@ def main():
     check_only = '--check' in sys.argv
     rescue = '--rescue' in sys.argv
     exact = '--exact' in sys.argv          # nav_park's last leg: her own spot, however tight
-    args = [a for a in sys.argv[1:] if a not in ('--check', '--rescue', '--exact')]
+    home = '--home' in sys.argv            # nav_park's legs: the way home is allowed on a low battery
+    args = [a for a in sys.argv[1:] if a not in ('--check', '--rescue', '--exact', '--home')]
     gx, gy, gh = float(args[0]), float(args[1]), math.radians(float(args[2]))
     timeout = float(args[3]) if len(args) > 3 else 45.0
 
@@ -144,6 +167,11 @@ def main():
                          durability=DurabilityPolicy.TRANSIENT_LOCAL)
     # where_am_i's verdict (latched): on the bench, nothing drives (2026-09-30)
     n.create_subscription(String, '/where_am_i/state', lambda m: st.__setitem__('where', m.data),
+                          QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+    # the battery's verdict (latched): low or flat, only the way home is driven (Steve, 2026-09-30:
+    # "don't start what you can't finish"); battery_home takes her there
+    st['battery'] = None
+    n.create_subscription(String, '/battery/level', lambda m: st.__setitem__('battery', m.data),
                           QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
     costmap_sub = n.create_subscription(OccupancyGrid, '/global_costmap/costmap',
                                         lambda m: st.__setitem__('grid', m), latched)
@@ -164,6 +192,14 @@ def main():
         where = {}
     if where.get('state') == 'bench':
         raise SystemExit(f'she is on the bench ({where.get("why", "")}): not sending the goal')
+
+    # 0b. enough battery for it
+    spin_for(1.0, lambda: st['battery'] is not None)
+    allowed, note = battery_verdict(st['battery'], home)
+    if note:
+        print(note, flush=True)
+    if not allowed:
+        raise SystemExit('not sending the goal')
 
     # 1. the motion check's lock (it is re-sent every second while it holds)
     spin_for(1.5, lambda: st['lock'] is not None)
@@ -339,6 +375,9 @@ def main():
         spin_for(0.1)
 
     status = drive(gx, gy, gh)
+    if rescue and status != GoalStatus.STATUS_SUCCEEDED and not battery_verdict(st['battery'], home)[0]:
+        print('rescue: the battery is low - not retrying; she is heading home (battery_home)', flush=True)
+        rescue = False
     if rescue and status != GoalStatus.STATUS_SUCCEEDED:
         print('rescue: backing out along her own track, then trying again', flush=True)
         set_retrace(0.8)

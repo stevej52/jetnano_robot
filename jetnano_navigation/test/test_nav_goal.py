@@ -62,6 +62,21 @@ def test_goal_by_a_wall_is_moved_to_the_middle():
     assert abs(found[1] - mid) < 0.25
 
 
+@pytest.mark.parametrize('level, home, allowed', [('ok', False, True), ('soon', False, True), ('low', False, False),
+                                                  ('flat', False, False), ('low', True, True), ('flat', True, True),
+                                                  ('none', False, True)])
+def test_battery_verdict(level, home, allowed):
+    import json
+    ok, note = nav_goal.battery_verdict(json.dumps({'level': level, 'why': 'x'}), home)
+    assert ok == allowed
+    assert bool(note) == (level in ('low', 'flat', 'soon'))
+
+
+def test_battery_verdict_without_a_reading_allows():
+    assert nav_goal.battery_verdict(None, False) == (True, '')
+    assert nav_goal.battery_verdict('garbage', False) == (True, '')
+
+
 def test_costmap_service_costs_translate_as_nav2_publishes_them():
     md = types.SimpleNamespace(resolution=0.05, size_x=8, size_y=1,
                                origin=types.SimpleNamespace(position=types.SimpleNamespace(x=1.0, y=2.0)))

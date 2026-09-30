@@ -36,6 +36,7 @@ joystick outranks it and the e-stop lock, collision guard and motion check all a
 stops at the first motion lock.
 """
 
+import fcntl
 import math
 import subprocess
 import sys
@@ -55,6 +56,7 @@ LEG_MIN_M, LEG_MAX_M = 0.04, 0.12
 # At the point in front of the spot there is room for a proper three-point turn: the house map
 # is clear for 1.35 m all round (1.2, 0). On the spot itself the wall is 0.58 m away: short legs.
 LEG_MAX_OPEN_M = 0.30
+LOCK_FILE = '/tmp/nav_park.lock'
 LEAD_RAD = math.radians(1.5)   # she coasts on a little after the throttle drops
 SMALL_RAD = math.radians(20)   # below this much to go: half lock, finer
 LEG_TIMEOUT_S = 2.5       # a leg that has not got there by then is stuck: the motion check is 1.5 s
@@ -112,7 +114,8 @@ class Shuffles:
 
 
 def nav_goal(x, y, h_deg, timeout=90, exact=False):
-    cmd = [sys.executable, '-m', 'jetnano_navigation.nav_goal', f'{x:.3f}', f'{y:.3f}', f'{h_deg:.1f}', str(timeout)]
+    cmd = [sys.executable, '-m', 'jetnano_navigation.nav_goal', f'{x:.3f}', f'{y:.3f}', f'{h_deg:.1f}', str(timeout),
+           '--home']                             # parking is the way home: allowed on a low battery
     if exact:
         cmd.append('--exact')
     print(f'-- nav_goal {x:+.2f} {y:+.2f} {h_deg:+.0f}', flush=True)
@@ -230,6 +233,12 @@ def main():
     h = math.radians(h_deg)
     px, py = x + pre * math.cos(h), y + pre * math.sin(h)   # in front of the spot: she reverses in
 
+    # one parking at a time: battery_home may start one while a drive script is about to
+    lock = open(LOCK_FILE, 'w')
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        raise SystemExit('another nav_park is running (battery_home, or a drive script): not starting a second')
     print(f'parking at ({x:+.2f}, {y:+.2f}) facing {h_deg:+.0f} deg, from ({px:+.2f}, {py:+.2f})', flush=True)
     rclpy.init()
     node = rclpy.create_node('nav_park')

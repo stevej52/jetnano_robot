@@ -32,6 +32,7 @@ setup(
             'nav_goal = jetnano_navigation.nav_goal:main',
             'nav_park = jetnano_navigation.nav_park:main',
             'nav_helper = jetnano_navigation.nav_helper:main',
+            'battery_home = jetnano_navigation.battery_home:main',
         ],
     },
 )

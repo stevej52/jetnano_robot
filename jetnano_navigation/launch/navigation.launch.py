@@ -137,6 +137,18 @@ def generate_launch_description():
             parameters=[{'use_sim_time': ParameterValue(LaunchConfiguration('use_sim_time'), value_type=bool)}],
         ),
 
+        # A low battery (battery/level "low", the countdown) cancels her goal and parks her
+        # (Steve, 2026-09-30: "go home when the countdown plays").
+        Node(
+            package='jetnano_navigation',
+            executable='battery_home',
+            name='battery_home',
+            output='screen',
+            respawn=True,
+            respawn_delay=2.0,
+            parameters=[{'use_sim_time': ParameterValue(LaunchConfiguration('use_sim_time'), value_type=bool)}],
+        ),
+
         # Nav2's collision monitor publishes cmd_vel_nav_mps (nav2.yaml); this turns it
         # into what the driver understands and hands it to twist_mux on cmd_vel_nav.
         Node(
