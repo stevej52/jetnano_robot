@@ -302,7 +302,8 @@ class DriveLog:
         # second would only log misses.
         try:
             with urllib.request.urlopen(f'{CAMERA_URL}/', timeout=3) as r:
-                listed = {w.split('.')[0] for w in r.read().decode(errors='replace').split() if w.endswith('.jpg')}
+                listed = {w.split('.')[0] for w in r.read().decode(errors='replace').replace(',', ' ').split()
+                          if w.endswith('.jpg')}
             missing = [c for c in self.cameras if c not in listed]
             if missing:
                 self.note(f'not on the camera server, skipped: {", ".join(missing)}')
