@@ -129,14 +129,14 @@ case "${1:-status}" in
             journalctl --since "@$(cat "$EXTRA/started")" --no-pager -o short-iso-precise > "$EXTRA/journal.txt" 2>&1
             echo "stopped; report for $BAG:"
             echo
-            ros2 run jetnano_bringup drive_report "$BAG"
+            nice -n 10 timeout 900 ros2 run jetnano_bringup drive_report "$BAG"
             echo
             echo "kept: $(du -sh "$BAG" | cut -f1) bag, $(du -sh "$EXTRA" | cut -f1) extra" \
                  "($(find "$EXTRA/frames" -name '*.jpg' 2>/dev/null | wc -l) pictures)"
         else
             echo "stopped; report for $BAG:"
             echo
-            ros2 run jetnano_bringup drive_report "$BAG"
+            nice -n 10 timeout 900 ros2 run jetnano_bringup drive_report "$BAG"
         fi
         if [ -z "$LEFT" ]; then echo "all drive logging is off"; else echo "STILL RUNNING:"; echo "$LEFT"; exit 1; fi
         ;;

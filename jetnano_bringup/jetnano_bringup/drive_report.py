@@ -40,6 +40,7 @@ The stop-zone geometry and the lidar's pose are copied from
 config/collision_guard.yaml and the URDF; if those change, change ZONES.
 """
 
+import bisect
 import glob
 import math
 import os
@@ -47,14 +48,24 @@ import sys
 from collections import defaultdict
 
 from rclpy.serialization import deserialize_message
-from rosbag2_py import ConverterOptions, SequentialReader, StorageOptions
+from rosbag2_py import ConverterOptions, SequentialReader, StorageFilter, StorageOptions
 from rosidl_runtime_py.utilities import get_message
 
 LIDAR_X, LIDAR_YAW = -0.005, math.pi          # jetnano.urdf.xacro
 ZONES = {'forward': (0.20, 0.52, 0.16), 'backward': (-0.52, -0.20, 0.16)}   # collision_guard.yaml stop_zone
 
+# Only these are read, and of each only the numbers the report uses. Until 2026-09-29 every
+# message of every topic was decoded and kept: an hour's full recording (1.8 GB, 1.9 million
+# messages) grew the report to 2.9 GB, the Jetson ran out of memory, the camera, mic and
+# lidar odometry stalled for a minute and the kernel killed the report. Scans (720 ranges
+# each, 8 a second) are read in a second pass, only those next to a guard stop.
+POSES = ('/vo', '/odometry/filtered', '/lidar_odom')
+TWISTS = ('/cmd_vel_web', '/cmd_vel_mux', '/cmd_vel')
+GUARD = '/collision_guard/state'
+HOLD = '/odom_hold'
 
-def load(bag):
+
+def open_reader(bag):
     reader = SequentialReader()
     try:
         reader.open(StorageOptions(uri=bag, storage_id=''), ConverterOptions('', ''))
@@ -63,15 +74,62 @@ def load(bag):
         reader = SequentialReader()
         reader.open(StorageOptions(uri=glob.glob(os.path.join(bag, '*.mcap'))[0], storage_id='mcap'),
                     ConverterOptions('', ''))
+    return reader
+
+
+def load(bag):
+    """{topic: [(t, ...numbers)]} sorted by time, and {topic: message count} for every topic.
+    Poses are (t, x, y, yaw), commands (t, linear.x, angular.z), the guard (t, action_type)."""
+    reader = open_reader(bag)
     types = {t.name: get_message(t.type) for t in reader.get_all_topics_and_types()}
+    try:
+        counts = {i.topic_metadata.name: i.message_count
+                  for i in reader.get_metadata().topics_with_message_count}
+    except (AttributeError, RuntimeError):
+        counts = {}
+    wanted = [t for t in POSES + TWISTS + (GUARD, HOLD) if t in types]
+    reader.set_filter(StorageFilter(topics=wanted))
     msgs = defaultdict(list)
     while reader.has_next():
         topic, data, t = reader.read_next()
-        if topic in types:
-            msgs[topic].append((t / 1e9, deserialize_message(data, types[topic])))
+        m = deserialize_message(data, types[topic])
+        t /= 1e9
+        if topic in POSES:
+            p = m.pose.pose
+            msgs[topic].append((t, p.position.x, p.position.y, yaw_of(p.orientation)))
+        elif topic in TWISTS:
+            msgs[topic].append((t, m.linear.x, m.angular.z))
+        elif topic == GUARD:
+            msgs[topic].append((t, m.action_type))
+        else:
+            msgs[topic].append((t,))
     for v in msgs.values():
         v.sort(key=lambda p: p[0])
-    return msgs
+    if not counts:
+        counts = {k: len(v) for k, v in msgs.items()}
+    return msgs, counts
+
+
+def scans_near(bag, times, window=0.3):
+    """The /scan messages within `window` s of any of `times`, decoded: [(t, LaserScan)]."""
+    if not times:
+        return []
+    reader = open_reader(bag)
+    types = {t.name: t.type for t in reader.get_all_topics_and_types()}
+    if '/scan' not in types:
+        return []
+    scan_type = get_message(types['/scan'])
+    reader.set_filter(StorageFilter(topics=['/scan']))
+    times = sorted(times)
+    out = []
+    while reader.has_next():
+        _, data, t = reader.read_next()
+        t /= 1e9
+        i = bisect.bisect_left(times, t - window)
+        if i < len(times) and times[i] <= t + window:
+            out.append((t, deserialize_message(data, scan_type)))
+    out.sort(key=lambda p: p[0])
+    return out
 
 
 def yaw_of(q):
@@ -145,23 +203,19 @@ def window_diffs(A, B, span=2.0, step=1.0, a_must_be_clean=False):
 
 
 def report(bag):
-    msgs = load(bag)
+    msgs, counts = load(bag)
     lines = []
     say = lines.append
-    if not msgs:
-        say('empty bag')
+    if not any(msgs.values()):
+        say('empty bag' if not counts else 'none of the topics this report reads are in the bag')
         return lines
     t0 = min(v[0][0] for v in msgs.values() if v)
     t1 = max(v[-1][0] for v in msgs.values() if v)
     say(f'{os.path.basename(bag.rstrip("/"))}: {t1 - t0:.0f} s, '
-        + ', '.join(f'{k.split("/")[-1]}={len(v)}' for k, v in sorted(msgs.items())))
+        + ', '.join(f'{k.split("/")[-1]}={n}' for k, n in sorted(counts.items())))
 
     # --- odometry health ---------------------------------------------------
-    def poses(topic):
-        return [(t, m.pose.pose.position.x, m.pose.pose.position.y, yaw_of(m.pose.pose.orientation))
-                for t, m in msgs.get(topic, [])]
-
-    vo, ekf, lo = poses('/vo'), poses('/odometry/filtered'), poses('/lidar_odom')
+    vo, ekf, lo = msgs.get('/vo', []), msgs.get('/odometry/filtered', []), msgs.get('/lidar_odom', [])
     for name, P in [('VO', vo), ('EKF', ekf)] + ([('lidar odometry', lo)] if lo else []):
         if len(P) < 2:
             say(f'{name}: no data')
@@ -190,40 +244,41 @@ def report(bag):
     if len(vo) > 1 and len(lo) > 1:
         # the relay drops the stretches the lidar odometry got wrong: compare where it ran
         agreement('VO vs lidar odometry', *window_diffs(lo, vo, a_must_be_clean=True), 'one of them lost her')
-    hold = msgs.get('/odom_hold', [])
+    hold = msgs.get(HOLD, [])
     if hold:
         say(f'vo_watchdog held the EKF {len(hold) / 10:.0f} s in total (VO was silent that long)')
 
     # --- the phone link ------------------------------------------------------
     W = msgs.get('/cmd_vel_web', [])
     driving_t, drops = 0.0, []
-    for (ta, ma), (tb, mb) in zip(W, W[1:]):
-        if ma.linear.x != 0 or ma.angular.z != 0:
+    for (ta, ax, az), (tb, bx, bz) in zip(W, W[1:]):
+        if ax != 0 or az != 0:
             driving_t += min(tb - ta, 0.4)
-            if tb - ta > 0.4 and (mb.linear.x != 0 or mb.angular.z != 0):
+            if tb - ta > 0.4 and (bx != 0 or bz != 0):
                 drops.append(tb - ta)
     if W:
         say(f'phone: {driving_t:.0f} s of driving, dropouts >0.4 s mid-drive: {len(drops)}'
             + (f' (worst {max(drops):.1f} s)' if drops else ''))
 
     # --- the collision guard -------------------------------------------------
-    S = msgs.get('/collision_guard/state', [])
-    scans, mux = msgs.get('/scan', []), msgs.get('/cmd_vel_mux', [])
+    S = msgs.get(GUARD, [])
+    mux = msgs.get('/cmd_vel_mux', [])
     events, prev = [], 0
-    for t, m in S:
-        if m.action_type == 1 and prev != 1:
+    for t, action in S:
+        if action == 1 and prev != 1:
             events.append(t)
-        prev = m.action_type
-    slowdowns = sum(1 for (ta, a), (tb, b) in zip(S, S[1:]) if b.action_type == 2 and a.action_type != 2)
+        prev = action
+    slowdowns = sum(1 for (ta, a), (tb, b) in zip(S, S[1:]) if b == 2 and a != 2)
+    scans = scans_near(bag, events) if mux else []
     lidar_caused = camera_caused = 0
     for t in events:
         if not scans or not mux:
             break
         ts, scan = nearest(scans, t)
-        cmd = nearest(mux, t)[1]
+        cmd_x = nearest(mux, t)[1]
         if abs(ts - t) > 0.3:
             continue
-        x0, x1, hw = ZONES['forward' if cmd.linear.x >= 0 else 'backward']
+        x0, x1, hw = ZONES['forward' if cmd_x >= 0 else 'backward']
         n = 0
         for i, r in enumerate(scan.ranges):
             if scan.range_min <= r <= scan.range_max:
@@ -244,9 +299,9 @@ def report(bag):
     by_throttle = defaultdict(list)
     i = 0
     while i < len(C) and vo:
-        th = round(C[i][1].linear.x, 2)
+        th = round(C[i][1], 2)
         j = i
-        while j + 1 < len(C) and round(C[j + 1][1].linear.x, 2) == th:
+        while j + 1 < len(C) and round(C[j + 1][1], 2) == th:
             j += 1
         ta, tb = C[i][0], C[j][0]
         if abs(th) >= 0.05 and tb - ta >= 1.0:
