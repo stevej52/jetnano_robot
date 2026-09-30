@@ -113,7 +113,7 @@ ekf_filter_node:
     odom2_relative: false
     odom2_queue_size: 10
 
-    # BNO055: its fused HEADING, as changes (differential), since 2026-09-29 - the
+    # BNO055: its fused HEADING, relative to where she started, since 2026-09-29 - the
     # only heading input now. Until then this was the chip's raw yaw rate, with the
     # camera's: an hour of floor driving (3700 deg of turning) against SLAM, the
     # gyro read every turn 3.6 % short and the camera 5.7 %, the EKF ended 63 deg off
@@ -124,10 +124,17 @@ ekf_filter_node:
     # imu/base, not imu/data: bno055_lean turns the chip's orientation into base_link
     # itself (the chip is mounted upside down and turned), so nothing here depends on
     # how the EKF would treat a mounted IMU's orientation.
-    # Differential, not absolute: an absolute magnetic heading alongside another
-    # absolute one made the filter flip between the two, tens of degrees a second,
-    # standing still (2026-09-22, when VO's pose was fused); as changes it has
-    # nothing to fight, and the odom frame starts where she stands.
+    # Relative (the first reading is zero, so the odom frame starts where she stands),
+    # NOT differential. The hour's sensors replayed through the filter on Rosie
+    # (tools/drive_analysis: replay_heading_0929.sh, replay_compare.py; the old settings
+    # replayed to +62.9 deg against the drive's +63.0, so the replay is faithful):
+    #   differential (the first try)  -98.4 deg at the end, turns 10.3 % LONG - the filter
+    #                                  rebuilds the heading from rates it estimates;
+    #   relative                      +12.5 deg at the end, scale -0.13 %, 95 % of 5-minute
+    #                                  spans within 5.0 deg - the chip's own accuracy.
+    # The one absolute heading here: in 2026-09-22 two (VO's pose and the magnetometer)
+    # made the filter flip between them, tens of degrees a second, standing still - VO
+    # now gives speed only, so there is nothing for it to fight.
     # Not acceleration: it was meant to ride out short VO dropouts, and instead it
     # is what ran the filter away when VO was rejected (2026-09-24, above) - the
     # chip's "gravity-free" acceleration carries a bias (~0.08 m/s2 measured) and
@@ -138,8 +145,8 @@ ekf_filter_node:
                   false, false, false,
                   false, false, false,
                   false, false, false]
-    imu0_differential: true
-    imu0_relative: false
+    imu0_differential: false
+    imu0_relative: true
     imu0_queue_size: 10
     # The bno055 driver's imu/data carries the chip's own gravity-free
     # linear acceleration (raw+gravity is on imu/imu_raw), so the EKF must
