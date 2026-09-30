@@ -84,6 +84,12 @@ def generate_launch_description():
             'tilt_guard', default_value='true',
             description='Back out of a roll or pitch past its limit'),
         DeclareLaunchArgument(
+            'motion_check', default_value='true',
+            description="the safety monitor's motion check (told to drive but not moving; camera blind)"),
+        DeclareLaunchArgument(
+            'visual_odometry', default_value='true',
+            description='the simulated camera odometry (rgbd_odometry); false = lidar odometry and IMU only'),
+        DeclareLaunchArgument(
             'navigation', default_value='false',
             description='The whole of Nav2 (navigation.launch.py, mapping mode); '
                         'it includes slam_toolbox, so slam:= is then ignored'),
@@ -99,6 +105,7 @@ def generate_launch_description():
             'simulate': 'true',
             'use_sim_time': 'true',
             'use_tilt_guard': LaunchConfiguration('tilt_guard'),
+            'use_motion_check': LaunchConfiguration('motion_check'),
             'vo_watchdog': LaunchConfiguration('vo_watchdog'),
         }),
 
@@ -109,7 +116,8 @@ def generate_launch_description():
             include(bringup_pkg, 'odometry.launch.py',
                     condition=IfCondition(LaunchConfiguration('odometry')),
                     arguments={'use_sim_time': 'true',
-                               'lidar_odom': LaunchConfiguration('lidar_odom')}),
+                               'lidar_odom': LaunchConfiguration('lidar_odom'),
+                               'use_visual_odometry': LaunchConfiguration('visual_odometry')}),
         ]),
 
         # SLAM last: it needs /scan and a tf tree that already reaches

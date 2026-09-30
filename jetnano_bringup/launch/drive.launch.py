@@ -69,6 +69,11 @@ def generate_launch_description():
             description='Back out of a roll or pitch past its limit. Needs imu/data, '
                         'so it does nothing until sensors.launch.py is up.'),
         DeclareLaunchArgument(
+            'use_motion_check', default_value='true',
+            description='the motion check: stop her when told to drive but not moving, or when the camera '
+                        'is blind while the lidar moves. Off in the nightly simulator drive (H2-Host), '
+                        'where the simulated camera odometry is not trustworthy'),
+        DeclareLaunchArgument(
             'cpp_safety', default_value='true',
             description='the tilt guard, motion check and VO watchdog as one C++ node '
                         '(jetnano_watchdog safety_monitor); false = the Python nodes'),
@@ -120,6 +125,7 @@ def generate_launch_description():
             output='screen',
             parameters=[{'use_sim_time': use_sim_time,
                          'tilt.enabled': ParameterValue(LaunchConfiguration('use_tilt_guard'), value_type=bool),
+                         'motion.enabled': ParameterValue(LaunchConfiguration('use_motion_check'), value_type=bool),
                          'vo.enabled': ParameterValue(LaunchConfiguration('vo_watchdog'), value_type=bool)}],
             condition=IfCondition(LaunchConfiguration('cpp_safety')),
         ),
