@@ -85,6 +85,25 @@ def swap16(word: int) -> int:
     return ((word & 0xFF) << 8) | (word >> 8)
 
 
+def judge_reading(v_slow, recent, voltage: float, jump_v: float = 2.0, agree_v: float = 0.3):
+    """Whether an instant reading counts, and whether the slow average restarts from it.
+
+    Returns (counts, restart): restart is the value to restart the average at, or None
+    to update it normally. A reading more than jump_v from the average is a spike and does
+    not count - 2026-09-30, on the floor: one 7.37 V between 12 V readings (the INA219's
+    config register read in place of the bus voltage) became the judged voltage, "flat",
+    motors locked - unless the last three readings (recent, this one last) agree within
+    agree_v: then the pack was swapped and the average restarts at their mean.
+    """
+    if v_slow is None:
+        return True, voltage
+    if abs(voltage - v_slow) <= jump_v:
+        return True, None
+    if len(recent) >= 3 and max(recent[-3:]) - min(recent[-3:]) <= agree_v:
+        return True, sum(recent[-3:]) / 3.0
+    return False, None
+
+
 def judge_level(readings, warn_v: float, window_s: float = 60.0):
     """Steve's rule (2026-09-30) on the last minute of instant readings [(t, volts)]:
     "If it's low for over a minute straight with no sag, then it's low. If it's low for
@@ -149,6 +168,7 @@ class BatteryMonitor(Node):
         self._powering_off = False
         self.window_s = float(self.get_parameter('level_window_s').value)
         self.readings = deque()          # (monotonic t, instant volts), the last minute
+        self._recent = deque(maxlen=3)   # the last three instant readings, for judge_reading
         self.level = None                # none | ok | soon | low | flat
         self._level_sent = 0.0
 
@@ -219,8 +239,17 @@ class BatteryMonitor(Node):
         # The thresholds judge a slow average (about 5 s), not the instant: a motor stall
         # sags a 3S pack by half a volt for a second, and that must not lock her at 9.9 V
         # from a pack resting at 10.3. The message carries the instant reading.
-        if self._v_slow is None or abs(voltage - self._v_slow) > 2.0:
-            self._v_slow = voltage                    # first reading, or a pack swapped
+        self._recent.append(voltage)
+        counts, restart = judge_reading(self._v_slow, list(self._recent), voltage)
+        if not counts:
+            # 2026-09-30: a single 7.37 V between 12 V readings (the INA219's config register
+            # read in place of the bus voltage) reset the average, said "flat" and locked
+            # the motors on the floor. A jump only counts when three readings agree.
+            self.get_logger().warning(f'INA219 reading {voltage:.2f} V ignored: {self._v_slow:.2f} V a moment ago '
+                                      '(a spike, or the wrong register on the bus)')
+            return
+        if restart is not None:
+            self._v_slow = restart                    # first reading, or a pack swapped
         else:
             self._v_slow += (voltage - self._v_slow) * min(1.0, 1.0 / (self.slow_s * self.rate))
         judged = self._v_slow
@@ -268,6 +297,13 @@ class BatteryMonitor(Node):
             self.stop_pub.publish(stop)
             self._say_level('flat', f'{judged:.2f} V, under {self.stop_v:.2f}: motors locked', voltage)
             return
+        if self._stopped:
+            # twist_mux keeps the last value of a lock: what we locked, we must unlock
+            # (2026-09-30: the lock outlived the reading that set it)
+            release = Bool()
+            release.data = False
+            self.stop_pub.publish(release)
+            self.get_logger().warning(f'battery {judged:.2f} V is back above {self.stop_v:.2f} V: motors released')
         self._stopped = False
         level = judge_level(self.readings, self.warn_v, self.window_s)
         volts = [v for _, v in self.readings]

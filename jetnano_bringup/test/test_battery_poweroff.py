@@ -115,3 +115,27 @@ def test_off_means_off(monkeypatch):
     m = monitor(on=False)
     assert run(m, [(0, 9.0), (100, 9.0)], monkeypatch) == []
     assert m.stop_pub.sent == []
+
+
+def test_one_spike_between_good_readings_is_ignored():
+    """2026-09-30 on the floor: 12.1, 7.37 (the config register), 12.1 - the spike must not
+    become the judged voltage and lock the motors."""
+    counts, restart = battery_monitor.judge_reading(12.1, [12.1, 12.1, 7.37], 7.37)
+    assert (counts, restart) == (False, None)
+
+
+def test_normal_readings_count_and_update():
+    assert battery_monitor.judge_reading(12.1, [12.1, 12.0, 11.9], 11.9) == (True, None)
+
+
+def test_first_reading_starts_the_average():
+    assert battery_monitor.judge_reading(None, [12.1], 12.1) == (True, 12.1)
+
+
+def test_a_swapped_pack_restarts_after_three_agreeing_readings():
+    """A fresh pack at 12.4 replacing one at 9.9: the first two readings are spikes, the
+    third makes it real."""
+    assert battery_monitor.judge_reading(9.9, [9.9, 9.9, 12.4], 12.4) == (False, None)
+    assert battery_monitor.judge_reading(9.9, [9.9, 12.4, 12.4], 12.4) == (False, None)
+    counts, restart = battery_monitor.judge_reading(9.9, [12.4, 12.5, 12.4], 12.4)
+    assert counts and abs(restart - 12.43) < 0.01
