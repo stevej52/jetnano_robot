@@ -25,7 +25,8 @@ each time) through the USB speaker with aplay, on these events:
     /e_stop false -> true                     alarm
     /collision_guard/state stops the robot    no        (at most every few seconds)
     /cliff/drop true                          no
-    /battery health low / flat                lowbat (a countdown, again every 5 min) / alarm then sleepy
+    /battery/level soon / low / flat          lowbat3 once / lowbat (the countdown, again every 5 min)
+                                              / alarm then sleepy
     /watchdog/events down / slow              uhoh      (anything dropped, or not right)
     /watchdog/events back                     beeps     (whatever the uh-oh was is back)
     /say <mood>                               that mood (anyone: the page, a person detector)
@@ -62,7 +63,6 @@ from rcl_interfaces.msg import SetParametersResult
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rclpy.qos import DurabilityPolicy, QoSProfile
-from sensor_msgs.msg import BatteryState
 from std_msgs.msg import Bool, Empty, String
 
 from jetnano_bringup.voice import ENGLISH
@@ -184,7 +184,8 @@ class Sounds(Node):
         for topic in ('e_stop', 'e_stop_web', 'e_stop_joy'):      # one lock per source since 2026-09-26
             self.create_subscription(Bool, topic, self._on_e_stop, 10)
         self.create_subscription(Bool, 'cliff/drop', self._on_drop, 10)
-        self.create_subscription(BatteryState, 'battery', self._on_battery, 10)
+        self.create_subscription(String, 'battery/level', self._on_battery_level,
+                                 QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
         self.create_subscription(String, 'watchdog/events', self._on_watchdog, 20)
         if CollisionMonitorState is not None:
             self.create_subscription(CollisionMonitorState, 'collision_guard/state', self._on_guard, 10)
@@ -342,18 +343,18 @@ class Sounds(Node):
         if mood and bool(self.get_parameter('watchdog_sounds').value):
             self.say(mood)
 
-    def _on_battery(self, msg: BatteryState) -> None:
-        if not msg.present:
-            state = 'ok'
-        elif msg.power_supply_health == BatteryState.POWER_SUPPLY_HEALTH_DEAD:
-            state = 'flat'
-        elif msg.percentage == msg.percentage and msg.percentage <= 0.2:
-            state = 'low'
-        else:
-            state = 'ok'
+    def _on_battery_level(self, msg: String) -> None:
+        """battery_monitor's verdict (Steve's minute rule): soon -> three notes once; low -> the
+        five-note countdown, again every low_battery_repeat_s; flat -> alarm, then sleepy."""
+        try:
+            state = json.loads(msg.data).get('level', 'ok')
+        except ValueError:
+            return
         now = time.monotonic()
         if state != self._battery_state:
-            if state == 'low':
+            if state == 'soon':
+                self.say('lowbat3', force=True)
+            elif state == 'low':
                 self.say('lowbat', force=True)       # the countdown (Steve, 2026-09-30)
                 self._low_said = now
             elif state == 'flat':

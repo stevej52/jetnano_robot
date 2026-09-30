@@ -61,6 +61,31 @@ def run(m, readings, monkeypatch):
     return ran
 
 
+def readings(volts, dt=0.5):
+    return [(i * dt, v) for i, v in enumerate(volts)]
+
+
+def test_level_needs_a_full_minute():
+    assert battery_monitor.judge_level(readings([10.0] * 20), 10.5) == 'ok'
+
+
+def test_level_low_when_never_above_for_a_minute():
+    """Steve: "low for over a minute straight with no sag, then it's low"."""
+    assert battery_monitor.judge_level(readings([10.4, 10.3, 10.2] * 41), 10.5) == 'low'
+
+
+def test_level_soon_when_sagging_under_but_recovering():
+    """"low for over a minute with sag, then it's gonna be low pretty soon": under on average,
+    over the line between sags."""
+    v = ([10.7, 10.6] + [10.0] * 6) * 16          # peaks 10.7, average ~10.2
+    assert battery_monitor.judge_level(readings(v), 10.5) == 'soon'
+
+
+def test_level_ok_when_only_dipping():
+    v = ([10.9] * 10 + [10.2]) * 12                # one dip in eleven: average well over
+    assert battery_monitor.judge_level(readings(v), 10.5) == 'ok'
+
+
 def test_low_for_the_whole_minute_powers_off(monkeypatch):
     m = monitor()
     ran = run(m, [(0, 9.8), (30, 9.7), (59.9, 9.7), (60.0, 9.6), (61, 9.6), (90, 9.5)], monkeypatch)

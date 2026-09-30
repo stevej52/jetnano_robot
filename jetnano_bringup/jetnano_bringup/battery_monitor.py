@@ -18,9 +18,13 @@
 
 Publishes sensor_msgs/BatteryState on ``battery`` twice a second: pack
 voltage, current (negative while discharging, per the message's convention),
-a percentage from the LiPo discharge curve, and a status. Below
-``warn_v_per_cell`` it warns; below ``stop_v_per_cell`` it raises the
-``e_stop`` lock every second, which twist_mux honours until the pack is
+a percentage from the LiPo discharge curve, and a status. ``battery/level``
+(latched, JSON) is the verdict in a word, by Steve's rule on the last minute
+of readings (judge_level): ``low`` when every reading was under
+``warn_v_per_cell`` with no recovery, ``soon`` when it was under on average but
+still climbed above between sags, else ``ok``; ``flat`` below
+``stop_v_per_cell`` (a 5 s average), when it also raises the ``e_stop`` lock
+every second, which twist_mux honours until the pack is
 charged - GO on the page does not win an argument with a flat battery. At or
 below ``poweroff_v_per_cell`` for ``poweroff_after_s`` it powers her off
 (``poweroff_cmd``): parked she still draws ~20 W, and a forgotten pack goes flat.
@@ -41,14 +45,17 @@ is reported as "no battery"; nothing is raised for that.
 the system without the board.
 """
 
+import json
 import shlex
 import subprocess
 import time
+from collections import deque
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile
 from sensor_msgs.msg import BatteryState
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, String
 
 try:
     import smbus
@@ -78,6 +85,25 @@ def swap16(word: int) -> int:
     return ((word & 0xFF) << 8) | (word >> 8)
 
 
+def judge_level(readings, warn_v: float, window_s: float = 60.0):
+    """Steve's rule (2026-09-30) on the last minute of instant readings [(t, volts)]:
+    "If it's low for over a minute straight with no sag, then it's low. If it's low for
+    over a minute with sag, then it's gonna be low pretty soon."
+    -> 'low'   every reading of a full minute is under warn_v: nothing brings it back
+       'soon'  a full minute in which readings have been under warn_v, but between the sags
+               it still climbs above: the pack at rest is just over the line
+       'ok'    otherwise, or less than a minute of readings yet"""
+    if len(readings) < 2 or readings[-1][0] - readings[0][0] < window_s - 1.0:
+        return 'ok'
+    volts = [v for _, v in readings]
+    if max(volts) <= warn_v:
+        return 'low'
+    # under the line for the whole minute on average, above it at the peaks: sag
+    if sum(volts) / len(volts) <= warn_v and min(volts) <= warn_v:
+        return 'soon'
+    return 'ok'
+
+
 class BatteryMonitor(Node):
 
     def __init__(self):
@@ -101,6 +127,7 @@ class BatteryMonitor(Node):
         self.declare_parameter('present_above_v', 6.0)
         self.declare_parameter('rate', 2.0)
         self.declare_parameter('slow_s', 5.0)            # the thresholds judge this long an average
+        self.declare_parameter('level_window_s', 60.0)   # judge_level: a minute of readings
         self.declare_parameter('simulate', False)
 
         self.address = int(self.get_parameter('address').value)
@@ -120,8 +147,15 @@ class BatteryMonitor(Node):
         self._v_slow = None
         self._low_since = None
         self._powering_off = False
+        self.window_s = float(self.get_parameter('level_window_s').value)
+        self.readings = deque()          # (monotonic t, instant volts), the last minute
+        self.level = None                # none | ok | soon | low | flat
+        self._level_sent = 0.0
 
         self.pub = self.create_publisher(BatteryState, 'battery', 10)
+        # the verdict in a word, latched: sounds plays the countdown on it, the page shows it
+        self.level_pub = self.create_publisher(
+            String, 'battery/level', QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
         self.stop_pub = self.create_publisher(Bool, 'e_stop', 10)
         self.bus = None
         self._last_error = 0.0
@@ -214,9 +248,15 @@ class BatteryMonitor(Node):
             msg.power_supply_health = BatteryState.POWER_SUPPLY_HEALTH_UNKNOWN
         self.pub.publish(msg)
 
+        now = time.monotonic()
+        self.readings.append((now, float(voltage)))
+        while self.readings and now - self.readings[0][0] > self.window_s:
+            self.readings.popleft()
         if not present:
             self._warned = self._stopped = False
             self._low_since = None
+            self.readings.clear()
+            self._say_level('none', 'no battery (under %.1f V)' % self.present_v, voltage)
             return
         self._poweroff_check(judged)
         if judged <= self.stop_v:
@@ -226,12 +266,33 @@ class BatteryMonitor(Node):
             stop = Bool()
             stop.data = True
             self.stop_pub.publish(stop)
-        elif judged <= self.warn_v:
-            if not self._warned:
-                self.get_logger().warning(f'battery {judged:.2f} V ({msg.percentage * 100:.0f} %): head home')
-                self._warned = True
-        else:
-            self._warned = self._stopped = False
+            self._say_level('flat', f'{judged:.2f} V, under {self.stop_v:.2f}: motors locked', voltage)
+            return
+        self._stopped = False
+        level = judge_level(self.readings, self.warn_v, self.window_s)
+        volts = [v for _, v in self.readings]
+        why = {'low': f'under {self.warn_v:.1f} V for a minute with no recovery (peak {max(volts):.2f})',
+               'soon': f'under {self.warn_v:.1f} V on average for a minute, but still up to {max(volts):.2f} between sags',
+               'ok': f'{judged:.2f} V'}[level]
+        self._say_level(level, why, voltage)
+        if level == 'low' and not self._warned:
+            self.get_logger().warning(f'battery low: {why}: head home')
+            self._warned = True
+        elif level == 'ok':
+            self._warned = False
+
+    def _say_level(self, level: str, why: str, volts: float) -> None:
+        """battery/level on every change, and again every 10 s."""
+        now = time.monotonic()
+        if level == self.level and now - self._level_sent < 10.0:
+            return
+        if level != self.level:
+            self.get_logger().info(f'battery level {level}: {why}')
+        self.level, self._level_sent = level, now
+        msg = String()
+        msg.data = json.dumps({'level': level, 'why': why, 'volts': round(volts, 2),
+                               'avg': round(self._v_slow or 0.0, 2)})
+        self.level_pub.publish(msg)
 
 
     def _poweroff_check(self, voltage: float) -> None:

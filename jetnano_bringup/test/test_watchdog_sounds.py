@@ -72,8 +72,16 @@ def test_lowbat_is_a_countdown_of_five_descending_held_notes():
     assert all(b < a for a, b in zip(pitches, pitches[1:]))     # stepping down
 
 
+def test_lowbat3_is_the_first_three_notes():
+    y = voice.lowbat3(0.0)
+    parts = segments(y, floor=0.15)
+    assert len(parts) == 3
+    n = parts[1][0]                                              # up to the second note
+    assert np.allclose(voice.lowbat(0.0)[:n], y[:n])             # the same opening
+
+
 def test_new_moods_are_made_and_have_english():
-    for mood in ('uhoh', 'beeps', 'lowbat'):
+    for mood in ('uhoh', 'beeps', 'lowbat', 'lowbat3'):
         assert mood in voice.MOODS and mood in voice.ENGLISH
         assert np.isfinite(voice.MOODS[mood](0.0)).all()
 

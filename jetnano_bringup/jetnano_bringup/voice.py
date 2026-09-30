@@ -26,8 +26,10 @@ different. The moods and where the sounds node uses them:
     no        two low blips, same pitch, a little rough  guard blocks, drop ahead
     alarm     fast two-tone, four times                  e-stop
     sad       a long slide down, vibrato slowing         the watchdog gave up on something
-    lowbat    a countdown: five held notes stepping      battery low (10.5 V), again every
-              down, 2 s each, the last one sagging       few minutes while it stays low
+    lowbat    a countdown: five held notes stepping      battery low (under 10.5 V a whole
+              down, 2 s each, the last one sagging       minute), again every 5 min while low
+    lowbat3   the first three notes of that countdown    battery low SOON (under 10.5 V a
+                                                         minute on average, recovering between sags)
     happy     a trill, up and over                       goal reached
     curious   a rising slide with a question step        person spotted
     sleepy    three notes falling, fading                voice off / flat battery
@@ -90,7 +92,8 @@ ENGLISH = {
     'nope': ["No."],
     'uhoh': ["Uh oh."],
     'beeps': ["It's back."],
-    'lowbat': ["My battery is getting low.", "I could use a charge soon."],
+    'lowbat': ["My battery is low.", "I need a charge."],
+    'lowbat3': ["My battery is getting low.", "I could use a charge soon."],
 }
 # The USB speaker swallows the first ~80 ms after it wakes: measured with her
 # own mic 2026-09-25, "hm" came out as 0.08 s of 0.16 s and 8 dB quieter;
@@ -221,13 +224,10 @@ def beeps(j):
     return online_beeps(BASE * 1.6)
 
 
-def lowbat(j):
-    """Battery low (Steve, 2026-09-30: "5 descending tones, 2 seconds each, kind of sounds
-    like a countdown"): five held notes stepping down a scale, each a shade darker, the
-    last one sagging - ten seconds nobody mistakes for a chirp."""
+def countdown(j, steps):
+    """Held notes stepping down a scale, 2 s each, each a shade darker, the last one sagging."""
     k = 2 ** (j / 12)
     parts = []
-    steps = (1.5, 1.26, 1.0, 0.84, 0.67)
     for i, f in enumerate(steps):
         last = i == len(steps) - 1
         curve = glide(BASE * k * f, BASE * k * f * 0.9, 1.5) if last else flat(BASE * k * f)
@@ -235,6 +235,18 @@ def lowbat(j):
         if not last:
             parts.append(rest(0.25))
     return np.concatenate(parts)
+
+
+def lowbat(j):
+    """Battery low (Steve, 2026-09-30: "5 descending tones, 2 seconds each, kind of sounds
+    like a countdown"): ten seconds nobody mistakes for a chirp."""
+    return countdown(j, (1.5, 1.26, 1.0, 0.84, 0.67))
+
+
+def lowbat3(j):
+    """Battery low SOON (Steve's rule: under the line for a minute but still recovering
+    between sags): the first three notes of the countdown - it is coming."""
+    return countdown(j, (1.5, 1.26, 1.0))
 
 
 def uhoh(j):
@@ -377,7 +389,7 @@ MOODS = {'hello': hello, 'ok': ok, 'no': no, 'alarm': alarm, 'sad': sad,
          'happy': happy, 'curious': curious, 'sleepy': sleepy, 'hm': hm, 'huh': huh,
          'bye': bye, 'chat': lambda j: chat(random.randrange(4, 9), j), 'laugh': laugh, 'on': on, 'off': off,
          'story': lambda j: story(3, j), 'boop': boop, 'yes': yes, 'nope': nope,
-         'uhoh': uhoh, 'beeps': beeps, 'lowbat': lowbat}
+         'uhoh': uhoh, 'beeps': beeps, 'lowbat': lowbat, 'lowbat3': lowbat3}
 
 
 def write_wav(path, samples, volume=0.6):
