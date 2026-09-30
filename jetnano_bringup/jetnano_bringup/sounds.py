@@ -33,8 +33,10 @@ each time) through the USB speaker with aplay, on these events:
 
 One sound at a time; a mood is not repeated within ``min_gap_s``; ``mute``
 is a parameter (ros2 param set /sounds mute true) so a droid that chirps at
-night can be told to stop without stopping it. With no speaker present it
-logs once and keeps trying quietly.
+night can be told to stop without stopping it. ``quiet_file`` (~/voice/quiet)
+is the same across reboots - "Diane is sleeping" mode, ``ros2 run
+jetnano_bringup quiet on|off|status``; the power-on and goodbye hooks honour
+it too. With no speaker present it logs once and keeps trying quietly.
 
 English mode ("Rosie, speak English", or ros2 param set /sounds english true):
 for ``english_for_s`` (five minutes) every mood is said in words instead
@@ -128,6 +130,12 @@ class Sounds(Node):
         # 'over and out' (listen's voice_off flag) no longer mutes her sounds: Steve,
         # 2026-09-26, wants her noises to carry on with only the talking switched off
         self.declare_parameter('mute', False)
+        # "Diane is sleeping" mode (Steve, 2026-09-30): while this file exists nothing plays -
+        # sounds, spoken replies (they come back here as /say <wav>), the watchdog's uh-ohs -
+        # and the power-on and goodbye hooks stay silent too. Survives a reboot, unlike mute.
+        #     ros2 run jetnano_bringup quiet on | off | status
+        self.declare_parameter('quiet_file', os.path.expanduser('~/voice/quiet'))
+        self._quiet = None
         self.declare_parameter('min_gap_s', 2.5)
         self.declare_parameter('hello_after_s', 4.0)
         self.declare_parameter('english', False)         # speak English (for english_for_s, then back)
@@ -220,9 +228,20 @@ class Sounds(Node):
                     self.say('boop', force=True)
         return SetParametersResult(successful=True)
 
+    @property
+    def quiet(self) -> bool:
+        return bool(self._quiet)
+
     def _tick(self) -> None:
         if self.english_until and not self.english:       # the five minutes are up
             self.set_parameters([Parameter('english', Parameter.Type.BOOL, False)])
+        quiet = os.path.exists(str(self.get_parameter('quiet_file').value))
+        if quiet != self._quiet:
+            if self._quiet is not None or quiet:
+                self.get_logger().info('quiet mode ' + ('ON: nothing plays' if quiet else 'off'))
+            self._quiet = quiet
+            if quiet:
+                self.stop()
 
     def _publish_english(self, on=None) -> None:
         msg = Bool()
@@ -234,7 +253,7 @@ class Sounds(Node):
     def _player(self) -> None:
         while True:
             mood = self.queue.get()
-            if bool(self.get_parameter('mute').value):
+            if bool(self.get_parameter('mute').value) or self.quiet:
                 continue
             if mood.endswith('.wav') and os.path.isfile(mood):
                 takes = [mood]

@@ -39,6 +39,7 @@ setup(
             'cliff_guard = jetnano_bringup.cliff_guard:main',
             'make_voice = jetnano_bringup.voice:main',
             'sounds = jetnano_bringup.sounds:main',
+            'quiet = jetnano_bringup.quiet:main',
             'motion_watch = jetnano_bringup.motion_watch:main',
             'ears = jetnano_bringup.ears:main',
             'settle = jetnano_bringup.settle:main',
