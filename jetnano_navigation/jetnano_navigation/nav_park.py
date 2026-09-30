@@ -25,7 +25,8 @@ shuffled there for 100 s. Parking needs the heading, so:
 2. straighten there: short forward-and-back shuffles at full lock - forward steering one
    way, back steering the other, both turn her the same way - until her heading is within
    `tol` degrees (each pair turns about 2 d / R: 10 cm legs at R 0.37 m, ~30 deg);
-3. nav_goal to the spot: a straight reverse in.
+3. nav_goal to the spot: a straight reverse in;
+4. straighten again there if the reverse in curved.
 
 Step 2 drives on cmd_vel_nav, Nav2's own input to twist_mux, while Nav2 is idle - so the
 joystick outranks it and the e-stop lock, collision guard and motion check all apply. It
@@ -215,12 +216,19 @@ def main():
     rclpy.init()
     node = rclpy.create_node('nav_park')
     try:
+        straighten = Straighten(node, h, tol)
         print('-- straightening', flush=True)
-        Straighten(node, h, tol).run()
+        straighten.run()
+        ok = nav_goal(x, y, h_deg, exact=True)   # her spot, even if the costmap calls it tight
+        if ok:
+            # 2026-09-29 drive 6: straight at the point in front (+4 deg), then the reverse in
+            # curved - the shuffles had moved her sideways off the line - and ended -21 deg.
+            # The shuffles stay on the spot (forward and back in turn), so straighten again.
+            print('-- straightening on the spot', flush=True)
+            straighten.run()
     finally:
         node.destroy_node()
         rclpy.shutdown()
-    ok = nav_goal(x, y, h_deg, exact=True)       # her spot, even if the costmap calls it tight
     print('parked' if ok else 'the last leg did not succeed', flush=True)
 
 
