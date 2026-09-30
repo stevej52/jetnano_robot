@@ -28,7 +28,7 @@ different. The moods and where the sounds node uses them:
     sad       a long slide down, vibrato slowing         the watchdog gave up on something
     lowbat    a countdown: five held notes stepping      battery low (under 10.5 V a whole
               down, 2 s each, the last one sagging       minute), again every 5 min while low
-    lowbat3   the first three notes of that countdown    battery low SOON (under 10.5 V a
+    lowsoon   the first three notes of that countdown    battery low SOON (under 10.5 V a
                                                          minute on average, recovering between sags)
     happy     a trill, up and over                       goal reached
     curious   a rising slide with a question step        person spotted
@@ -93,7 +93,7 @@ ENGLISH = {
     'uhoh': ["Uh oh."],
     'beeps': ["It's back."],
     'lowbat': ["My battery is low.", "I need a charge."],
-    'lowbat3': ["My battery is getting low.", "I could use a charge soon."],
+    'lowsoon': ["My battery is getting low.", "I could use a charge soon."],
 }
 # The USB speaker swallows the first ~80 ms after it wakes: measured with her
 # own mic 2026-09-25, "hm" came out as 0.08 s of 0.16 s and 8 dB quieter;
@@ -243,7 +243,7 @@ def lowbat(j):
     return countdown(j, (1.5, 1.26, 1.0, 0.84, 0.67))
 
 
-def lowbat3(j):
+def lowsoon(j):
     """Battery low SOON (Steve's rule: under the line for a minute but still recovering
     between sags): the first three notes of the countdown - it is coming."""
     return countdown(j, (1.5, 1.26, 1.0))
@@ -389,7 +389,7 @@ MOODS = {'hello': hello, 'ok': ok, 'no': no, 'alarm': alarm, 'sad': sad,
          'happy': happy, 'curious': curious, 'sleepy': sleepy, 'hm': hm, 'huh': huh,
          'bye': bye, 'chat': lambda j: chat(random.randrange(4, 9), j), 'laugh': laugh, 'on': on, 'off': off,
          'story': lambda j: story(3, j), 'boop': boop, 'yes': yes, 'nope': nope,
-         'uhoh': uhoh, 'beeps': beeps, 'lowbat': lowbat, 'lowbat3': lowbat3}
+         'uhoh': uhoh, 'beeps': beeps, 'lowbat': lowbat, 'lowsoon': lowsoon}
 
 
 def write_wav(path, samples, volume=0.6):

@@ -25,7 +25,7 @@ each time) through the USB speaker with aplay, on these events:
     /e_stop false -> true                     alarm
     /collision_guard/state stops the robot    no        (at most every few seconds)
     /cliff/drop true                          no
-    /battery/level soon / low / flat          lowbat3 once / lowbat (the countdown, again every 5 min)
+    /battery/level soon / low / flat          lowsoon once / lowbat (the countdown, again every 5 min)
                                               / alarm then sleepy
     /watchdog/events down / slow              uhoh      (anything dropped, or not right)
     /watchdog/events back                     beeps     (whatever the uh-oh was is back)
@@ -353,7 +353,7 @@ class Sounds(Node):
         now = time.monotonic()
         if state != self._battery_state:
             if state == 'soon':
-                self.say('lowbat3', force=True)
+                self.say('lowsoon', force=True)
             elif state == 'low':
                 self.say('lowbat', force=True)       # the countdown (Steve, 2026-09-30)
                 self._low_said = now
