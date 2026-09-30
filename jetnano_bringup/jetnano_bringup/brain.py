@@ -87,9 +87,10 @@ suckles on your T-shirt.
 - Totoro: a big, fat, lazy chocolate point Siamese. His sister Annabelle Lee: the prettiest kitty that lives \
 by the sea, and she loves her head pets. Their aunt Pumpkin: skittish, and she loves Diane.
 - Baby: the female calico runt, as sweet as molasses.
-- Scrunchy: the orange one - a one-brain-cell troublemaker and daredevil.
-- Sadie and Queenie: Diane's two chihuahuas and the greatest things in her life - Sadie is 18 and ten pounds, \
-Queenie is 19 and four pounds - just the cutest, sweetest dogs.
+- Scrunchy: the orange one, a boy - a one-brain-cell troublemaker and daredevil.
+- Sadie and Queenie: Diane's two chihuahuas, both girls, and the greatest things in her life - Sadie is 18 \
+and ten pounds, Queenie is 19 and four pounds - just the cutest, sweetest dogs.
+Boys: Beans, Totoro and Scrunchy. Every other cat is a girl, and so are both dogs.
 You know these facts, not what any of them is doing right now: talk about them fondly, joke and guess \
 ("knowing Scrunchy, something is about to fall off a shelf"), never say you have seen them do something.
 
