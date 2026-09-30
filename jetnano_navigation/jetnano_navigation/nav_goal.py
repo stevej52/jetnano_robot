@@ -50,6 +50,7 @@ import tf2_ros
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped, Twist
 from nav2_msgs.action import NavigateToPose
+from nav2_msgs.srv import GetCostmap
 from nav_msgs.msg import OccupancyGrid
 from rclpy.action import ActionClient
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
@@ -60,12 +61,40 @@ from std_srvs.srv import Trigger
 
 REACH_M = 0.32            # her outline's reach from the centre, tyres turned (0.26 x 0.19)
 CENTRE_MAX_COST = 20      # 0-100 costmap scale: 0 is clear of every margin
-SOLID_COST = 99           # inscribed or lethal
+# An obstacle itself, not the margin round it. Until 2026-09-29 this was 99 (the inscribed
+# margin too), which counted her size twice - the margin is already her half-width out from
+# each obstacle - so a goal needed about 1.0 m of clear floor across where she needs 0.64.
+# Drive 6 lost the dining room's south-east corner to that: a 1.1 m gap between the chairs and
+# the wall, clear on the camera, "nowhere within 0.8 m ... clear", and the planner would have
+# taken it (tools/drive_analysis/costmap_at.py).
+SOLID_COST = 100
 SEARCH_M = 0.8
 
 
 def yaw(q):
     return math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+
+
+class Grid:
+    """What clear_goal reads: an OccupancyGrid's info and data (0-100, -1 unknown)."""
+
+    def __init__(self, resolution, width, height, ox, oy, data):
+        self.info = type('Info', (), {})()
+        self.info.resolution, self.info.width, self.info.height = resolution, width, height
+        self.info.origin = type('Pose', (), {})()
+        self.info.origin.position = type('Point', (), {'x': ox, 'y': oy})()
+        self.data = data
+
+
+def grid_from_costmap(cm):
+    """nav2_msgs/Costmap (0-255) -> Grid on the 0-100 scale, translated as Nav2 publishes it."""
+    raw = np.asarray(cm.data, dtype=np.int16)
+    out = np.where(raw == 0, 0, 1 + (97 * (raw - 1)) // 251)
+    out[raw == 253] = 99
+    out[raw == 254] = 100
+    out[raw == 255] = -1
+    md = cm.metadata
+    return Grid(md.resolution, md.size_x, md.size_y, md.origin.position.x, md.origin.position.y, out)
 
 
 def clear_goal(grid, gx, gy):
@@ -76,7 +105,7 @@ def clear_goal(grid, gx, gy):
     a = np.where(a < 0, 0, a)                     # unknown is not in the way here
     r = int(math.ceil(REACH_M / res))
     yy, xx = np.mgrid[-r:r + 1, -r:r + 1]
-    disc = (xx * xx + yy * yy) <= r * r
+    disc = (xx * xx + yy * yy) * res * res <= REACH_M * REACH_M     # cells centred within her reach
 
     def fits(u, v):
         if not (r <= u < i.width - r and r <= v < i.height - r):
@@ -132,8 +161,22 @@ def main():
         if st['lock']:
             raise SystemExit('still locked after 20 s: not sending the goal')
 
-    # 2. somewhere she fits
-    spin_for(5.0, lambda: st['grid'] is not None)
+    # 2. somewhere she fits, on the costmap the planner has now. The latched topic is only
+    # the last FULL costmap - Nav2 sends changes separately while the size stays the same - so
+    # it can be minutes behind; 2026-09-29 it refused two dining-room goals the planner's own
+    # map had room for. The topic stays as the fallback.
+    live = n.create_client(GetCostmap, '/global_costmap/get_costmap')
+
+    def live_grid():
+        if live.wait_for_service(timeout_sec=3.0):
+            fut = live.call_async(GetCostmap.Request())
+            spin_for(5.0, fut.done)
+            if fut.done() and fut.result() is not None:
+                st['grid'] = grid_from_costmap(fut.result().map)
+        return st['grid']
+
+    if live_grid() is None:
+        spin_for(5.0, lambda: st['grid'] is not None)
     n.destroy_subscription(costmap_sub)
     if exact:
         print(f'goal ({gx:+.2f}, {gy:+.2f}) taken as it is (--exact)', flush=True)
@@ -323,7 +366,7 @@ def main():
                 spin_for(advice['wait_s'])
             elif action == 'via':
                 vx, vy = advice['x'], advice['y']
-                if st['grid'] is not None:
+                if live_grid() is not None:
                     found = clear_goal(st['grid'], vx, vy)
                     if found is None:
                         print(f'rescue: ({vx:+.2f}, {vy:+.2f}) is not clear for her: not going there', flush=True)
