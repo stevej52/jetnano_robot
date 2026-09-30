@@ -44,6 +44,10 @@ different. The moods and where the sounds node uses them:
     yes       "uh-HUH!": a note, then one an octave up,    yes / affirmative / done, to Steve
               clean and bright                             (listen, brain: his terse mode)
     nope      "UH-uh": two low buzzy notes falling          no / negative, to Steve
+    uhoh      a robot "uh-oh": a short note, a catch,       something went wrong - a stream dropped,
+              then a longer one a third down, wobbling      memory low, Wi-Fi lost (the watchdog)
+    beeps     beep-beep-beep, the three high beeps that     whatever the uh-oh was is back
+              end "on"                                      (the watchdog)
 
 ENGLISH below is what each mood means in words: the sounds node says that
 instead in English mode, and listen uses it for "Rosie, in English".
@@ -82,6 +86,8 @@ ENGLISH = {
     'boop': ["Back to my own language."],
     'yes': ["Yes."],
     'nope': ["No."],
+    'uhoh': ["Uh oh."],
+    'beeps': ["It's back."],
 }
 # The USB speaker swallows the first ~80 ms after it wakes: measured with her
 # own mic 2026-09-25, "hm" came out as 0.08 s of 0.16 s and 8 dB quieter;
@@ -192,11 +198,34 @@ def on(j):
     beep, the beeps an octave higher)."""
     k = 2 ** (j / 12)
     top = BASE * k * 1.6
-    beep = tone(flat(top * 2.0), 0.08, vibrato_depth=0.0, bright=0.5)      # an octave above the climb
-    gap = rest(0.04)                                                          # quick: beep-beep-beep
     return np.concatenate([tone(glide(BASE * k * 0.3, top, 0.8), 1.25, vibrato_hz=2.5, vibrato_depth=0.02,
                                 bright=0.35),
-                           beep, gap, beep, gap, beep])
+                           online_beeps(top)])
+
+
+def online_beeps(top):
+    """The three short beeps that end "on", an octave above `top`."""
+    beep = tone(flat(top * 2.0), 0.08, vibrato_depth=0.0, bright=0.5)      # an octave above the climb
+    gap = rest(0.04)                                                          # quick: beep-beep-beep
+    return np.concatenate([beep, gap, beep, gap, beep])
+
+
+def beeps(j):
+    """Back again: just the beep-beep-beep that ends "on" (Steve, 2026-09-29: "when it comes back
+    on, I just want a high three beeps like at the end of the boot up"). No jitter - the same
+    beeps every time, so they are recognised at once."""
+    return online_beeps(BASE * 1.6)
+
+
+def uhoh(j):
+    """A robot "uh-oh" (Steve, 2026-09-29: "anytime anything goes wrong ... just a uh-oh"):
+    a short "uh", a catch in the throat, then a longer "oh" a third lower that sags and wobbles.
+    Higher and smoother than nope's buzzy "UH-uh", so the two are not confused."""
+    k = 2 ** (j / 12)
+    return np.concatenate([tone(glide(BASE * k * 1.22, BASE * k * 1.3, 0.5), 0.13, vibrato_depth=0.0, bright=0.6),
+                           rest(0.07),
+                           tone(glide(BASE * k * 1.04, BASE * k * 0.86, 1.3), 0.42, vibrato_hz=5.5,
+                                vibrato_depth=0.035, bright=0.45)])
 
 
 def off(j):
@@ -327,7 +356,8 @@ def nope(j):
 MOODS = {'hello': hello, 'ok': ok, 'no': no, 'alarm': alarm, 'sad': sad,
          'happy': happy, 'curious': curious, 'sleepy': sleepy, 'hm': hm, 'huh': huh,
          'bye': bye, 'chat': lambda j: chat(random.randrange(4, 9), j), 'laugh': laugh, 'on': on, 'off': off,
-         'story': lambda j: story(3, j), 'boop': boop, 'yes': yes, 'nope': nope}
+         'story': lambda j: story(3, j), 'boop': boop, 'yes': yes, 'nope': nope,
+         'uhoh': uhoh, 'beeps': beeps}
 
 
 def write_wav(path, samples, volume=0.6):

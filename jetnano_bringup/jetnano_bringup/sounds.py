@@ -26,6 +26,8 @@ each time) through the USB speaker with aplay, on these events:
     /collision_guard/state stops the robot    no        (at most every few seconds)
     /cliff/drop true                          no
     /battery health low / flat                sad / alarm then sleepy
+    /watchdog/events down / slow              uhoh      (anything dropped, or not right)
+    /watchdog/events back                     beeps     (whatever the uh-oh was is back)
     /say <mood>                               that mood (anyone: the page, a person detector)
     /say /path/to/file.wav                    that file (listen's freshly made chatter)
 
@@ -44,6 +46,7 @@ drops the queue: "stop" / "that's enough".
 """
 
 import glob
+import json
 import os
 import queue
 import random
@@ -66,6 +69,24 @@ try:
     from nav2_msgs.msg import CollisionMonitorState
 except ImportError:  # pragma: no cover
     CollisionMonitorState = None
+
+
+# What she says when the watchdog reports something (its /watchdog/events "kind"). Steve,
+# 2026-09-29: "anytime anything goes wrong ... a robot uh-oh ... and then when it comes back on
+# ... a high three beeps like at the end of the boot up" - heard as it happens, not told after
+# the fact; "if I hear a whole bunch of them, then I can kind of determine that something is
+# going wrong". 'act' (a restart) and 'still_down' are the same trouble again, so no new sound;
+# 'gave_up' has the watchdog's own announcement (sad).
+WATCHDOG_MOODS = {'down': 'uhoh', 'slow': 'uhoh', 'back': 'beeps'}
+
+
+def watchdog_mood(event_json: str):
+    """The mood for one /watchdog/events message, or None."""
+    try:
+        kind = json.loads(event_json).get('kind')
+    except (ValueError, AttributeError):
+        return None
+    return WATCHDOG_MOODS.get(kind)
 
 
 def _duration(path: str) -> float:
@@ -105,6 +126,7 @@ class Sounds(Node):
         self.declare_parameter('hello_after_s', 4.0)
         self.declare_parameter('english', False)         # speak English (for english_for_s, then back)
         self.declare_parameter('english_for_s', 300.0)
+        self.declare_parameter('watchdog_sounds', True)  # uh-oh / beeps on the watchdog's events
 
         self.dir = os.path.expanduser(str(self.get_parameter('sound_dir').value))
         card = str(self.get_parameter('card').value)
@@ -147,6 +169,7 @@ class Sounds(Node):
             self.create_subscription(Bool, topic, self._on_e_stop, 10)
         self.create_subscription(Bool, 'cliff/drop', self._on_drop, 10)
         self.create_subscription(BatteryState, 'battery', self._on_battery, 10)
+        self.create_subscription(String, 'watchdog/events', self._on_watchdog, 20)
         if CollisionMonitorState is not None:
             self.create_subscription(CollisionMonitorState, 'collision_guard/state', self._on_guard, 10)
         self._hello_timer = self.create_timer(float(self.get_parameter('hello_after_s').value), self._hello)
@@ -284,6 +307,13 @@ class Sounds(Node):
         if msg.data and not self._drop:
             self.say('no', force=True)
         self._drop = msg.data
+
+    def _on_watchdog(self, msg: String) -> None:
+        # not forced: a burst (the camera container takes three streams down at once) is one
+        # uh-oh, and their return one set of beeps (min_gap_s)
+        mood = watchdog_mood(msg.data)
+        if mood and bool(self.get_parameter('watchdog_sounds').value):
+            self.say(mood)
 
     def _on_battery(self, msg: BatteryState) -> None:
         if not msg.present:

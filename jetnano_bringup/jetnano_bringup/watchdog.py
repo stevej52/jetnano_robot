@@ -459,18 +459,22 @@ class Watchdog(Node):
         self.sys = s
         if self._in_grace():
             return
-        warn = []
-        if s.get('disk_free_gb', 99) < 3:
-            warn.append(f'disk nearly full, {s["disk_free_gb"]} GB free')
-        if s.get('mem_available_mb', 9999) < 300:
-            warn.append(f'memory low, {s["mem_available_mb"]} MB available')
+        # Each is a problem for as long as it lasts: 'down' once when it starts, 'back' when it
+        # clears - the sounds node's uh-oh and beeps, and a line on the driving page meanwhile.
+        # Until 2026-09-29 each was a 'system' event every 30 s while it lasted, and never
+        # said when it was over.
         hot = max((v for k, v in s.items() if k.startswith('temp_')), default=0)
-        if hot > 90:
-            warn.append(f'running hot, {hot:.0f} C')
-        if s['wifi_dbm'] is None:
-            warn.append('Wi-Fi not connected')
-        for w in warn:
-            self._event('system', 'system', w)
+        for key, label, bad, why in (
+                ('disk', 'disk space', s.get('disk_free_gb', 99) < 3, f'nearly full, {s.get("disk_free_gb")} GB free'),
+                ('memory', 'memory', s.get('mem_available_mb', 9999) < 300,
+                 f'low, {s.get("mem_available_mb")} MB available'),
+                ('heat', 'temperature', hot > 90, f'running hot, {hot:.0f} C'),
+                ('wifi', 'Wi-Fi', s['wifi_dbm'] is None, 'not connected')):
+            item = self.http_items.setdefault(key, Item(key, label, []))
+            if bad:
+                self._bad(item, why, act=False)
+            else:
+                self._good(item, 'ok')
         item = self.http_items.setdefault('container', Item('container', 'camera container', []))
         if s['container']:
             self._good(item, 'running')
