@@ -25,7 +25,7 @@ each time) through the USB speaker with aplay, on these events:
     /e_stop false -> true                     alarm
     /collision_guard/state stops the robot    no        (at most every few seconds)
     /cliff/drop true                          no
-    /battery health low / flat                sad / alarm then sleepy
+    /battery health low / flat                lowbat (a countdown, again every 5 min) / alarm then sleepy
     /watchdog/events down / slow              uhoh      (anything dropped, or not right)
     /watchdog/events back                     beeps     (whatever the uh-oh was is back)
     /say <mood>                               that mood (anyone: the page, a person detector)
@@ -141,6 +141,7 @@ class Sounds(Node):
         self.declare_parameter('english', False)         # speak English (for english_for_s, then back)
         self.declare_parameter('english_for_s', 300.0)
         self.declare_parameter('watchdog_sounds', True)  # uh-oh / beeps on the watchdog's events
+        self.declare_parameter('low_battery_repeat_s', 300.0)   # the countdown again while it stays low
 
         self.dir = os.path.expanduser(str(self.get_parameter('sound_dir').value))
         card = str(self.get_parameter('card').value)
@@ -177,6 +178,7 @@ class Sounds(Node):
         self._e_stop = None
         self._guard_stop = False
         self._battery_state = 'ok'
+        self._low_said = 0.0
         self._drop = False
         self.create_subscription(String, 'say', lambda m: self.say(m.data, force=m.data.endswith('.wav')), 10)
         for topic in ('e_stop', 'e_stop_web', 'e_stop_joy'):      # one lock per source since 2026-09-26
@@ -349,13 +351,18 @@ class Sounds(Node):
             state = 'low'
         else:
             state = 'ok'
+        now = time.monotonic()
         if state != self._battery_state:
             if state == 'low':
-                self.say('sad', force=True)
+                self.say('lowbat', force=True)       # the countdown (Steve, 2026-09-30)
+                self._low_said = now
             elif state == 'flat':
                 self.say('alarm', force=True)
                 self.say('sleepy', force=True)
             self._battery_state = state
+        elif state == 'low' and now - self._low_said > float(self.get_parameter('low_battery_repeat_s').value):
+            self.say('lowbat', force=True)           # still low: say so again
+            self._low_said = now
 
 
 def main(args=None):

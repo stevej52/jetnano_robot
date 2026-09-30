@@ -100,6 +100,7 @@ class BatteryMonitor(Node):
         self.declare_parameter('simulate_start_v', 12.4)
         self.declare_parameter('present_above_v', 6.0)
         self.declare_parameter('rate', 2.0)
+        self.declare_parameter('slow_s', 5.0)            # the thresholds judge this long an average
         self.declare_parameter('simulate', False)
 
         self.address = int(self.get_parameter('address').value)
@@ -114,6 +115,9 @@ class BatteryMonitor(Node):
         self.poweroff_v = float(self.get_parameter('poweroff_v_per_cell').value) * self.cells
         self.poweroff_after = float(self.get_parameter('poweroff_after_s').value)
         self.poweroff_cmd = str(self.get_parameter('poweroff_cmd').value)
+        self.rate = float(self.get_parameter('rate').value)
+        self.slow_s = float(self.get_parameter('slow_s').value)
+        self._v_slow = None
         self._low_since = None
         self._powering_off = False
 
@@ -178,6 +182,14 @@ class BatteryMonitor(Node):
                 self.bus = None
                 return
 
+        # The thresholds judge a slow average (about 5 s), not the instant: a motor stall
+        # sags a 3S pack by half a volt for a second, and that must not lock her at 9.9 V
+        # from a pack resting at 10.3. The message carries the instant reading.
+        if self._v_slow is None or abs(voltage - self._v_slow) > 2.0:
+            self._v_slow = voltage                    # first reading, or a pack swapped
+        else:
+            self._v_slow += (voltage - self._v_slow) * min(1.0, 1.0 / (self.slow_s * self.rate))
+        judged = self._v_slow
         msg = BatteryState()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.voltage = float(voltage)
@@ -187,15 +199,13 @@ class BatteryMonitor(Node):
         msg.charge = float('nan')
         msg.temperature = float('nan')
         msg.power_supply_technology = BatteryState.POWER_SUPPLY_TECHNOLOGY_LIPO
-        present = voltage > self.present_v
+        present = judged > self.present_v
         msg.present = present
         if present:
-            msg.percentage = percent(voltage / self.cells) / 100.0
+            msg.percentage = percent(judged / self.cells) / 100.0
             msg.power_supply_status = BatteryState.POWER_SUPPLY_STATUS_DISCHARGING
-            if voltage <= self.stop_v:
+            if judged <= self.stop_v:
                 msg.power_supply_health = BatteryState.POWER_SUPPLY_HEALTH_DEAD
-            elif voltage <= self.warn_v:
-                msg.power_supply_health = BatteryState.POWER_SUPPLY_HEALTH_GOOD
             else:
                 msg.power_supply_health = BatteryState.POWER_SUPPLY_HEALTH_GOOD
         else:
@@ -208,17 +218,17 @@ class BatteryMonitor(Node):
             self._warned = self._stopped = False
             self._low_since = None
             return
-        self._poweroff_check(voltage)
-        if voltage <= self.stop_v:
+        self._poweroff_check(judged)
+        if judged <= self.stop_v:
             if not self._stopped:
-                self.get_logger().error(f'battery {voltage:.2f} V is below {self.stop_v:.2f} V: stopping the robot')
+                self.get_logger().error(f'battery {judged:.2f} V is below {self.stop_v:.2f} V: stopping the robot')
                 self._stopped = True
             stop = Bool()
             stop.data = True
             self.stop_pub.publish(stop)
-        elif voltage <= self.warn_v:
+        elif judged <= self.warn_v:
             if not self._warned:
-                self.get_logger().warning(f'battery {voltage:.2f} V ({msg.percentage * 100:.0f} %): head home')
+                self.get_logger().warning(f'battery {judged:.2f} V ({msg.percentage * 100:.0f} %): head home')
                 self._warned = True
         else:
             self._warned = self._stopped = False

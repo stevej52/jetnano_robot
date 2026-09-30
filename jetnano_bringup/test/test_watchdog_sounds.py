@@ -61,8 +61,19 @@ def test_uhoh_two_parts_second_lower_and_longer():
     assert 0.5 < len(y) / voice.RATE < 0.8
 
 
+def test_lowbat_is_a_countdown_of_five_descending_held_notes():
+    y = voice.lowbat(0.0)
+    assert 9.0 < len(y) / voice.RATE < 11.0
+    parts = segments(y, floor=0.15)
+    assert len(parts) == 5
+    for (s, e) in parts:
+        assert 1.5 < (e - s) / voice.RATE < 2.0                  # each about two seconds, held
+    pitches = [pitch(y[s:e]) for s, e in parts]
+    assert all(b < a for a, b in zip(pitches, pitches[1:]))     # stepping down
+
+
 def test_new_moods_are_made_and_have_english():
-    for mood in ('uhoh', 'beeps'):
+    for mood in ('uhoh', 'beeps', 'lowbat'):
         assert mood in voice.MOODS and mood in voice.ENGLISH
         assert np.isfinite(voice.MOODS[mood](0.0)).all()
 

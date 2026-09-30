@@ -25,7 +25,9 @@ different. The moods and where the sounds node uses them:
     ok        two quick blips, up                        GO, command accepted
     no        two low blips, same pitch, a little rough  guard blocks, drop ahead
     alarm     fast two-tone, four times                  e-stop
-    sad       a long slide down, vibrato slowing         battery low
+    sad       a long slide down, vibrato slowing         the watchdog gave up on something
+    lowbat    a countdown: five held notes stepping      battery low (10.5 V), again every
+              down, 2 s each, the last one sagging       few minutes while it stays low
     happy     a trill, up and over                       goal reached
     curious   a rising slide with a question step        person spotted
     sleepy    three notes falling, fading                voice off / flat battery
@@ -88,6 +90,7 @@ ENGLISH = {
     'nope': ["No."],
     'uhoh': ["Uh oh."],
     'beeps': ["It's back."],
+    'lowbat': ["My battery is getting low.", "I could use a charge soon."],
 }
 # The USB speaker swallows the first ~80 ms after it wakes: measured with her
 # own mic 2026-09-25, "hm" came out as 0.08 s of 0.16 s and 8 dB quieter;
@@ -96,10 +99,11 @@ LEAD_S = 0.25
 TAIL_S = 0.10
 
 
-def tone(freq_curve, seconds, vibrato_hz=6.0, vibrato_depth=0.02, rough=0.0, bright=0.5):
+def tone(freq_curve, seconds, vibrato_hz=6.0, vibrato_depth=0.02, rough=0.0, bright=0.5, decay=1.2):
     """A note whose pitch follows freq_curve(t in 0..1). The timbre: a sine
     plus a softer octave and a touch of the fifth, formant-ish, with vibrato;
-    'rough' adds a low-rate wobble that makes it sound unhappy."""
+    'rough' adds a low-rate wobble that makes it sound unhappy; 'decay' is how
+    fast it fades over its length (1.2: to 30 %; 0.3: held, to 74 %)."""
     n = int(RATE * seconds)
     t = np.arange(n) / RATE
     u = t / seconds
@@ -117,7 +121,7 @@ def tone(freq_curve, seconds, vibrato_hz=6.0, vibrato_depth=0.02, rough=0.0, bri
     a, r = int(0.008 * RATE), int(0.025 * RATE)
     env[:a] = np.linspace(0, 1, a)
     env[-r:] = np.linspace(1, 0, r)
-    env *= np.exp(-1.2 * u)
+    env *= np.exp(-decay * u)
     return y * env
 
 
@@ -215,6 +219,22 @@ def beeps(j):
     on, I just want a high three beeps like at the end of the boot up"). No jitter - the same
     beeps every time, so they are recognised at once."""
     return online_beeps(BASE * 1.6)
+
+
+def lowbat(j):
+    """Battery low (Steve, 2026-09-30: "5 descending tones, 2 seconds each, kind of sounds
+    like a countdown"): five held notes stepping down a scale, each a shade darker, the
+    last one sagging - ten seconds nobody mistakes for a chirp."""
+    k = 2 ** (j / 12)
+    parts = []
+    steps = (1.5, 1.26, 1.0, 0.84, 0.67)
+    for i, f in enumerate(steps):
+        last = i == len(steps) - 1
+        curve = glide(BASE * k * f, BASE * k * f * 0.9, 1.5) if last else flat(BASE * k * f)
+        parts.append(tone(curve, 1.75, vibrato_hz=4.0, vibrato_depth=0.012, bright=0.55 - 0.08 * i, decay=0.3))
+        if not last:
+            parts.append(rest(0.25))
+    return np.concatenate(parts)
 
 
 def uhoh(j):
@@ -357,7 +377,7 @@ MOODS = {'hello': hello, 'ok': ok, 'no': no, 'alarm': alarm, 'sad': sad,
          'happy': happy, 'curious': curious, 'sleepy': sleepy, 'hm': hm, 'huh': huh,
          'bye': bye, 'chat': lambda j: chat(random.randrange(4, 9), j), 'laugh': laugh, 'on': on, 'off': off,
          'story': lambda j: story(3, j), 'boop': boop, 'yes': yes, 'nope': nope,
-         'uhoh': uhoh, 'beeps': beeps}
+         'uhoh': uhoh, 'beeps': beeps, 'lowbat': lowbat}
 
 
 def write_wav(path, samples, volume=0.6):

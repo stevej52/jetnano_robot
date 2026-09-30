@@ -68,6 +68,7 @@ HOLD = '/odom_hold'
 # 2026-09-29: "gaps: 14, worst 6.2 s" read as lost lidar odometry; it was the gate refusing
 # MOLA through the parking shuffles, where it got the direction wrong.
 MOLA = '/lidar_odometry/pose'
+BATTERY = '/battery'          # (t, volts): what a drive costs the pack (INA219 since 2026-09-30)
 
 
 def open_reader(bag):
@@ -92,7 +93,7 @@ def load(bag):
                   for i in reader.get_metadata().topics_with_message_count}
     except (AttributeError, RuntimeError):
         counts = {}
-    wanted = [t for t in POSES + TWISTS + (GUARD, HOLD, MOLA) if t in types]
+    wanted = [t for t in POSES + TWISTS + (GUARD, HOLD, MOLA, BATTERY) if t in types]
     reader.set_filter(StorageFilter(topics=wanted))
     msgs = defaultdict(list)
     while reader.has_next():
@@ -109,6 +110,9 @@ def load(bag):
             msgs[topic].append((t, m.linear.x, m.angular.z))
         elif topic == GUARD:
             msgs[topic].append((t, m.action_type))
+        elif topic == BATTERY:
+            if m.present:
+                msgs[topic].append((t, m.voltage))
         else:
             msgs[topic].append((t,))
     for v in msgs.values():
@@ -312,6 +316,15 @@ def report(bag):
     if S:
         say(f'guard: {len(events)} stops ({lidar_caused} with lidar points in the zone, {camera_caused} camera-only), '
             f'{slowdowns} slowdowns')
+
+    # --- the battery ---------------------------------------------------------
+    bat = msgs.get(BATTERY, [])
+    if len(bat) > 2:
+        v = [b[1] for b in bat]
+        head = sum(v[:6]) / len(v[:6])
+        tail = sum(v[-6:]) / len(v[-6:])
+        say(f'battery: {head:.2f} V at the start, {tail:.2f} V at the end ({head - tail:+.2f} V), '
+            f'lowest instant {min(v):.2f} V (sag under load included)')
 
     # --- throttle -> ground speed, measured by VO ----------------------------
     C = msgs.get('/cmd_vel', [])
