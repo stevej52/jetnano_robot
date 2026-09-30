@@ -31,6 +31,7 @@ setup(
             'where_am_i = jetnano_navigation.where_am_i:main',
             'nav_goal = jetnano_navigation.nav_goal:main',
             'nav_park = jetnano_navigation.nav_park:main',
+            'nav_helper = jetnano_navigation.nav_helper:main',
         ],
     },
 )

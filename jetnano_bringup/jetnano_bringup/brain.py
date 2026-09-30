@@ -50,6 +50,13 @@ than ``bridge_after_s`` on a quick question she says the same, rather than
 sitting silent. Without Claude (no key, or the day's budget spent) a PASS or
 THINK becomes "I don't know. I'm just a robot." Calibrated 2026-09-25: 19 of
 20 routed as intended (the miss, advice, went PASS instead of THINK).
+
+Pictures (``brain/look``, 2026-09-29): a JSON request {"id", "prompt", "system",
+"images": [{"path", "label"}], "max_tokens"} goes to Claude with the images
+(the local model reads text only), on its own thread so it never holds up
+speech, within the same daily budget and spend file; the reply is JSON
+{"id", "text"} or {"id", "error"} on ``brain/look_answer``. nav_helper asks this
+way when she is stuck: the map, the obstacles, the camera's views.
 """
 
 import collections
@@ -315,6 +322,11 @@ class Brain(Node):
         self._publish_ready()
         self.create_timer(30.0, self._check_local)
         threading.Thread(target=self._work, daemon=True, name='brain').start()
+        # pictures to Claude (nav_helper, when she is stuck): their own queue and thread
+        self.look_pub = self.create_publisher(String, 'brain/look_answer', 10)
+        self.look_queue = queue.Queue()
+        self.create_subscription(String, 'brain/look', lambda m: self.look_queue.put(m.data), 10)
+        threading.Thread(target=self._look_work, daemon=True, name='brain-look').start()
 
     # ----------------------------------------------------------- backends --
 
@@ -442,6 +454,61 @@ class Brain(Node):
                      'the room is a bit noisy' if self.level > -40 else 'the room is quiet')
         f.append('you talk with people in English; your little system sounds are beeps and boops')
         return '; '.join(f) + '.'
+
+    # ------------------------------------------------------------ pictures --
+
+    LOOK_MEDIA = {'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png'}
+
+    def _look_work(self) -> None:
+        while True:
+            raw = self.look_queue.get()
+            try:
+                req = json.loads(raw)
+            except ValueError:
+                continue
+            rid = str(req.get('id', ''))
+            try:
+                answer = {'id': rid, 'text': self._look(req)}
+            except Exception as exc:  # noqa: BLE001 - the asker must hear back either way
+                answer = {'id': rid, 'error': f'{type(exc).__name__}: {exc}'[:300]}
+                self.get_logger().warning(f'look {rid}: {answer["error"]}')
+            out = String()
+            out.data = json.dumps(answer)
+            self.look_pub.publish(out)
+
+    def _look(self, req: dict) -> str:
+        """One question about some pictures, to Claude; the answer's text."""
+        import base64
+        if self.client is None:
+            raise RuntimeError('no Claude (no key, or backend local)')
+        if self._spent() >= self.budget:
+            raise RuntimeError(f'the day\'s budget ({self.budget:.0f} cents) is spent')
+        content = []
+        for img in req.get('images', [])[:12]:
+            path = str(img.get('path', ''))
+            media = self.LOOK_MEDIA.get(os.path.splitext(path)[1].lower())
+            if media is None or not os.path.isfile(path) or os.path.getsize(path) > 4_000_000:
+                raise ValueError(f'unusable image {path!r}')
+            if img.get('label'):
+                content.append({'type': 'text', 'text': str(img['label'])})
+            with open(path, 'rb') as fh:
+                data = base64.standard_b64encode(fh.read()).decode('ascii')
+            content.append({'type': 'image', 'source': {'type': 'base64', 'media_type': media, 'data': data}})
+        content.append({'type': 'text', 'text': str(req.get('prompt', ''))})
+        t0 = time.monotonic()
+        with self.client.messages.stream(
+                model=self.model, system=str(req.get('system', '')),
+                messages=[{'role': 'user', 'content': content}],
+                max_tokens=int(req.get('max_tokens', 4000)),
+                output_config={'effort': str(req.get('effort', 'medium'))},
+                timeout=self.timeout_think) as stream:
+            final = stream.get_final_message()
+        text = ''.join(b.text for b in final.content if getattr(b, 'type', '') == 'text').strip()
+        cents = self._add_spend(final.usage.input_tokens, final.usage.output_tokens)
+        self.get_logger().info(f'look {req.get("id", "")}: {len(req.get("images", []))} picture(s), '
+                               f'{final.usage.input_tokens} in / {final.usage.output_tokens} out, '
+                               f'{time.monotonic() - t0:.1f} s, {cents:.1f} cents today: "{text[:120]}"')
+        return text
 
     # ------------------------------------------------------------- spend --
 

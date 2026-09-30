@@ -28,8 +28,17 @@ Before sending it:
 Then it prints progress each second (from Nav2's own feedback), cancels the goal after
 TIMEOUT_S (default 45), and ends with the pose error (from localization) and what the
 translator sent the driver.
+
+    ros2 run jetnano_navigation nav_goal X Y HEADING_DEG [TIMEOUT_S] --rescue
+
+--rescue (2026-09-29): if the goal fails, back out along her own track (nav_helper
+~/retrace) and try again; if that fails too, ask Claude with pictures (nav_helper ~/ask:
+the house map, the obstacles, a camera sweep) and do what it picks - back out further, go
+by a point it chose first (checked against the costmap like any goal), wait, or give up -
+at most twice.
 """
 
+import json
 import math
 import sys
 import time
@@ -43,7 +52,10 @@ from nav2_msgs.action import NavigateToPose
 from nav_msgs.msg import OccupancyGrid
 from rclpy.action import ActionClient
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-from std_msgs.msg import Bool
+from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
+from rcl_interfaces.srv import SetParameters
+from std_msgs.msg import Bool, String
+from std_srvs.srv import Trigger
 
 REACH_M = 0.32            # her outline's reach from the centre, tyres turned (0.26 x 0.19)
 CENTRE_MAX_COST = 20      # 0-100 costmap scale: 0 is clear of every margin
@@ -87,7 +99,8 @@ def clear_goal(grid, gx, gy):
 
 def main():
     check_only = '--check' in sys.argv
-    args = [a for a in sys.argv[1:] if a != '--check']
+    rescue = '--rescue' in sys.argv
+    args = [a for a in sys.argv[1:] if a not in ('--check', '--rescue')]
     gx, gy, gh = float(args[0]), float(args[1]), math.radians(float(args[2]))
     timeout = float(args[3]) if len(args) > 3 else 45.0
 
@@ -151,67 +164,170 @@ def main():
         finally:
             lis.unregister()
 
-    start = tf_pose()
-    if start is None:
-        raise SystemExit('no map -> base_footprint transform after 15 s')
-    print(f'start  x {start[0]:+.2f}  y {start[1]:+.2f}  heading {math.degrees(start[2]):+.0f} deg; '
-          f'goal x {gx:+.2f}  y {gy:+.2f}  heading {math.degrees(gh):+.0f} deg', flush=True)
+    goal_pub = n.create_publisher(PoseStamped, 'nav_helper/goal', 10)
+    situation_pub = n.create_publisher(String, 'nav_helper/situation', 10)
 
-    # 3. the goal; her position from Nav2's feedback (a TF listener kept for this cost a
-    # third of a core in Python on 2026-09-28)
-    fb = {'dist': float('nan'), 'pose': None}
+    def drive(gx, gy, gh, label='goal'):
+        """One Nav2 goal: progress each second, then the result line. -> its status."""
+        start = tf_pose()
+        if start is None:
+            raise SystemExit('no map -> base_footprint transform after 15 s')
+        print(f'start  x {start[0]:+.2f}  y {start[1]:+.2f}  heading {math.degrees(start[2]):+.0f} deg; '
+              f'{label} x {gx:+.2f}  y {gy:+.2f}  heading {math.degrees(gh):+.0f} deg', flush=True)
+        # her position from Nav2's feedback (a TF listener kept for this cost a third of a
+        # core in Python on 2026-09-28)
+        fb = {'dist': float('nan'), 'pose': None}
 
-    def on_feedback(f):
-        fb['dist'] = f.feedback.distance_remaining
-        p = f.feedback.current_pose.pose
-        fb['pose'] = (p.position.x, p.position.y, yaw(p.orientation))
+        def on_feedback(f):
+            fb['dist'] = f.feedback.distance_remaining
+            p = f.feedback.current_pose.pose
+            fb['pose'] = (p.position.x, p.position.y, yaw(p.orientation))
 
-    goal = NavigateToPose.Goal()
-    goal.pose = PoseStamped()
-    goal.pose.header.frame_id = 'map'
-    goal.pose.header.stamp = n.get_clock().now().to_msg()
-    goal.pose.pose.position.x, goal.pose.pose.position.y = gx, gy
-    goal.pose.pose.orientation.z, goal.pose.pose.orientation.w = math.sin(gh / 2), math.cos(gh / 2)
-    send = client.send_goal_async(goal, feedback_callback=on_feedback)
-    while not send.done():
-        rclpy.spin_once(n, timeout_sec=0.1)
-    handle = send.result()
-    if not handle.accepted:
-        raise SystemExit('goal rejected')
-    res = handle.get_result_async()
-    t0 = time.time()
-    last = 0.0
-    locked_during = False
-    while not res.done():
-        rclpy.spin_once(n, timeout_sec=0.05)
-        locked_during = locked_during or bool(st['lock'])
-        if time.time() - last >= 1.0:
-            last = time.time()
-            p = fb['pose'] or start
-            c = st['cmd'][-1] if st['cmd'] else (0.0, 0.0)
-            print(f'{time.time() - t0:5.1f} s  at x {p[0]:+.2f} y {p[1]:+.2f} h {math.degrees(p[2]):+4.0f}  '
-                  f'remaining {fb["dist"]:.2f} m  driver: throttle {c[0]:+.2f} steer {c[1]:+.2f}'
-                  + ('  MOTION LOCK' if st['lock'] else ''), flush=True)
-        if time.time() - t0 > timeout:
-            print('timeout: cancelling the goal', flush=True)
-            cancel = handle.cancel_goal_async()
-            while not cancel.done():
+        goal = NavigateToPose.Goal()
+        goal.pose = PoseStamped()
+        goal.pose.header.frame_id = 'map'
+        goal.pose.header.stamp = n.get_clock().now().to_msg()
+        goal.pose.pose.position.x, goal.pose.pose.position.y = gx, gy
+        goal.pose.pose.orientation.z, goal.pose.pose.orientation.w = math.sin(gh / 2), math.cos(gh / 2)
+        st['cmd'] = []
+        send = client.send_goal_async(goal, feedback_callback=on_feedback)
+        while not send.done():
+            rclpy.spin_once(n, timeout_sec=0.1)
+        handle = send.result()
+        if not handle.accepted:
+            print('result REJECTED', flush=True)
+            return GoalStatus.STATUS_ABORTED
+        res = handle.get_result_async()
+        t0 = time.time()
+        last = 0.0
+        locked_during = False
+        while not res.done():
+            rclpy.spin_once(n, timeout_sec=0.05)
+            locked_during = locked_during or bool(st['lock'])
+            if time.time() - last >= 1.0:
+                last = time.time()
+                p = fb['pose'] or start
+                c = st['cmd'][-1] if st['cmd'] else (0.0, 0.0)
+                print(f'{time.time() - t0:5.1f} s  at x {p[0]:+.2f} y {p[1]:+.2f} h {math.degrees(p[2]):+4.0f}  '
+                      f'remaining {fb["dist"]:.2f} m  driver: throttle {c[0]:+.2f} steer {c[1]:+.2f}'
+                      + ('  MOTION LOCK' if st['lock'] else ''), flush=True)
+            if time.time() - t0 > timeout:
+                print('timeout: cancelling the goal', flush=True)
+                cancel = handle.cancel_goal_async()
+                while not cancel.done():
+                    rclpy.spin_once(n, timeout_sec=0.1)
+                break
+        status = res.result().status if res.done() else GoalStatus.STATUS_CANCELED
+        names = {GoalStatus.STATUS_SUCCEEDED: 'SUCCEEDED', GoalStatus.STATUS_ABORTED: 'ABORTED',
+                 GoalStatus.STATUS_CANCELED: 'CANCELED'}
+        time.sleep(1.0)
+        p = tf_pose() or fb['pose'] or start
+        dh = math.degrees(math.atan2(math.sin(p[2] - gh), math.cos(p[2] - gh)))
+        thr = [abs(c[0]) for c in st['cmd'] if c[0] != 0]
+        signs = [1 if c[0] > 0 else -1 for c in st['cmd'] if abs(c[0]) > 0.01]
+        switches = sum(1 for a, b in zip(signs, signs[1:]) if a != b)
+        print(f'result {names.get(status, status)} after {time.time() - t0:.1f} s'
+              + (' (the motion check stopped her)' if locked_during else '')
+              + f'; ended {math.hypot(p[0] - gx, p[1] - gy) * 100:.0f} cm from the {label}, '
+              f'heading off by {dh:+.0f} deg; '
+              f'driver got {len(st["cmd"])} commands, throttle {min(thr, default=0):.2f}-{max(thr, default=0):.2f}; '
+              f'forward/reverse switches {switches}', flush=True)
+        return status
+
+    def helper(name, wait_s):
+        """Call nav_helper's ~/<name> (std_srvs/Trigger) -> (success, message)."""
+        cli = n.create_client(Trigger, f'/nav_helper/{name}')
+        try:
+            if not cli.wait_for_service(timeout_sec=5.0):
+                return False, 'nav_helper is not running'
+            fut = cli.call_async(Trigger.Request())
+            end = time.time() + wait_s
+            while not fut.done() and time.time() < end:
                 rclpy.spin_once(n, timeout_sec=0.1)
-            break
-    status = res.result().status if res.done() else GoalStatus.STATUS_CANCELED
-    names = {GoalStatus.STATUS_SUCCEEDED: 'SUCCEEDED', GoalStatus.STATUS_ABORTED: 'ABORTED',
-             GoalStatus.STATUS_CANCELED: 'CANCELED'}
-    time.sleep(1.0)
-    p = tf_pose() or fb['pose'] or start
-    dh = math.degrees(math.atan2(math.sin(p[2] - gh), math.cos(p[2] - gh)))
-    thr = [abs(c[0]) for c in st['cmd'] if c[0] != 0]
-    signs = [1 if c[0] > 0 else -1 for c in st['cmd'] if abs(c[0]) > 0.01]
-    switches = sum(1 for a, b in zip(signs, signs[1:]) if a != b)
-    print(f'result {names.get(status, status)} after {time.time() - t0:.1f} s'
-          + (' (the motion check stopped her)' if locked_during else '')
-          + f'; ended {math.hypot(p[0] - gx, p[1] - gy) * 100:.0f} cm from the goal, heading off by {dh:+.0f} deg; '
-          f'driver got {len(st["cmd"])} commands, throttle {min(thr, default=0):.2f}-{max(thr, default=0):.2f}; '
-          f'forward/reverse switches {switches}', flush=True)
+            if not fut.done():
+                return False, f'no reply in {wait_s:.0f} s'
+            return fut.result().success, fut.result().message
+        finally:
+            n.destroy_client(cli)
+
+    def set_retrace(metres):
+        cli = n.create_client(SetParameters, '/nav_helper/set_parameters')
+        try:
+            if cli.wait_for_service(timeout_sec=3.0):
+                req = SetParameters.Request()
+                req.parameters = [Parameter(name='retrace_m', value=ParameterValue(
+                    type=ParameterType.PARAMETER_DOUBLE, double_value=float(metres)))]
+                fut = cli.call_async(req)
+                end = time.time() + 5.0
+                while not fut.done() and time.time() < end:
+                    rclpy.spin_once(n, timeout_sec=0.1)
+        finally:
+            n.destroy_client(cli)
+
+    def announce(text):
+        for _ in range(3):                               # nav_helper hears it (a new publisher)
+            m = String()
+            m.data = text
+            situation_pub.publish(m)
+            spin_for(0.2)
+
+    gp = PoseStamped()
+    gp.header.frame_id = 'map'
+    gp.pose.position.x, gp.pose.position.y = gx, gy
+    gp.pose.orientation.z, gp.pose.orientation.w = math.sin(gh / 2), math.cos(gh / 2)
+    for _ in range(3):
+        goal_pub.publish(gp)
+        spin_for(0.1)
+
+    status = drive(gx, gy, gh)
+    if rescue and status != GoalStatus.STATUS_SUCCEEDED:
+        print('rescue: backing out along her own track, then trying again', flush=True)
+        set_retrace(0.8)
+        ok, msg = helper('retrace', 40.0)
+        print(f'rescue: {msg}', flush=True)
+        status = drive(gx, gy, gh)
+        for ask in range(2):
+            if status == GoalStatus.STATUS_SUCCEEDED:
+                break
+            announce(f'she was sent to map ({gx:+.2f}, {gy:+.2f}); Nav2 gave up'
+                     + (', backing out along her track and trying again did not help' if ask == 0 else
+                        ', and the last advice did not work either'))
+            print('rescue: asking Claude (house map, obstacles, camera sweep)...', flush=True)
+            ok, msg = helper('ask', 200.0)
+            try:
+                out = json.loads(msg)
+            except ValueError:
+                out = {'error': msg}
+            advice = out.get('advice')
+            if not advice:
+                print(f'rescue: no usable advice ({out.get("error") or "unreadable answer"}); '
+                      f'pictures in {out.get("dir", "?")}', flush=True)
+                break
+            print(f'rescue: Claude sees "{advice["what"]}"' + (' (temporary)' if advice['temporary'] else '')
+                  + f' -> {advice["action"]}: {advice["why"]}'
+                  + (f' Says: "{advice["say"]}"' if advice['say'] else '')
+                  + f' ({out.get("seconds", "?")} s; {out.get("dir", "")})', flush=True)
+            action = advice['action']
+            if action == 'give_up':
+                break
+            if action == 'retrace':
+                set_retrace(advice['retrace_m'])
+                ok, msg = helper('retrace', 60.0)
+                print(f'rescue: {msg}', flush=True)
+            elif action == 'wait':
+                print(f'rescue: waiting {advice["wait_s"]:.0f} s', flush=True)
+                spin_for(advice['wait_s'])
+            elif action == 'via':
+                vx, vy = advice['x'], advice['y']
+                if st['grid'] is not None:
+                    found = clear_goal(st['grid'], vx, vy)
+                    if found is None:
+                        print(f'rescue: ({vx:+.2f}, {vy:+.2f}) is not clear for her: not going there', flush=True)
+                        continue
+                    vx, vy = found[0], found[1]
+                heading = math.atan2(gy - vy, gx - vx)          # facing on towards the goal
+                drive(vx, vy, heading, label='waypoint')
+            status = drive(gx, gy, gh)
     rclpy.shutdown()
 
 

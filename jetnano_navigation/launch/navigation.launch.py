@@ -125,6 +125,18 @@ def generate_launch_description():
             description="turn Nav2 m/s and rad/s into Rosie's throttle and steering "
                         '(nav_translator); false passes them through (the simulator)'),
 
+        # When she is stuck: back out along her own track, and ask Claude with pictures of
+        # the map, the obstacles and a camera sweep (nav_helper; nav_goal --rescue uses it).
+        Node(
+            package='jetnano_navigation',
+            executable='nav_helper',
+            name='nav_helper',
+            output='screen',
+            respawn=True,
+            respawn_delay=2.0,
+            parameters=[{'use_sim_time': ParameterValue(LaunchConfiguration('use_sim_time'), value_type=bool)}],
+        ),
+
         # Nav2's collision monitor publishes cmd_vel_nav_mps (nav2.yaml); this turns it
         # into what the driver understands and hands it to twist_mux on cmd_vel_nav.
         Node(
