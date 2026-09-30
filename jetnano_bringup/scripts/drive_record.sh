@@ -8,7 +8,14 @@
 #     drive_record.sh start full     -> the same plus everything else worth looking
 #                                       back at (~40 MB a minute and ~15 MB of pictures),
 #                                       see FULL below; for a test drive, not every drive
-#     drive_record.sh stop           -> stops ALL of it, prints drive_report
+#     drive_record.sh stop           -> stops ALL of it; H2-Host analyses the recording
+#                                       within minutes (http://192.168.1.238:8087/)
+#     drive_record.sh stop report    -> the same, plus drive_report run HERE (when H2-Host
+#                                       is off). Not the default since 2026-09-30: on
+#                                       drive 5 (64 min, 1.8 GB) drive_report grew to
+#                                       2.9 GB and the OOM killer took it, with 35 MB
+#                                       left for everything else (ears, IMU and odometry
+#                                       all restarted, the microphone wedged).
 #     drive_record.sh status
 #
 # The plain recording holds the commands, the odometry (VO and EKF), the IMU, the
@@ -127,16 +134,20 @@ case "${1:-status}" in
         LEFT=$(left_running)
         if [ -d "$EXTRA" ]; then
             journalctl --since "@$(cat "$EXTRA/started")" --no-pager -o short-iso-precise > "$EXTRA/journal.txt" 2>&1
+        fi
+        if [ "${2:-}" = report ]; then
             echo "stopped; report for $BAG:"
             echo
             nice -n 10 timeout 900 ros2 run jetnano_bringup drive_report "$BAG"
             echo
+        else
+            echo "stopped: $BAG ($(du -sh "$BAG" | cut -f1))"
+            echo "H2-Host pulls and analyses it within minutes: http://192.168.1.238:8087/"
+            echo "(drive_record.sh stop report would run drive_report here, 2-3 GB of memory)"
+        fi
+        if [ -d "$EXTRA" ]; then
             echo "kept: $(du -sh "$BAG" | cut -f1) bag, $(du -sh "$EXTRA" | cut -f1) extra" \
                  "($(find "$EXTRA/frames" -name '*.jpg' 2>/dev/null | wc -l) pictures)"
-        else
-            echo "stopped; report for $BAG:"
-            echo
-            nice -n 10 timeout 900 ros2 run jetnano_bringup drive_report "$BAG"
         fi
         if [ -z "$LEFT" ]; then echo "all drive logging is off"; else echo "STILL RUNNING:"; echo "$LEFT"; exit 1; fi
         ;;
