@@ -45,6 +45,7 @@ import urllib.error
 import urllib.request
 import uuid
 
+from action_msgs.msg import GoalStatus, GoalStatusArray
 import cv2
 from geometry_msgs.msg import PoseStamped, Twist
 from jetnano_navigation import stuck_help as sh
@@ -54,7 +55,8 @@ import rclpy
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
 from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
-from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_sensor_data
+from rclpy.qos import (DurabilityPolicy, QoSProfile, ReliabilityPolicy, qos_profile_action_status_default,
+                       qos_profile_sensor_data)
 from rclpy.serialization import deserialize_message
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, String
@@ -95,34 +97,42 @@ class NavHelper(Node):
         p('out_dir', '/tmp/nav_helper')
         p('ask_timeout_s', 150.0)
         p('ask_effort', 'medium')
+        p('odom_linger_s', 30.0)                 # odometry kept this long after the last Nav2 goal
         self.gp = lambda name: self.get_parameter(name).value
 
-        subs = MutuallyExclusiveCallbackGroup()
+        # 2026-09-29: subscribed to everything all the time, the node took 30-36 % of a core
+        # parked - its executor woke 145 times a second (odometry 100/s, the camera grid 36/s,
+        # the scan 8/s). Now the scan and the grid are fetched when a packet is built, and the
+        # odometry (her track) is followed only while Nav2 has a goal, and a while after.
+        self.subs = MutuallyExclusiveCallbackGroup()
+        subs = self.subs
         self.work = ReentrantCallbackGroup()
         self.pose = None                         # odom (x, y, yaw), <= 20 a second
         self._pose_t = 0.0
         self.track = collections.deque()         # odom (x, y), oldest first
-        self.raw = {}                            # the latest scan / camera grid / plan, still serialized
+        self.raw = {}                            # the latest plan, still serialized
         self.map = None
         self.goal = None
         self.situation = ''
         self.lock = False
         self.answers = {}
+        self._odom_sub = None
+        self._fresh = False
+        self._odom_lock = threading.Lock()
+        self._active_t = -1e9                    # when Nav2 last had a goal (monotonic)
+        self._busy = 0                           # retrace / packet in progress: keep the odometry
         self.cmd = self.create_publisher(Twist, str(self.gp('cmd_topic')), 10)
         self.look_pub = self.create_publisher(String, 'brain/look', 10)
-        self.create_subscription(Odometry, 'odometry/filtered', self._on_odom, 20, raw=True, callback_group=subs)
-        self.create_subscription(LaserScan, 'scan', lambda r: self.raw.__setitem__('scan', r),
-                                 qos_profile_sensor_data, raw=True, callback_group=subs)
-        self.create_subscription(OccupancyGrid, '/nvblox_node/static_occupancy_grid',
-                                 lambda r: self.raw.__setitem__('camera', r), 2, raw=True, callback_group=subs)
+        self.create_subscription(GoalStatusArray, 'navigate_to_pose/_action/status', self._on_status,
+                                 qos_profile_action_status_default, callback_group=subs)
+        self.create_timer(2.0, self._odom_idle, callback_group=subs)
         self.create_subscription(Path, 'plan', lambda r: self.raw.__setitem__('plan', r), 2, raw=True,
                                  callback_group=subs)
         latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                              durability=DurabilityPolicy.TRANSIENT_LOCAL)
         self.create_subscription(OccupancyGrid, 'map', lambda m: setattr(self, 'map', m), latched,
                                  callback_group=subs)
-        self.create_subscription(PoseStamped, 'nav_helper/goal', lambda m: setattr(self, 'goal', m), 10,
-                                 callback_group=subs)
+        self.create_subscription(PoseStamped, 'nav_helper/goal', self._on_goal, 10, callback_group=subs)
         self.create_subscription(String, 'nav_helper/situation', lambda m: setattr(self, 'situation', m.data), 10,
                                  callback_group=subs)
         self.create_subscription(Bool, 'e_stop_motion', lambda m: setattr(self, 'lock', bool(m.data)), 10,
@@ -135,6 +145,40 @@ class NavHelper(Node):
 
     # ---------------------------------------------------------------- inputs --
 
+    def _on_goal(self, msg):
+        self.goal = msg
+        self._active_t = time.monotonic()
+        self._odom_on()
+
+    def _on_status(self, msg):
+        if any(s.status in (GoalStatus.STATUS_ACCEPTED, GoalStatus.STATUS_EXECUTING, GoalStatus.STATUS_CANCELING)
+               for s in msg.status_list):
+            self._active_t = time.monotonic()
+            self._odom_on()
+
+    def _odom_on(self):
+        with self._odom_lock:
+            if self._odom_sub is None:
+                self._fresh = True
+                self._odom_sub = self.create_subscription(Odometry, 'odometry/filtered', self._on_odom, 20,
+                                                          raw=True, callback_group=self.subs)
+
+    def _odom_idle(self):
+        with self._odom_lock:
+            if (self._odom_sub is not None and not self._busy
+                    and time.monotonic() - self._active_t > float(self.gp('odom_linger_s'))):
+                self.destroy_subscription(self._odom_sub)
+                self._odom_sub = None
+                self.pose = None                 # stale from here on
+
+    def _fresh_pose(self, wait_s=2.0):
+        """Odometry on (if Nav2 had no goal lately) and a pose from it."""
+        self._odom_on()
+        end = time.monotonic() + wait_s
+        while self.pose is None and time.monotonic() < end:
+            time.sleep(0.05)
+        return self.pose
+
     def _on_odom(self, raw):
         now = time.monotonic()
         if now - self._pose_t < 0.05:
@@ -144,6 +188,10 @@ class NavHelper(Node):
         p = m.pose.pose
         self.pose = (p.position.x, p.position.y, yaw_of(p.orientation))
         tr = self.track
+        if self._fresh:                          # first pose after a gap: did she move meanwhile?
+            self._fresh = False
+            if tr and math.hypot(tr[-1][0] - self.pose[0], tr[-1][1] - self.pose[1]) > 0.3:
+                tr.clear()                       # driven by hand: that track no longer leads here
         if not tr or math.hypot(tr[-1][0] - self.pose[0], tr[-1][1] - self.pose[1]) >= float(self.gp('track_step_m')):
             tr.append((self.pose[0], self.pose[1]))
             while len(tr) * float(self.gp('track_step_m')) > float(self.gp('track_max_m')):
@@ -177,6 +225,17 @@ class NavHelper(Node):
         self.destroy_subscription(sub)
         return found[-1] if found else None
 
+    def _latest(self, msg_type, topic, qos, wait_s=2.0):
+        """One message from `topic`, subscribed only for that moment; None if none came."""
+        got = []
+        sub = self.create_subscription(msg_type, topic, lambda r: got.append(r), qos, raw=True,
+                                       callback_group=self.work)
+        end = time.monotonic() + wait_s
+        while not got and time.monotonic() < end:
+            time.sleep(0.05)
+        self.destroy_subscription(sub)
+        return deserialize_message(got[-1], msg_type) if got else None
+
     # ---------------------------------------------------------------- retrace --
 
     def _send(self, v, w):
@@ -185,9 +244,17 @@ class NavHelper(Node):
         self.cmd.publish(t)
 
     def _retrace(self, request, response):
+        self._busy += 1
+        try:
+            return self._retrace_work(response)
+        finally:
+            self._busy -= 1
+
+    def _retrace_work(self, response):
         metres = float(self.gp('retrace_m'))
         speed, look = float(self.gp('retrace_speed')), float(self.gp('lookahead_m'))
         kmax = float(self.gp('max_curvature'))
+        self._fresh_pose()
         track = list(self.track)
         if self.pose is None or len(track) < 3:
             response.success, response.message = False, 'no track to back out along yet'
@@ -275,10 +342,19 @@ class NavHelper(Node):
 
     def build_packet(self, sweep=True):
         """-> (directory, [{path, label}], facts text)."""
+        self._busy += 1
+        try:
+            return self._build_packet(sweep)
+        finally:
+            self._busy -= 1
+
+    def _build_packet(self, sweep):
         d = os.path.join(str(self.gp('out_dir')), time.strftime('%Y%m%d-%H%M%S'))
         os.makedirs(d, exist_ok=True)
         images, facts = [], []
-        pose = self.pose
+        pose = self._fresh_pose()
+        camera = self._latest(OccupancyGrid, '/nvblox_node/static_occupancy_grid', 2)
+        scan_msg = self._latest(LaserScan, 'scan', qos_profile_sensor_data)
         mo = self._map_to_odom()
         pose_map = compose(mo, pose) if (mo and pose) else None
         track = list(self.track)
@@ -299,8 +375,8 @@ class NavHelper(Node):
             facts.append(f'she is at map ({pose_map[0]:+.2f}, {pose_map[1]:+.2f}) facing '
                          f'{math.degrees(pose_map[2]):+.0f} deg (0 = east / +x, 90 = north / +y)')
             obstacles = []
-            if 'camera' in self.raw:
-                g = deserialize_message(self.raw['camera'], OccupancyGrid)
+            if camera is not None:
+                g = camera
                 cells = sh.grid_cells(np.array(g.data, dtype=np.int16).reshape(g.info.height, g.info.width),
                                       (g.info.resolution, g.info.origin.position.x, g.info.origin.position.y))
                 obstacles = [compose(mo, (x, y, 0.0))[:2] for x, y in cells]
@@ -311,12 +387,12 @@ class NavHelper(Node):
             facts.append('no house map or no position on it right now')
         if pose is not None:
             scan = []
-            if 'scan' in self.raw:
-                s = deserialize_message(self.raw['scan'], LaserScan)
+            if scan_msg is not None:
+                s = scan_msg
                 scan = sh.scan_points(s.ranges, s.angle_min, s.angle_increment, s.range_min, s.range_max)
             cam = []
-            if 'camera' in self.raw:
-                g = deserialize_message(self.raw['camera'], OccupancyGrid)
+            if camera is not None:
+                g = camera
                 cells = sh.grid_cells(np.array(g.data, dtype=np.int16).reshape(g.info.height, g.info.width),
                                       (g.info.resolution, g.info.origin.position.x, g.info.origin.position.y))
                 cam = [c for c in sh.to_robot(cells, pose) if abs(c[0]) < 2.0 and abs(c[1]) < 2.0]
