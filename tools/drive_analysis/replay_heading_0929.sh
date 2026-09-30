@@ -18,7 +18,7 @@ CFG=${CFG:-/home/jeston/ros2_ws/install/jetnano_bringup/share/jetnano_bringup/co
 LOG=/tmp/replay-heading-$TAG
 rm -rf $LOG; mkdir -p $LOG
 
-nice -n 10 ros2 run jetnano_bringup imu_base_relay --ros-args -p use_sim_time:=true > $LOG/relay.log 2>&1 &
+nice -n 10 /home/jeston/ros2_ws/install/jetnano_bringup/lib/jetnano_bringup/imu_base_relay --ros-args -p use_sim_time:=true > $LOG/relay.log 2>&1 &
 RELAY=$!
 nice -n 10 /opt/ros/jazzy/lib/robot_localization/ekf_node --ros-args -r __node:=ekf_filter_node \
     --params-file $CFG -p use_sim_time:=true -p publish_tf:=false "${EXTRA[@]}" > $LOG/ekf.log 2>&1 &
