@@ -535,7 +535,9 @@ private:
     cmd_since_.reset();
     send_lock(true);
     std_msgs::msg::String say;
-    say.data = "nope";
+    // Said out loud, not just logged (2026-09-30: this fired correctly at 13:58 on a loose
+    // ground wire, and the fact sat in the log for two hours while software was blamed)
+    say.data = "I am told to drive but I am not moving. Check the motor rail.";
     say_pub_->publish(say);
     publish_state(std::string("stopped: told to drive, ") + reason);
     RCLCPP_WARN(get_logger(), "STOPPED her: told to drive for %.1f s but %s - odometry blind, wheels "

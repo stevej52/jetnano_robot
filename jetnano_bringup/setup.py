@@ -16,7 +16,7 @@ setup(
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
         (os.path.join('lib', package_name), ['scripts/cuvslam_vo.sh', 'scripts/wifi_watchdog.sh',
                                              'scripts/drive_record.sh', 'scripts/save_3d_map.sh',
-                                             'scripts/nav2_ctl.sh']),
+                                             'scripts/nav2_ctl.sh', 'scripts/predrive.sh']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,

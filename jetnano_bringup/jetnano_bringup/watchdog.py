@@ -287,6 +287,10 @@ class Watchdog(Node):
         self.speak_pub = self.create_publisher(String, 'speak', 10)
         self.create_subscription(DiagnosticArray, 'watchdog/topics', self._on_topics, 10)
         self.create_subscription(Twist, 'cmd_vel', self._on_cmd, 10)
+        # the safety monitor's motion check: a stop is an event, so the health page shows it
+        # (2026-09-30: it fired on a loose ground wire and nobody saw it for two hours)
+        self._motion_state = ''
+        self.create_subscription(String, 'motion_check/state', self._on_motion_state, 10)
         self.create_subscription(Bool, 'sound/english', lambda m: setattr(self, 'english', m.data),
                                  QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
         self._guard_client = None
@@ -833,6 +837,11 @@ class Watchdog(Node):
         self.get_logger().warning(f'USB {vid_pid} not found: is it unplugged?')
 
     # ------------------------------------------------------------ reporting --
+
+    def _on_motion_state(self, msg) -> None:
+        if msg.data != self._motion_state and msg.data.startswith('stopped'):
+            self._event('system', 'motion check', msg.data)
+        self._motion_state = msg.data
 
     def _event(self, kind: str, what: str, detail: str) -> None:
         rec = {'t': time.strftime('%Y-%m-%d %H:%M:%S'), 'kind': kind, 'what': what, 'detail': detail}
