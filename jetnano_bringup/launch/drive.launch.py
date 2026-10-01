@@ -197,9 +197,10 @@ def generate_launch_description():
                     'bond_respawn_max_duration': 30.0,
                 }],
             ),
-            # The camera's map as points, for the guard's second source.
+            # The camera's map as points, for the guard's second source (C++ since 2026-09-30,
+            # jetnano_watchdog/src/grid_to_points.cpp; the Python one is kept beside it).
             Node(
-                package='jetnano_bringup',
+                package='jetnano_watchdog',
                 executable='grid_to_points',
                 name='grid_to_points',
                 respawn=True,

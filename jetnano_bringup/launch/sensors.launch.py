@@ -143,10 +143,11 @@ def generate_launch_description():
         GroupAction(
             condition=IfCondition(LaunchConfiguration('use_imu')),
             actions=[Node(
-                # the stock ros-jazzy-bno055 driver minus the four messages nothing
-                # reads (jetnano_bringup/bno055_lean.py): same node, topics, parameters
-                package='jetnano_bringup',
-                executable='bno055_lean',
+                # the stock ros-jazzy-bno055 driver's node, topics, parameters and register
+                # sequence, in C++ (jetnano_watchdog/src/bno055_imu.cpp, 2026-09-30; the
+                # Python bno055_lean cost 9-11 % of a core at 100 Hz)
+                package='jetnano_watchdog',
+                executable='bno055_imu',
                 name='bno055',
                 output='screen',
                 # With the EKF it feeds (odometry.launch.py, nice -10): 2026-09-28, a Nav2
