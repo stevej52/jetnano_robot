@@ -69,6 +69,7 @@ from std_msgs.msg import Bool, Float64, String
 QUIET_FLAG = os.path.expanduser('~/voice/quiet')      # jetnano_bringup quiet.py / sounds.py
 DIANE_FLAG = os.path.expanduser('~/voice/diane')      # jetnano_bringup listen.py
 VOICE_OFF_FLAG = os.path.expanduser('~/voice/voice_off')   # listen's "over and out"
+ROBOT_FLAG = os.path.expanduser('~/voice/robot_only')   # listen: her own sounds only, no English
 # What she says on TALK, one after another, round and round (Steve, 2026-10-01); the
 # counter is a file, so she carries on from where she was after a restart.
 HELLOS = ["Hi! Have you seen any cute Chihuahuas around here?",
@@ -232,8 +233,9 @@ def make_handler(node: 'WebTeleop'):
                 self._json({'ok': ok, 'why': why},
                            HTTPStatus.OK if ok else HTTPStatus.SERVICE_UNAVAILABLE)
             elif path == '/talk':
-                # TALK: out of quiet mode, into Diane mode, and a hello; QUIET: silent again
-                node.talk(bool(body.get('on', True)))
+                # TALK: out of every silence, Diane mode, a hello; QUIET: nothing plays; ROBOT: her own sounds, no English
+                mode = str(body.get('mode', 'talk' if body.get('on', True) else 'quiet'))
+                node.talk(mode)
                 self._json(node.status())
             elif path == '/guard':
                 ok, why = node.set_guard(bool(body.get('enabled', True)))
@@ -300,6 +302,7 @@ class WebTeleop(Node):
         self.state = State()
         self.look_at = [0.0, 0.0]            # the pan-tilt, view degrees (pan + = left, tilt + = up)
         self.speak_pub = self.create_publisher(String, 'speak', 10)       # the TALK button's hello
+        self.say_pub = self.create_publisher(String, 'say', 10)           # ROBOT ONLY's boop
         self.pan_pub = self.create_publisher(Float64, str(self.get_parameter('pan_topic').value), 10)
         self.tilt_pub = self.create_publisher(Float64, str(self.get_parameter('tilt_topic').value), 10)
         self._quiet_at = 0.0      # when the last stop-burst ends and we go silent
@@ -485,30 +488,42 @@ class WebTeleop(Node):
         self.get_logger().info(f'TALK hello {n % len(HELLOS) + 1} of {len(HELLOS)}: "{line}"')
         return line
 
-    def talk(self, on: bool) -> None:
-        """The driving page's TALK / QUIET button (Steve, 2026-10-01). TALK: quiet mode off
-        (~/voice/quiet, the sounds node sees it within a second), Diane mode on (~/voice/diane:
-        listen gives everyone her fun personality), then she says hello. QUIET: the flags the
-        other way round - nothing out of the speaker until TALK again."""
+    def talk(self, mode: str) -> None:
+        """The driving page's voice button (Steve, 2026-10-01): three modes in a cycle.
+        talk:  quiet mode, "over and out" and robot-only off; Diane mode on (listen gives everyone her
+               fun personality and answers without her name); then one of the hello lines.
+        quiet: nothing out of the speaker at all (~/voice/quiet); Diane and robot-only off.
+        robot: her own sounds only, never English (~/voice/robot_only); quiet and Diane off; a boop."""
         os.makedirs(os.path.dirname(QUIET_FLAG), exist_ok=True)
-        stamp = time.strftime('%Y-%m-%d %H:%M:%S') + '\n'
-        if on:
-            for flag in (QUIET_FLAG, VOICE_OFF_FLAG):      # out of whatever silence she is in
+        stamp = time.strftime('%Y-%m-%d %H:%M:%S') + chr(10)
+
+        def put(flag, on):
+            if on:
+                with open(flag, 'w') as f:
+                    f.write(stamp)
+            else:
                 try:
                     os.remove(flag)
                 except FileNotFoundError:
                     pass
-            with open(DIANE_FLAG, 'w') as f:
-                f.write(stamp)
+        if mode == 'talk':
+            put(QUIET_FLAG, False)
+            put(VOICE_OFF_FLAG, False)
+            put(ROBOT_FLAG, False)
+            put(DIANE_FLAG, True)
             self.get_logger().info('TALK from the web page: quiet off, Diane mode on')
             threading.Timer(1.5, lambda: self.speak_pub.publish(String(data=self.next_hello()))).start()
+        elif mode == 'robot':
+            put(QUIET_FLAG, False)
+            put(VOICE_OFF_FLAG, False)
+            put(DIANE_FLAG, False)
+            put(ROBOT_FLAG, True)
+            self.get_logger().info('ROBOT ONLY from the web page: her own sounds, no English')
+            threading.Timer(1.2, lambda: self.say_pub.publish(String(data='boop'))).start()
         else:
-            try:
-                os.remove(DIANE_FLAG)
-            except FileNotFoundError:
-                pass
-            with open(QUIET_FLAG, 'w') as f:
-                f.write(stamp)
+            put(DIANE_FLAG, False)
+            put(ROBOT_FLAG, False)
+            put(QUIET_FLAG, True)
             self.get_logger().info('QUIET from the web page: Diane mode off, quiet on')
 
     def status(self) -> dict:
@@ -525,6 +540,9 @@ class WebTeleop(Node):
                 'look': self.look_at,
                 'quiet': os.path.exists(QUIET_FLAG),
                 'diane': os.path.exists(DIANE_FLAG),
+                'robot_only': os.path.exists(ROBOT_FLAG),
+                'voice_mode': ('quiet' if os.path.exists(QUIET_FLAG) else 'robot' if os.path.exists(ROBOT_FLAG)
+                               else 'talk' if os.path.exists(DIANE_FLAG) else 'normal'),
                 'linear': self.state.linear if live else 0.0,
                 'angular': self.state.angular if live else 0.0,
             }

@@ -75,6 +75,7 @@
           background: #333; color: #ccc; }
   #talk.talk { background: #1f6fa8; color: #fff; }
   #talk.quiet { background: #4a2a10; color: #ffb060; }
+  #talk.robot { background: #2a3a4a; color: #9fd3ff; }
   #talk:disabled { opacity: 0.5; cursor: default; }
   footer { font-size: 12px; color: #777; padding: 10px 4px; }
 </style>
@@ -366,23 +367,28 @@
     }
   }
 
-  // TALK: quiet mode off, Diane mode on, and she says hello. Then the button says QUIET,
-  // which makes her silent again (and Diane mode off).
-  var talking = null;
+  // The voice button cycles TALK -> QUIET -> ROBOT ONLY -> TALK. The label is the NEXT mode;
+  // the note is the current one. TALK: Diane mode, chatty, no name needed. QUIET: nothing plays.
+  // ROBOT ONLY: her own beeps and sounds, never English.
+  var voiceMode = null;
+  var NEXT = { talk: 'quiet', quiet: 'robot', robot: 'talk', normal: 'talk' };
+  var LABEL = { talk: 'TALK', quiet: 'QUIET', robot: 'ROBOT ONLY' };
+  var NOTE = { talk: 'Diane mode: chatty, everyone is Diane', quiet: 'quiet mode: nothing plays',
+               robot: 'robot only: beeps, no English', normal: 'normal: answers to her name' };
   function showTalk(st) {
-    if (st.diane === undefined) { talkBtn.textContent = 'n/a'; talkBtn.className = ''; talkBtn.disabled = true; return; }
-    talking = !!st.diane && !st.quiet;
-    talkBtn.textContent = talking ? 'QUIET' : 'TALK';
-    talkBtn.className = talking ? 'quiet' : 'talk';
+    if (st.voice_mode === undefined) { talkBtn.textContent = 'n/a'; talkBtn.className = ''; talkBtn.disabled = true; return; }
+    voiceMode = st.voice_mode;
+    var next = NEXT[voiceMode] || 'talk';
+    talkBtn.textContent = LABEL[next];
+    talkBtn.className = next === 'talk' ? 'talk' : next === 'quiet' ? 'quiet' : 'robot';
     talkBtn.disabled = false;
-    talkNote.textContent = talking ? 'Diane mode: chatty, everyone is Diane'
-                                   : (st.quiet ? 'quiet mode: nothing plays' : 'normal');
+    talkNote.textContent = NOTE[voiceMode] || voiceMode;
   }
 
   talkBtn.addEventListener('click', function () {
-    if (talking === null) return;
+    if (voiceMode === null) return;
     talkBtn.disabled = true;
-    post('/talk', { on: !talking }).then(show).catch(function () {
+    post('/talk', { mode: NEXT[voiceMode] || 'talk' }).then(show).catch(function () {
       noLink(); talkBtn.disabled = false;
     });
   });

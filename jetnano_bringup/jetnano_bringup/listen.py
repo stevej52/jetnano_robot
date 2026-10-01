@@ -98,10 +98,17 @@ NAME_VARIANTS = r"\b(rosie|rosy|rosey|rosi|rozy|rosee|rose e|rosie's|rosies|rosa
 # Diane mode (the driving page's TALK button, 2026-10-01): one flag file, like quiet mode's,
 # and while it is there everyone gets her fun personality - Steve included - and nobody is terse.
 DIANE_FLAG = os.path.expanduser('~/voice/diane')
+# Robot-only mode (the page's third button state, 2026-10-01): her own sounds, never English,
+# until TALK. The flag outranks "speak english"; "speak robot" is the five-minute spoken version.
+ROBOT_FLAG = os.path.expanduser('~/voice/robot_only')
 
 
 def diane_mode() -> bool:
     return os.path.exists(DIANE_FLAG)
+
+
+def robot_only() -> bool:
+    return os.path.exists(ROBOT_FLAG)
 
 
 QUIET = ('be quiet', 'quiet', 'shut up', 'hush', 'silence', 'shush', 'stop talking', 'no more talking', 'zip it')
@@ -1612,8 +1619,8 @@ def _node_main(args):
             self._speak((word + ' ' + then).strip())
 
         def _words(self) -> bool:
-            """Replies in English, unless "speak robot" is in force."""
-            return time.monotonic() >= self.robot_until
+            """Replies in English, unless "speak robot" is in force or the page's ROBOT ONLY mode."""
+            return time.monotonic() >= self.robot_until and not robot_only()
 
         def _reply(self, words: str, mood: str) -> None:
             """Words by default, her own sound in a robot spell. To Steve a good
