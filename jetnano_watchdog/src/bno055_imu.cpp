@@ -14,8 +14,7 @@
 //     <prefix>imu_raw, mag, grav, temp - while subscribed, as the stock driver builds them
 //   every 1/calib_status_frequency s: <prefix>calib_status, the JSON the stock driver sends
 //
-// The I2C transfers go through /dev/i2c-N directly (I2C_RDWR), 32 bytes at a time like
-// the stock smbus connector. The chip-id check failing at start exits 1, as the stock
+// The I2C transfers go through /dev/i2c-N directly (I2C_RDWR), one transaction a read. The chip-id check failing at start exits 1, as the stock
 // driver does, so the launch's respawn tries again.
 
 #include <fcntl.h>
@@ -119,21 +118,16 @@ public:
   }
   ~I2CDevice() {if (fd_ >= 0) {::close(fd_);}}
 
-  // register read, 32 bytes a transfer like the smbus block read the stock driver uses
+  // one register read in one transaction: the chip auto-increments, and i2c-dev has no
+  // 32-byte limit (the stock smbus connector's chunking cost a second transaction per cycle)
   void read(uint8_t reg, uint8_t * out, size_t len)
   {
-    size_t done = 0;
-    while (done < len) {
-      const size_t n = std::min<size_t>(32, len - done);
-      uint8_t r = static_cast<uint8_t>(reg + done);
-      i2c_msg msgs[2] = {
-        {static_cast<uint16_t>(addr_), 0, 1, &r},
-        {static_cast<uint16_t>(addr_), I2C_M_RD, static_cast<uint16_t>(n), out + done}};
-      i2c_rdwr_ioctl_data xfer = {msgs, 2};
-      if (::ioctl(fd_, I2C_RDWR, &xfer) < 0) {
-        throw std::runtime_error(std::string("I2C read failed: ") + std::strerror(errno));
-      }
-      done += n;
+    i2c_msg msgs[2] = {
+      {static_cast<uint16_t>(addr_), 0, 1, &reg},
+      {static_cast<uint16_t>(addr_), I2C_M_RD, static_cast<uint16_t>(len), out}};
+    i2c_rdwr_ioctl_data xfer = {msgs, 2};
+    if (::ioctl(fd_, I2C_RDWR, &xfer) < 0) {
+      throw std::runtime_error(std::string("I2C read failed: ") + std::strerror(errno));
     }
   }
   uint8_t read1(uint8_t reg) {uint8_t b = 0; read(reg, &b, 1); return b;}
