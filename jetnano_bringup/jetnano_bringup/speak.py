@@ -33,11 +33,14 @@ starts talking after the first line, there is a breath between systems, and
 
 import glob
 import hashlib
+import io
+import json
 import os
 import queue
 import re
 import threading
 import time
+import urllib.request
 import wave
 
 import numpy as np
@@ -49,10 +52,10 @@ MODEL_DIR = os.path.expanduser('~/voice/models')
 LEAD_S, TAIL_S = 0.25, 0.10      # the USB speaker swallows its first 80 ms (voice.py)
 
 
-def write_wav(path: str, samples, rate: int, volume: float = 0.8, tail_s: float = TAIL_S) -> None:
+def write_wav(path: str, samples, rate: int, volume: float = 0.8, tail_s: float = TAIL_S, lead_s: float = LEAD_S) -> None:
     y = np.asarray(samples, dtype=np.float32)
     y = y / (float(np.max(np.abs(y))) or 1.0) * volume
-    y = np.concatenate([np.zeros(int(rate * LEAD_S), np.float32), y, np.zeros(int(rate * tail_s), np.float32)])
+    y = np.concatenate([np.zeros(int(rate * lead_s), np.float32), y, np.zeros(int(rate * tail_s), np.float32)])
     with wave.open(path, 'wb') as w:
         w.setnchannels(1)
         w.setsampwidth(2)
@@ -83,12 +86,21 @@ class Speak(Node):
         self.declare_parameter('speed', 1.0)
         self.declare_parameter('threads', 2)
         self.declare_parameter('cache_dir', os.path.expanduser('~/voice/tts_cache'))
-        self.declare_parameter('pause_s', 0.45)          # at each newline in the text
+        self.declare_parameter('pause_s', 0.2)           # at each newline in the text (0.45 until 2026-10-01)
         self.declare_parameter('sound_dir', os.path.expanduser('~/sounds'))
+        # 2026-10-01: a better voice from a server (Kokoro on H2-Host, tools/tts_server.py): asked
+        # first, with the local Piper as the fallback when it does not answer. lead_s was a fixed
+        # 0.25 s for the old USB speaker that swallowed its first 80 ms; the reSpeaker amp needs less.
+        self.declare_parameter('tts_url', 'http://192.168.1.238:8092')   # H2-Host; '' = the local voice only
+        self.declare_parameter('tts_voice', 'nicole')        # Steve's pick, 2026-10-01
+        self.declare_parameter('lead_s', 0.08)
         p = lambda n: self.get_parameter(n).value  # noqa: E731
         self.voice = str(p('voice'))
         self.speed = float(p('speed'))
         self.pause = float(p('pause_s'))
+        self.tts_url = str(p('tts_url')).rstrip('/')
+        self.tts_voice = str(p('tts_voice'))
+        self.server_down_until = 0.0
         self.cache = os.path.expanduser(str(p('cache_dir')))
         os.makedirs(self.cache, exist_ok=True)
         t0 = time.monotonic()
@@ -140,18 +152,26 @@ class Speak(Node):
             text = re.sub(r'\s*\[\w+\]', '', raw).strip()
             lines = [ln.strip() for ln in text.split('\n') if ln.strip()]
             t0 = time.monotonic()
+            # pause_s and lead_s are read each time: `ros2 param set /speak pause_s 0.2` takes effect at once
+            self.pause = float(self.get_parameter('pause_s').value)
+            lead = float(self.get_parameter('lead_s').value)
+            self.tts_voice = str(self.get_parameter('tts_voice').value)      # live too: try voices by ear
             for i, line in enumerate(lines):
                 if self._stopped:
                     break
                 tail = self.pause if i < len(lines) - 1 else TAIL_S
-                key = hashlib.md5(f'{self.voice}|{self.speed}|{tail}|{line}'.encode()).hexdigest()[:16]
+                engine = f'server:{self.tts_voice}:{self._server_version()}' if self._server_up() else self.voice
+                key = hashlib.md5(f'{engine}|{self.speed}|{tail}|{lead}|{line}'.encode()).hexdigest()[:16]
                 # long one-offs (a headline, a report line) are not worth keeping
                 path = os.path.join(self.cache if len(line) <= 60 else '/tmp', f'rosie_{key}.wav')
                 if not os.path.isfile(path):
-                    audio = self.tts.generate(line, sid=0, speed=self.speed)
-                    if len(audio.samples) == 0:
+                    samples, rate = self._server(line) if engine.startswith('server:') else (None, 0)
+                    if samples is None:
+                        audio = self.tts.generate(line, sid=0, speed=self.speed)
+                        samples, rate = audio.samples, audio.sample_rate
+                    if len(samples) == 0:
                         continue
-                    write_wav(path, audio.samples, audio.sample_rate, tail_s=tail)
+                    write_wav(path, samples, rate, tail_s=tail, lead_s=lead)
                 self._say(path)
             if lines:
                 self.get_logger().info(f'"{" | ".join(lines)[:160]}" ({len(lines)} line{"s" if len(lines) != 1 else ""}'
@@ -159,6 +179,39 @@ class Speak(Node):
             for mood in tags:           # after the words: the sounds queue is in order
                 if not self._stopped:
                     self._say(mood)
+
+    def _server_up(self) -> bool:
+        return bool(self.tts_url) and time.monotonic() >= self.server_down_until
+
+    def _server_version(self) -> str:
+        """The server's spelling version (its /health 'respell'), asked at most every 30 s: a changed
+        pronunciation on the server must not play from the robot's cache."""
+        now = time.monotonic()
+        if now - getattr(self, '_ver_at', 0.0) > 30.0:
+            try:
+                with urllib.request.urlopen(self.tts_url + '/health', timeout=2.0) as r:
+                    self._ver = str(json.load(r).get('respell', ''))
+            except Exception:  # noqa: BLE001
+                self._ver = ''
+            self._ver_at = now
+        return getattr(self, '_ver', '')
+
+    def _server(self, line: str):
+        """(samples, rate) from the voice server, or (None, 0) - then Piper does it, and the server
+        is not asked again for 30 s."""
+        try:
+            req = urllib.request.Request(self.tts_url + '/tts', data=json.dumps({'text': line, 'voice': self.tts_voice, 'speed': self.speed}).encode(),
+                                         headers={'Content-Type': 'application/json'})
+            with urllib.request.urlopen(req, timeout=8.0) as r:
+                data = r.read()
+            with wave.open(io.BytesIO(data), 'rb') as w:
+                rate = w.getframerate()
+                y = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32) / 32767.0
+            return y, rate
+        except Exception as exc:  # noqa: BLE001 - off, unreachable, slow: the local voice carries on
+            self.get_logger().warning(f'voice server {self.tts_url}: {exc}; using the local voice for 30 s')
+            self.server_down_until = time.monotonic() + 30.0
+            return None, 0
 
     def _say(self, what: str) -> None:
         msg = String()

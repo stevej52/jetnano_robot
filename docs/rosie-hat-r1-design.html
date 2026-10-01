@@ -1,0 +1,331 @@
+<title>Rosie Hat R1</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Source+Sans+3:wght@400;600;700&display=swap">
+<style>
+/* layout: one column of numbered sections, the block diagram first; tables for every contract */
+:root{
+  --bg:#F3F4F1; --card:#FFFFFF; --ink:#1D2126; --muted:#5C636B; --line:#D5D9D4;
+  --accent:#1F6FA8; --accent-soft:#E3EEF7; --warn:#C8443A; --warn-soft:#FBE6E3; --ok:#3F8F5F;
+  --v33:#D9A11C; --gnd:#6B7076; --i2c:#2A7F9E; --bat:#C8443A; --spi:#3F8F5F; --gpio:#8A6BB5;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace; --sans:"Source Sans 3",system-ui,sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){ --bg:#15181B; --card:#1E2226; --ink:#E6E8E4; --muted:#A7ADB3; --line:#33393F; --accent:#5AA0D8; --accent-soft:#1C2A36; --warn:#E06A60; --warn-soft:#3A1F1C; --ok:#5BB07A; --v33:#E8B23A; --i2c:#3E9BBE; --bat:#E06A60; --spi:#5BB07A; --gpio:#A98BD8; color-scheme:dark }
+}
+:root[data-theme="dark"]{ --bg:#15181B; --card:#1E2226; --ink:#E6E8E4; --muted:#A7ADB3; --line:#33393F; --accent:#5AA0D8; --accent-soft:#1C2A36; --warn:#E06A60; --warn-soft:#3A1F1C; --ok:#5BB07A; --v33:#E8B23A; --i2c:#3E9BBE; --bat:#E06A60; --spi:#5BB07A; --gpio:#A98BD8; color-scheme:dark }
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:16px;line-height:1.5;margin:0;padding-block:0 56px;padding-inline:16px}
+.wrap{max-width:1040px;margin:0 auto}
+header{padding-block:20px 12px;border-bottom:1px solid var(--line);margin-bottom:8px}
+h1{font-family:var(--mono);font-size:clamp(22px,3vw,30px);margin:0 0 4px;text-wrap:balance}
+.sub{margin:0;color:var(--muted);max-width:76ch}
+.sub b{color:var(--ink)}
+h2{font-family:var(--mono);font-size:15px;text-transform:uppercase;letter-spacing:.06em;margin:34px 0 10px;padding-top:6px;border-top:1px solid var(--line)}
+h3{font-size:16px;margin:18px 0 6px}
+p{max-width:76ch}
+ul{padding-left:20px;max-width:78ch}
+li{margin:4px 0}
+figure{margin:0;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px}
+figure .scroll{overflow-x:auto}
+svg{display:block;max-width:100%;height:auto;font-family:var(--mono)}
+.tblwrap{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--card);margin:8px 0}
+table{border-collapse:collapse;width:100%;font-size:14.5px;min-width:560px}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-family:var(--mono);font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600}
+tr:last-child td{border-bottom:0}
+td.k{font-family:var(--mono);font-weight:600;white-space:nowrap}
+td.n{font-variant-numeric:tabular-nums;white-space:nowrap}
+code{font-family:var(--mono);font-size:13px;background:var(--bg);border:1px solid var(--line);padding:1px 5px;border-radius:4px;white-space:nowrap}
+.tag{display:inline-block;font-family:var(--mono);font-size:11px;padding:1px 7px;border-radius:4px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+.tag.r1{color:var(--ok);border-color:var(--ok)}
+.tag.new{color:var(--accent);border-color:var(--accent)}
+.tag.tbd{color:var(--warn);border-color:var(--warn)}
+.box{background:var(--accent-soft);border-left:4px solid var(--accent);padding:10px 14px;border-radius:6px;margin:14px 0}
+.box.warn{background:var(--warn-soft);border-left-color:var(--warn)}
+.box p{margin:4px 0}
+.legend{display:flex;flex-wrap:wrap;gap:8px 16px;margin:10px 0 0;font-family:var(--mono);font-size:12px;color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.legend i{width:11px;height:11px;border-radius:50%;display:inline-block;border:1px solid var(--line)}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+.grid2 > *{min-width:0}
+</style>
+<div class="wrap">
+<header>
+  <h1>Rosie Hat R1</h1>
+  <p class="sub"><b>One board for the robot's electronics, plugged into the stock NVIDIA dev-kit carrier.</b> Design requirements and architecture for layout, drawn up 2026-10-01 for Steve Johnson. It reuses the robot circuits already checked in the RosiePCB R1 schematic (2026-09-30) and leaves the NVIDIA carrier alone: no high-speed routing, no NVIDIA firmware images, no custom EEPROM or BSP.</p>
+</header>
+
+<div class="box">
+  <p><b>Why a hat and not the full carrier.</b> Everything Rosie needs from a new board (16+ servo/ESC channels with power cutoffs, four current/voltage sensors, the upgraded IMU, lights, cliff sensors, CAN for a motor controller) lives on a 4-layer board with nothing faster than 10 MHz SPI. The expensive, one-shot part of the full carrier is re-creating NVIDIA's half. A hat costs about one-tenth, can be revised, and when it is proven on the robot it <em>is</em> the robot section of a future carrier.</p>
+</div>
+
+<h2>1. Goals and non-goals</h2>
+<div class="grid2">
+<div>
+<h3>Goals</h3>
+<ul>
+  <li>Replace every loose module and jumper on Rosie: the PCA9685 breakout, the INA219, the BNO055, the relay on pin 7, the cliff-sensor plan, the light switches.</li>
+  <li><b>32 servo/ESC channels</b> (16 required available after Rosie's five), with <b>power</b> cutoffs per bank, a hardware watchdog latch and a physical E-STOP loop.</li>
+  <li><b>Four current/voltage sensors</b> with state-of-charge on the pack.</li>
+  <li>BNO086 IMU (upgraded from BNO055).</li>
+  <li>CAN bus for an ODrive-class motor controller.</li>
+  <li>Keep the dev kit's 40-pin header fully usable: the hat shares its buses and uses a handful of GPIO, documented pin by pin.</li>
+  <li>Safe to build in small quantity: standard parts, hand-repairable packages where possible, JLCPCB/PCBWay assembly.</li>
+</ul>
+</div>
+<div>
+<h3>Non-goals (deliberately)</h3>
+<ul>
+  <li><b>No regulators on the board.</b> The Jetson's header supplies the small stuff: its <b>3.3 V</b> (pins 1/17, fused on the hat, budget ≤ 250 mA) runs all the hat's logic, the IMU, the CAN chip and the four cliff sensors; its <b>5 V</b> (pins 2/4, budget ≤ 500 mA) is passed through and available for small 5 V loads. Everything bigger arrives from one of Steve's separate BECs on its own connector: the four servo banks (J140–J143), the 5 V / 3 A lights (J130) and the 12 V contactor coil (J152). The hat switches, fuses, senses and distributes; it never converts. The only on-board regulation is the IMU's local LDO carried over from R1's sheet.</li>
+  <li>No traction current on the board. The ESC's 30 A stays in the chassis harness; the hat carries sense leads and drives an external contactor.</li>
+  <li>No Jetson power on the board. The dev kit keeps its 9–20 V jack. (A separate small power board for the charge jack / ORing stays on the list.)</li>
+  <li>No RTC: the dev kit has one and its battery is fitted.</li>
+  <li>No USB devices: lidar, camera, microphone stay on the carrier's USB.</li>
+  <li>No firmware MCU in R1. Pulse generation is the PCA9685; the safety logic is hardware (watchdog + latch), as in RosiePCB R1. An RP2040 "neutral-on-fault" option is noted for R2.</li>
+</ul>
+</div>
+</div>
+
+<h2>2. Block diagram</h2>
+<figure>
+  <div class="scroll">
+  <svg viewBox="0 0 980 560" role="img" aria-label="Rosie Hat block diagram: the dev-kit 40-pin header feeds two I2C buses, SPI and GPIO into the hat; the hat holds the servo drivers with an inhibit latch, four INA228 sensors, the IMU, light switches, cliff-sensor mux and a CAN controller">
+    <defs><marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0L8 4L0 8z" fill="currentColor"/></marker></defs>
+    <!-- dev kit -->
+    <rect x="20" y="40" width="200" height="200" rx="8" fill="var(--card)" stroke="currentColor" stroke-width="1.5"/>
+    <text x="120" y="66" text-anchor="middle" font-size="13" font-weight="600" fill="currentColor">Jetson Orin Nano dev kit</text>
+    <text x="120" y="84" text-anchor="middle" font-size="11" fill="currentColor" opacity=".7">stock carrier, untouched</text>
+    <rect x="40" y="100" width="160" height="120" rx="4" fill="var(--bg)" stroke="currentColor" stroke-dasharray="3 2"/>
+    <text x="120" y="120" text-anchor="middle" font-size="11.5" font-weight="600" fill="currentColor">40-pin header J12</text>
+    <g font-size="10.5" fill="currentColor">
+      <text x="50" y="140">I2C bus 7  (3/5)</text>
+      <text x="50" y="156">I2C bus 1  (27/28)</text>
+      <text x="50" y="172">SPI0  (19/21/23/24)</text>
+      <text x="50" y="188">GPIO 7, 15, 29, 31</text>
+      <text x="50" y="204">3.3 V, 5 V, GND</text>
+    </g>
+    <!-- ribbon -->
+    <path d="M220 160 H 290" stroke="currentColor" stroke-width="6" fill="none"/>
+    <text x="255" y="150" text-anchor="middle" font-size="10.5" fill="currentColor" opacity=".8">40-way ribbon</text>
+    <!-- hat -->
+    <rect x="290" y="20" width="670" height="520" rx="10" fill="none" stroke="var(--accent)" stroke-width="2"/>
+    <text x="310" y="42" font-size="13" font-weight="600" fill="var(--accent)">ROSIE HAT  (100 x 80 mm, 4 layers)</text>
+    <!-- bus spine -->
+    <g font-size="10.5" font-weight="600">
+      <rect x="300" y="120" width="26" height="400" rx="4" fill="var(--i2c)" opacity=".9"/>
+      <text transform="translate(317 320) rotate(-90)" text-anchor="middle" fill="#fff">I2C bus 7</text>
+      <rect x="334" y="120" width="26" height="400" rx="4" fill="var(--i2c)" opacity=".55"/>
+      <text transform="translate(351 320) rotate(-90)" text-anchor="middle" fill="#fff">I2C bus 1</text>
+    </g>
+    <!-- blocks on bus 7 -->
+    <g font-size="11" fill="currentColor">
+      <rect x="390" y="60" width="200" height="74" rx="6" fill="var(--card)" stroke="currentColor"/>
+      <text x="490" y="80" text-anchor="middle" font-weight="600">2 x PCA9685  (0x40, 0x42)</text>
+      <text x="490" y="96" text-anchor="middle" font-size="10.5">32 PWM channels, 50-333 Hz</text>
+      <text x="490" y="112" text-anchor="middle" font-size="10.5">OE held by the inhibit latch</text>
+      <rect x="390" y="150" width="200" height="60" rx="6" fill="var(--card)" stroke="currentColor"/>
+      <text x="490" y="170" text-anchor="middle" font-weight="600">TCA9534  (0x20)</text>
+      <text x="490" y="186" text-anchor="middle" font-size="10.5">lights, bank enables, fault + latch status</text>
+      <rect x="390" y="226" width="200" height="60" rx="6" fill="var(--card)" stroke="currentColor"/>
+      <text x="490" y="246" text-anchor="middle" font-weight="600">TCA9548A  (0x73)</text>
+      <text x="490" y="262" text-anchor="middle" font-size="10.5">4 fused 3.3 V cliff-sensor branches</text>
+    </g>
+    <!-- blocks on bus 1 -->
+    <g font-size="11" fill="currentColor">
+      <rect x="390" y="310" width="200" height="60" rx="6" fill="var(--card)" stroke="currentColor"/>
+      <text x="490" y="330" text-anchor="middle" font-weight="600">4 x INA228  (0x41-0x44)</text>
+      <text x="490" y="346" text-anchor="middle" font-size="10.5">pack (SoC), Jetson, servo rail, traction</text>
+      <rect x="390" y="386" width="200" height="60" rx="6" fill="var(--card)" stroke="currentColor"/>
+      <text x="490" y="406" text-anchor="middle" font-weight="600">BNO086 IMU  (0x4A)</text>
+      <text x="490" y="422" text-anchor="middle" font-size="10.5">I2C mode, INT to GPIO12, 200 Hz</text>
+    </g>
+    <!-- SPI CAN -->
+    <g font-size="11" fill="currentColor">
+      <rect x="390" y="462" width="200" height="60" rx="6" fill="var(--card)" stroke="currentColor"/>
+      <text x="490" y="482" text-anchor="middle" font-weight="600">MCP2518FD + transceiver</text>
+      <text x="490" y="498" text-anchor="middle" font-size="10.5">SPI0 + INT: Linux can0 for ODrive</text>
+      <text x="372" y="492" text-anchor="end" font-size="10" fill="var(--spi)" font-weight="600">SPI0</text>
+    </g>
+    <!-- safety chain -->
+    <rect x="630" y="60" width="310" height="150" rx="6" fill="var(--warn-soft)" stroke="var(--warn)"/>
+    <text x="785" y="80" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">SAFETY CHAIN  (hardware, from RosiePCB R1)</text>
+    <g font-size="10.5" fill="currentColor">
+      <text x="645" y="102">ARM  (GPIO09, pin 7)  + HEARTBEAT 20 Hz (GPIO01, pin 29)</text>
+      <text x="645" y="118">-> window watchdog TPS3431 -> inhibit latch</text>
+      <text x="645" y="134">E-STOP loop (NC)  + brownout  -> latch clear</text>
+      <text x="645" y="150">latch -> PCA9685 OE  + servo bank enables</text>
+      <text x="645" y="166">latch -> traction contactor coil driver (external relay)</text>
+      <text x="645" y="182">INA228 ALERT (traction overcurrent) -> latch clear</text>
+      <text x="645" y="198">status to TCA9534 and LEDs; re-arm = fresh ARM edge</text>
+    </g>
+    <!-- banks -->
+    <rect x="630" y="230" width="310" height="140" rx="6" fill="var(--card)" stroke="currentColor"/>
+    <text x="785" y="250" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">SERVO POWER BANKS</text>
+    <g font-size="10.5" fill="currentColor">
+      <text x="645" y="272">bank A  steering (2 ch)        6 A switch, enable, fault</text>
+      <text x="645" y="288">bank B  pan / tilt (2 ch)      3 A switch, enable, fault</text>
+      <text x="645" y="304">bank C  spare x 12              6 A switch, enable, fault</text>
+      <text x="645" y="320">bank D  spare x 14              6 A switch, enable, fault</text>
+      <text x="645" y="340">ESC: signal only (ch 0) + contactor; BEC inputs per bank</text>
+      <text x="645" y="356">each bank: its own BEC input connector, fuse, high-side switch</text>
+    </g>
+    <!-- lights -->
+    <rect x="630" y="390" width="310" height="64" rx="6" fill="var(--card)" stroke="currentColor"/>
+    <text x="785" y="410" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">LIGHTS  2 x 5 V / 3 A high-side (R1 circuit)</text>
+    <text x="785" y="428" text-anchor="middle" font-size="10.5" fill="currentColor">external 5 V in J130; independent of motion inhibit</text>
+    <text x="785" y="444" text-anchor="middle" font-size="10.5" fill="currentColor">headlights, ground lights</text>
+    <!-- sense inputs -->
+    <rect x="630" y="470" width="310" height="52" rx="6" fill="var(--card)" stroke="currentColor"/>
+    <text x="785" y="490" text-anchor="middle" font-size="12" font-weight="600" fill="currentColor">4 x KELVIN SENSE INPUTS</text>
+    <text x="785" y="508" text-anchor="middle" font-size="10.5" fill="currentColor">shunts in the chassis harness; the hat never carries the current</text>
+    <!-- arrows -->
+    <g stroke="currentColor" stroke-width="1.5" fill="none" marker-end="url(#arr)">
+      <path d="M590 97 H 628"/>
+      <path d="M590 180 H 628 V 300" stroke-dasharray="4 3"/>
+      <path d="M590 340 H 628 V 300"/>
+    </g>
+  </svg>
+  </div>
+  <div class="legend"><span><i style="background:var(--i2c)"></i>I2C</span><span><i style="background:var(--spi)"></i>SPI</span><span><i style="background:var(--warn)"></i>safety chain</span><span><span class="tag r1">R1</span> reused from RosiePCB R1</span><span><span class="tag new">new</span> new on the hat</span><span><span class="tag tbd">tbd</span> decision needed</span></div>
+</figure>
+
+<h2>3. Mechanical</h2>
+<ul>
+  <li><b>Form:</b> a separate 100 × 80 mm board, 4 layers, mounted in the case where the harness runs, joined to the dev kit by a <b>40-way IDC ribbon</b> (≤ 150 mm) from J12. Not stacked on the header: the heatsink and fan sit beside J12 and the case is tight. <span class="tag tbd">tbd</span> confirm position, and whether a shrouded (keyed) header is wanted at both ends — recommended, so it cannot go on backwards.</li>
+  <li>M3 holes at the corners, 3.2 mm; all connectors on the two long edges; servo headers in four labelled banks on one edge; power and sense on the other.</li>
+  <li>Keep the IMU away from the bank switches and the CAN transceiver, on the side of the board nearest the chassis centre; record its installed axes on the silkscreen (the software transform is read from there).</li>
+  <li>Silkscreen every connector's pin 1, voltage and the words <em>signal only</em> on the ESC header.</li>
+</ul>
+
+<h2>4. The 40-pin header contract</h2>
+<p>Every pin keeps its stock function. The hat <em>shares</em> the two I2C buses (pull-ups once, on the hat, 2.2 kΩ to 3.3 V, with the dev kit's own pull-ups considered) and takes SPI0 and four GPIO. The ribbon carries all 40; unused pins are simply passed through to a second header on the hat for future use.</p>
+<div class="tblwrap"><table>
+<thead><tr><th>Pin</th><th>Dev-kit function</th><th>Hat use</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td class="n">1, 17</td><td>3.3 V</td><td>hat logic supply</td><td>≤ 250 mA budget for the hat's logic; cliff branches included</td></tr>
+<tr><td class="n">2, 4</td><td>5 V</td><td>small 5 V loads only</td><td>passed through, ≤ 500 mA budget; lights and servos use their own BECs</td></tr>
+<tr><td class="n">3, 5</td><td>I2C1 SDA/SCL = <code>/dev/i2c-7</code></td><td>bus 7: PCA9685 ×2, TCA9534, TCA9548A</td><td>today's servo board and BNO055 live here; both retire</td></tr>
+<tr><td class="n">27, 28</td><td>I2C0 SDA/SCL = <code>/dev/i2c-1</code></td><td>bus 1: INA228 ×4, BNO086</td><td>the dev kit's own monitor is at 0x40 on this bus: INAs strapped 0x41–0x44</td></tr>
+<tr><td class="n">19, 21, 23</td><td>SPI0 MOSI/MISO/SCK</td><td>shared: BNO086 IMU and the CAN controller</td><td>pinmux SPI0 on with <code>jetson-io</code></td></tr>
+<tr><td class="n">24, 26</td><td>SPI0 CS0, CS1</td><td>CS0 = IMU, CS1 = MCP2517FD CAN</td><td><code>mcp251xfd</code> driver, appears as <code>can0</code></td></tr>
+<tr><td class="n">7</td><td>GPIO09</td><td><b>ARM</b></td><td>the pin that drives the relay today; same meaning: high = outputs may run</td></tr>
+<tr><td class="n">29</td><td>GPIO01</td><td><b>HEARTBEAT</b> 20 Hz</td><td>software-toggled on purpose, not a hardware PWM: a hung program must stop it</td></tr>
+<tr><td class="n">31</td><td>GPIO11</td><td>CAN interrupt</td><td>from the MCP2518FD</td></tr>
+<tr><td class="n">15, 32, 33</td><td>GPIO12, GPIO07, GPIO13</td><td>IMU interrupt, wake, reset</td><td>as R1 wired the BNO086, moved to header pins</td></tr>
+<tr><td class="n">8, 10, 11, 36</td><td>UART1 + flow control</td><td>passed through</td><td>free for a future serial device</td></tr>
+<tr><td class="n">12, 35, 38, 40</td><td>I2S</td><td>passed through</td><td>free</td></tr>
+<tr><td class="n">13, 16, 18, 22, 37</td><td>SPI1</td><td>passed through</td><td>free</td></tr>
+<tr><td class="n">6, 9, 14, 20, 25, 30, 34, 39</td><td>GND</td><td>all connected</td><td>every ground pin on the ribbon is used: the ground return for every signal</td></tr>
+</tbody></table></div>
+
+<h2>5. I2C address map</h2>
+<div class="tblwrap"><table>
+<thead><tr><th>Bus</th><th>Address</th><th>Device</th><th>Origin</th></tr></thead>
+<tbody>
+<tr><td class="k">7</td><td class="k">0x40</td><td>PCA9685 #1, channels 0–15</td><td><span class="tag r1">R1</span></td></tr>
+<tr><td class="k">7</td><td class="k">0x42</td><td>PCA9685 #2, channels 16–31</td><td><span class="tag new">new</span> (0x41 kept clear of the INA on the other bus by habit; 0x70 all-call is both)</td></tr>
+<tr><td class="k">7</td><td class="k">0x20</td><td>TCA9534: lights P0/P1, faults P2/P3, mux reset P4, latch disable/clear status P5/P6, IMU reset P7</td><td><span class="tag r1">R1</span>, P7 added</td></tr>
+<tr><td class="k">7</td><td class="k">0x73</td><td>TCA9548A cliff-sensor mux (VL53L0X at 0x29 behind each channel)</td><td><span class="tag r1">R1</span></td></tr>
+<tr><td class="k">1</td><td class="k">0x40</td><td><em>dev kit's own power monitor</em> — do not use</td><td>stock</td></tr>
+<tr><td class="k">1</td><td class="k">0x41–0x44</td><td>INA228: pack, Jetson rail, servo rail, traction</td><td><span class="tag new">new</span></td></tr>
+<tr><td class="k">—</td><td class="k">SPI0 CS0</td><td>BNO086 stays on SPI, exactly as R1 drew it (schematic R1 decision; I2C was the first idea)</td><td><span class="tag r1">R1</span></td></tr>
+</tbody></table></div>
+
+<h2>6. Servo / ESC outputs and the safety chain</h2>
+<p>Thirty-two 3-pin headers in four banks. Unlike RosiePCB R1 (signal only), the hat <b>carries servo power through a switched bank</b>, so a cutoff cuts <em>power</em>, not just the pulse. The ESC is the exception: its header is signal-only and its power runs through an external contactor the hat drives.</p>
+<div class="tblwrap"><table>
+<thead><tr><th>Bank</th><th>Channels</th><th>Rosie today</th><th>Switch</th><th>Supply in</th></tr></thead>
+<tbody>
+<tr><td class="k">ESC</td><td class="n">0</td><td>ESC (channel 0)</td><td>contactor coil driver (low-side MOSFET, flyback), enabled by latch AND software</td><td>none on board; the ESC's own BEC powers nothing here</td></tr>
+<tr><td class="k">A steering</td><td class="n">1, 2 (+ 3)</td><td>front steering 1, rear steering 2</td><td>high-side 6 A smart switch with current sense + fault</td><td>BEC A, JST-VH 2-pin, 5–8.4 V</td></tr>
+<tr><td class="k">B head</td><td class="n">8, 9 (+ 10, 11)</td><td>pan 8, tilt 9</td><td>high-side 3 A smart switch</td><td>BEC B, JST-VH 2-pin</td></tr>
+<tr><td class="k">C spare</td><td class="n">4–7, 12–15</td><td>— (5, 6 were the light relays; lights move to the TCA9534 switches)</td><td>high-side 6 A</td><td>BEC C</td></tr>
+<tr><td class="k">D spare</td><td class="n">16–31</td><td>—</td><td>high-side 6 A</td><td>BEC D</td></tr>
+</tbody></table></div>
+<ul>
+  <li><b>Watchdog + latch:</b> RosiePCB R1's circuit as drawn (TPS3431 window watchdog on HEARTBEAT, latch set by an ARM rising edge, cleared by timeout ≈ 225 ms, ARM low, brownout, or E-STOP). It drives both PCA9685 OE pins and every bank enable. Re-arm needs a fresh ARM edge. <span class="tag r1">R1</span></li>
+  <li><b>E-STOP loop:</b> a 2-pin connector for a normally-closed external mushroom switch; open = latch clear. Shunt fitted when no switch is wired. <span class="tag new">new</span></li>
+  <li><b>Overcurrent:</b> the traction INA228's ALERT pin into the latch clear, threshold set in software (and a hardware default strap). <span class="tag new">new</span></li>
+  <li><b>What a cutoff does to the ESC:</b> loses its pulse <em>and</em> loses power at the contactor. The handoff's warning stands: prove on the bench that the real ESC stops, and keep the physical kill switch.</li>
+  <li><b>Startup:</b> all banks off, ARM low, lights off, PCA9685 outputs tri-state until the software sets safe pulses and arms. Status LEDs: ARMED, LATCH CLEAR, per-bank ON/FAULT.</li>
+</ul>
+
+<h2>7. Current and voltage sensing</h2>
+<p>Four <b>INA228</b> (85 V, 20-bit, charge and energy accumulators) on bus 1. All four shunts are <em>off the board</em>, in the chassis harness, with 4-wire Kelvin leads to a JST-PH 4-pin per channel (V+ sense, shunt+, shunt−, GND). That keeps 30 A off a 100 × 80 mm board and lets the shunt sit where the current actually flows.</p>
+<div class="tblwrap"><table>
+<thead><tr><th>#</th><th>Address</th><th>Measures</th><th>Shunt</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td class="n">1</td><td class="k">0x41</td><td>pack total, at the battery negative</td><td>1 mΩ / 50 A (75 mV)</td><td>charge accumulation = real state of charge, plus the pack voltage the battery monitor uses today</td></tr>
+<tr><td class="n">2</td><td class="k">0x42</td><td>Jetson / carrier 12 V feed</td><td>5 mΩ / 10 A</td><td>what the computer costs; brownout warning before the dev kit resets</td></tr>
+<tr><td class="n">3</td><td class="k">0x43</td><td>servo BEC rail (bank A+B)</td><td>5 mΩ / 10 A</td><td>steering stall and buzz detection in numbers</td></tr>
+<tr><td class="n">4</td><td class="k">0x44</td><td>traction, between contactor and ESC</td><td>1 mΩ / 50 A</td><td>drive current; ALERT into the latch for overcurrent</td></tr>
+</tbody></table></div>
+<p>Battery sense protection and filtering as in R1's J150 circuit (series resistance, TVS, RC) on every V+ sense input.</p>
+
+<h2>8. IMU, cliff sensors, lights, CAN</h2>
+<ul>
+  <li><b>BNO086</b> on SPI0 (CS0 = header pin 24), mode 3, ≤ 3 MHz, exactly as R1's checked sheet — reused rather than redrawn for I2C. INT/WAKE/RESET on header pins 15/32/33. VDDIO at 3.3 V (the header's SPI level; the part is rated 1.65–3.6 V). Local LDO and 32.768 kHz crystal per the R1 sheet; keep it rigid and away from heat and switch currents. <span class="tag r1">R1</span></li>
+  <li><b>Cliff sensors:</b> R1's four fused 3.3 V branches behind the TCA9548A at 0x73 (J120–J123: GND, fused 3.3 V, SDA, SCL), ESD on the signals, ≤ 40 mA each, for VL53L0X breakouts. <span class="tag r1">R1</span></li>
+  <li><b>Lights:</b> R1's two 5 V / 3 A high-side switches with fault reporting, external 5 V in on J130, outputs J131/J132, independent of the motion inhibit, off at power-up. <span class="tag r1">R1</span></li>
+  <li><b>CAN:</b> MCP2517FD (SOIC-14) on SPI0 CS1 (20 MHz crystal, INT on GPIO11) with a 3.3 V transceiver (SN65HVD230-class), two 4-pin CAN connectors (CAN_H, CAN_L, GND, 12 V pass-through optional) for daisy-chaining, 120 Ω termination on a jumper. Appears to Linux as <code>can0</code> through the in-kernel driver; no firmware. The ODrive is a separate unit on its own power. <span class="tag new">new</span></li>
+</ul>
+
+<h2>9. Connectors</h2>
+<div class="tblwrap"><table>
+<thead><tr><th>Ref</th><th>Type</th><th>Pins</th><th>Function</th></tr></thead>
+<tbody>
+<tr><td class="k">J1</td><td>2×20 shrouded box header, 2.54 mm</td><td class="n">40</td><td>ribbon from the dev kit's J12 (keyed)</td></tr>
+<tr><td class="k">J2</td><td>2×20 pin header</td><td class="n">40</td><td>pass-through of every J12 pin (unused ones free for the future)</td></tr>
+<tr><td class="k">J100–J131</td><td>3-pin 2.54 mm servo headers in 4 banks</td><td class="n">3 each</td><td>GND, bank V+, signal (ESC header: centre pin NC, silkscreened)</td></tr>
+<tr><td class="k">J140–J143</td><td>JST-VH 2-pin</td><td class="n">2</td><td>BEC in, banks A–D (5–8.4 V)</td></tr>
+<tr><td class="k">J150</td><td>JST-PH 2-pin</td><td class="n">2</td><td>contactor coil out (switched 12 V, ≤ 1 A)</td></tr>
+<tr><td class="k">J152</td><td>JST-PH 2-pin</td><td class="n">2</td><td>12 V in for the contactor coil (from a BEC or the pack via its own fuse)</td></tr>
+<tr><td class="k">J151</td><td>JST-PH 2-pin</td><td class="n">2</td><td>E-STOP loop (NC), shunt when unused</td></tr>
+<tr><td class="k">J160–J163</td><td>JST-PH 4-pin</td><td class="n">4</td><td>Kelvin sense, INA228 1–4</td></tr>
+<tr><td class="k">J120–J123</td><td>JST-PH 4-pin</td><td class="n">4</td><td>cliff-sensor branches (R1)</td></tr>
+<tr><td class="k">J130–J132</td><td>JST-VH 2-pin</td><td class="n">2</td><td>5 V lighting in; headlights out; ground lights out (R1)</td></tr>
+<tr><td class="k">J170, J171</td><td>JST-PH 4-pin</td><td class="n">4</td><td>CAN in / out (daisy chain)</td></tr>
+<tr><td class="k">JP1</td><td>2-pin</td><td class="n">2</td><td>CAN termination 120 Ω</td></tr>
+<tr><td class="k">JP2</td><td>3-pin</td><td class="n">3</td><td>INA228 ALERT → latch: fitted / not fitted</td></tr>
+</tbody></table></div>
+
+<h2>10. Parts (candidates for the BOM)</h2>
+<div class="tblwrap"><table>
+<thead><tr><th>Function</th><th>Part</th><th>Status</th></tr></thead>
+<tbody>
+<tr><td>PWM ×2</td><td>NXP PCA9685PW</td><td><span class="tag r1">R1</span> same part, qty 2</td></tr>
+<tr><td>Watchdog</td><td>TI TPS3431SDRBR + latch logic</td><td><span class="tag r1">R1</span> sheet reused</td></tr>
+<tr><td>I/O expander</td><td>TI TCA9534PWR</td><td><span class="tag r1">R1</span></td></tr>
+<tr><td>Sensor mux</td><td>TI TCA9548APWR</td><td><span class="tag r1">R1</span></td></tr>
+<tr><td>Light switches</td><td>R1's eFuse circuit ×2</td><td><span class="tag r1">R1</span></td></tr>
+<tr><td>Current/voltage ×4</td><td>TI INA228AIDGSR</td><td><span class="tag new">new</span></td></tr>
+<tr><td>IMU</td><td>CEVA BNO086 (LGA-28) + 32.768 kHz crystal + 3.3 V LDO</td><td><span class="tag r1">R1</span> part, I2C straps <span class="tag new">new</span></td></tr>
+<tr><td>CAN</td><td>Microchip MCP2517FD-E/SL + TI SN65HVD230</td><td><span class="tag new">new</span></td></tr>
+<tr><td>Servo bank switches</td><td>smart high-side switch, 6 A class, current sense and fault (TI TPS1HTC100-Q1 family or equivalent)</td><td><span class="tag tbd">tbd</span> part selection against real stall currents</td></tr>
+<tr><td>Contactor driver</td><td>logic-level N-MOSFET + flyback diode; the contactor itself is external (automotive 12 V 40 A relay)</td><td><span class="tag new">new</span></td></tr>
+<tr><td>Shunts ×4</td><td>off-board, 1 mΩ 3 W ×2, 5 mΩ 1 W ×2, with Kelvin terminals</td><td><span class="tag tbd">tbd</span> harness design</td></tr>
+<tr><td>Protection</td><td>TVS on every external input, polyfuse per bank input, ESD arrays on cliff/CAN/sense</td><td><span class="tag new">new</span></td></tr>
+</tbody></table></div>
+
+<h2>11. What has to be answered before layout</h2>
+<div class="tblwrap"><table>
+<thead><tr><th>#</th><th>Decision</th><th>Default if unanswered</th></tr></thead>
+<tbody>
+<tr><td class="n">1</td><td>Ribbon-cabled board (recommended) or stacked on the header?</td><td>ribbon, 100 × 80 mm</td></tr>
+<tr><td class="n">2</td><td>Rosie's drive motor: brushed or brushless with encoder? Decides whether the ESC channel and contactor stay, or ODrive takes over.</td><td>keep ESC + contactor; CAN fitted anyway</td></tr>
+<tr><td class="n">3</td><td>Steering servo stall current (sets bank A's switch rating).</td><td>6 A switch, 7.5 A polyfuse</td></tr>
+<tr><td class="n">4</td><td>Lights: what the headlight and ground lights actually draw at 5 V.</td><td>R1's 3 A each</td></tr>
+<tr><td class="n">5</td><td>Two PCA9685s (32 ch) or one plus an RP2040 for neutral-on-fault?</td><td>two PCA9685s; RP2040 in R2</td></tr>
+<tr><td class="n">6</td><td>BNO086 on SPI0 as drawn (R1's checked sheet, shares SPI0 with CAN) or move to I2C to free SPI0 entirely?</td><td>SPI0, as drawn</td></tr>
+<tr><td class="n">7</td><td>Where the four shunts physically go in the harness, and the contactor's place in it.</td><td>pack negative, Jetson jack lead, BEC feed, ESC positive</td></tr>
+</tbody></table></div>
+
+<h2>12. Cost and risk</h2>
+<ul>
+  <li><b>Schematic status (2026-10-01):</b> the R1 KiCad project exists — 12 sheets, ERC 0 violations, 274 parts, BOM exported; see HAT-NOTES.txt in the package (<code>C:\jetson\RosieHatosie-hat-r1.zip</code>, H2-Host <code>~/rosie-hat</code>).</li>
+  <li>Bare boards: five 4-layer 100 × 80 mm, roughly $40–60 at JLCPCB (calculator figure, not a quote).</li>
+  <li>Assembly of two boards plus parts: roughly $250–450 depending on the INA228/BNO086 stock and the smart switches. Nothing on the board needs a firmware image or a licence.</li>
+  <li>A mistake costs one revision of this board, not the Jetson: the dev kit is never flashed, modified or powered from the hat. The 3.3 V the hat takes from the header is fused on the hat.</li>
+  <li>Bring-up order: power the hat from a bench supply with the ribbon disconnected; check rails; connect the ribbon with every bank supply off; scan both I2C buses (expect 0x20, 0x40, 0x42, 0x73 on bus 7 and 0x41–0x44, 0x4A on bus 1); prove ARM/heartbeat/latch with a scope and no loads; then one bank at a time with real servos; the ESC last, with the contactor.</li>
+</ul>
+
+<p style="color:var(--muted);font-size:14px;margin-top:28px">Sources: RosiePCB R1 handoff (START_HERE, README, OPEN-ITEMS, PROGRAMMING-AND-BRINGUP, 2026-09-30); the robot's current wiring (jetnano_robot pca9685.yaml, the INA219 on bus 1, the relay on pin 7); the Orin Nano dev kit's 40-pin header as read from the board on 2026-09-21. Part numbers marked new are candidates for the engineer to confirm; nothing here has been quoted, ordered or built.</p>
+</div>

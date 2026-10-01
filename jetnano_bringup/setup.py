@@ -43,6 +43,7 @@ setup(
             'quiet = jetnano_bringup.quiet:main',
             'motion_watch = jetnano_bringup.motion_watch:main',
             'ears = jetnano_bringup.ears:main',
+            'xvf_tune = jetnano_bringup.xvf:main',
             'settle = jetnano_bringup.settle:main',
             'motion_check = jetnano_bringup.motion_check:main',
             'csi_cameras = jetnano_bringup.csi_cameras:main',

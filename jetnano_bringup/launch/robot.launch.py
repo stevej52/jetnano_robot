@@ -106,6 +106,22 @@ def generate_launch_description():
             'use_motion_watch', default_value='true',
             description='lidar movement -> pan-tilt camera looks at it, while standing still'),
         DeclareLaunchArgument(
+            'mic_channel', default_value='1',
+            description="the reSpeaker output she hears: 1 = echo-cancelled, fixed gain (as shipped); "
+                        "0 = fully processed (non-linear echo attenuation, noise suppression; with board_profile clean)"),
+        DeclareLaunchArgument(
+            'board_profile', default_value='',
+            description="reSpeaker chip settings ears applies: '' leaves them, 'clean' = hear-better (xvf.PROFILES)"),
+        DeclareLaunchArgument(
+            'trim_own', default_value='false',
+            description='listen drops the part of a heard segment that is her own voice'),
+        DeclareLaunchArgument(
+            'tts_url', default_value='http://192.168.1.238:8092',
+            description="the voice server (Kokoro on H2-Host, tools/tts_server.py); '' = the local Piper voice only. Falls back to Piper when it does not answer"),
+        DeclareLaunchArgument('tts_voice', default_value='nicole', description='Kokoro voice on the server: nicole (Steve, 2026-10-01), sky, bella, sarah, emma, isabella'),
+        DeclareLaunchArgument('lead_s', default_value='0.08', description='silence before each spoken line (the old USB speaker needed 0.25)'),
+        DeclareLaunchArgument('pause_s', default_value='0.2', description='silence between the lines of one reply'),
+        DeclareLaunchArgument(
             'use_ears', default_value='true',
             description='the USB microphone as a sound-level sense (sound/level); "huh?" at a bang while parked'),
         DeclareLaunchArgument(
@@ -246,6 +262,8 @@ def generate_launch_description():
             output='screen',
             respawn=True,
             respawn_delay=10.0,
+            parameters=[{'channel': ParameterValue(LaunchConfiguration('mic_channel'), value_type=int),
+                         'board_profile': ParameterValue(LaunchConfiguration('board_profile'), value_type=str)}],
             condition=IfCondition(LaunchConfiguration('use_ears')),
         ),
 
@@ -289,6 +307,10 @@ def generate_launch_description():
             output='screen',
             respawn=True,
             respawn_delay=10.0,
+            parameters=[{'tts_url': ParameterValue(LaunchConfiguration('tts_url'), value_type=str),
+                         'tts_voice': ParameterValue(LaunchConfiguration('tts_voice'), value_type=str),
+                         'lead_s': ParameterValue(LaunchConfiguration('lead_s'), value_type=float),
+                         'pause_s': ParameterValue(LaunchConfiguration('pause_s'), value_type=float)}],
             prefix=[LaunchConfiguration('listen_python'), ' '],
             condition=IfCondition(PythonExpression([
                 "'", LaunchConfiguration('use_listen'), "' == 'true' and __import__('os').path.exists('",
@@ -354,7 +376,8 @@ def generate_launch_description():
             output='screen',
             respawn=True,
             respawn_delay=10.0,
-            parameters=[{'location': LaunchConfiguration('location'), 'asr': LaunchConfiguration('asr')}],
+            parameters=[{'location': LaunchConfiguration('location'), 'asr': LaunchConfiguration('asr'),
+                         'trim_own': ParameterValue(LaunchConfiguration('trim_own'), value_type=bool)}],
             prefix=[LaunchConfiguration('listen_python'), ' '],
             condition=IfCondition(PythonExpression([
                 "'", LaunchConfiguration('use_listen'), "' == 'true' and '",

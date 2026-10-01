@@ -95,6 +95,15 @@ MODEL_DIR = os.path.expanduser('~/voice/models')
 NAME = 'rosie'
 # What the speech-to-text tends to make of her name -> rosie
 NAME_VARIANTS = r"\b(rosie|rosy|rosey|rosi|rozy|rosee|rose e|rosie's|rosies|rosa|roszie|rozie)\b"
+# Diane mode (the driving page's TALK button, 2026-10-01): one flag file, like quiet mode's,
+# and while it is there everyone gets her fun personality - Steve included - and nobody is terse.
+DIANE_FLAG = os.path.expanduser('~/voice/diane')
+
+
+def diane_mode() -> bool:
+    return os.path.exists(DIANE_FLAG)
+
+
 QUIET = ('be quiet', 'quiet', 'shut up', 'hush', 'silence', 'shush', 'stop talking', 'no more talking', 'zip it')
 TALK = ('you can talk', 'talk now', 'you can speak', 'speak now', 'unmute', 'talk again', 'speak again',
         'you may talk', 'you may speak')
@@ -351,7 +360,9 @@ def decide(text: str, mode: str):
         return 'repeat', mode
     if _has(t, TALK):
         return 'talk', mode
-    if _has(t, BYE):
+    if _has(t, BYE) and not (diane_mode() and len(t.split()) > 4):
+        # Diane mode: "bye" ends the chat only as a short goodbye, not as a stray word inside
+        # a sentence (2026-10-01: "Bye. yes she is I'm making a relic" hung up on Steve)
         return 'bye', 'idle'
     return 'chat', 'chat'
 
@@ -538,6 +549,12 @@ def _node_main(args):
             # her voice is gone 0.1-0.2 s after the flag clears, and the 1.5 s guard
             # threw away Steve's quick "My name is Steve." -> 0.6 s
             self.declare_parameter('echo_guard_s', 0.6)
+            # 2026-10-01: a segment that began while she spoke and ran on into someone's reply
+            # was transcribed whole - her own sentences came back as Steve's ("How's your art
+            # coming along, Brian?") and a 3-word reply took 12-19 s of audio and 2-4 s to decode.
+            # With trim_own, the part before she finished (plus echo_guard) is thrown away and
+            # only what came after is heard. Not for a barge-in: she stopped for that voice.
+            self.declare_parameter('trim_own', False)
             self.declare_parameter('highpass_hz', 100.0)
             self.declare_parameter('vad_threshold', 0.35)
             # A pause this long is a CHECK, not the end: is he done? (turn.py: his words, and
@@ -627,6 +644,7 @@ def _node_main(args):
             self.min_silence = float(p('min_silence_s'))
             self.gain = 10.0 ** (float(p('gain_db')) / 20.0)
             self.echo_guard = float(p('echo_guard_s'))
+            self.trim_own = bool(p('trim_own'))
             # Three quarters of the quiet room's "noise" at this mic is an
             # 11-15 Hz rumble (vibration or electrical, from inside the robot):
             # a 100 Hz high-pass takes the floor from -46 to -52.5 dBFS.
@@ -936,6 +954,18 @@ def _node_main(args):
                     # did this start while she was talking? then it is mostly her
                     started = time.monotonic() - len(samples) / 16000.0 - self.min_silence
                     overlapped = self.speaking or started < self.speaking_ended + self.echo_guard
+                    if (self.trim_own and overlapped and not self.speaking
+                            and self.barged_at < started - 0.5):
+                        # she finished during this: keep only what came after her (+ the guard)
+                        cut = int((self.speaking_ended + self.echo_guard - started) * 16000)
+                        if cut >= len(samples) - int(0.4 * 16000):
+                            self.get_logger().info(f'all her own voice: {len(samples) / 16000:.1f} s dropped')
+                            continue
+                        if cut > 0:
+                            self.get_logger().info(f'trimmed {cut / 16000:.1f} s of her own voice off the front')
+                            samples = samples[cut:]
+                            started += cut / 16000.0
+                            overlapped = False
                     self.busy_since = time.monotonic()
                     try:
                         self._utterance(samples, overlapped, started)
@@ -952,6 +982,8 @@ def _node_main(args):
             barged = overlapped and self.barged_at >= started - 0.5     # this is who she stopped for
             if barged:
                 overlapped = False
+            if (self.voice_off or self.muted) and diane_mode():
+                self._voice(True, 'the TALK button')      # Diane mode: out of "over and out", unmuted
             if self.voice_off:
                 if seconds > 3.5:
                     return                  # the code word is short; a TV evening need not all be transcribed
@@ -1087,7 +1119,7 @@ def _node_main(args):
             if why == 'his voice trailed off' and action == 'chat' and self._would_ask_brain(said, t['who']):
                 self.turn_ids += 1
                 t['spec'] = self.turn_ids              # the brain thinks meanwhile; nothing is said yet
-                self.terse = self._owner_speaking(t['who'])
+                self.terse = self._owner_speaking(t['who']) and not diane_mode()
                 self.fun_name = None if self.terse else self._fun(t['who'])
                 self._ask_brain(said, who=t['who'], hold=t['spec'])
 
@@ -1143,7 +1175,10 @@ def _node_main(args):
             (the iPad). Anything else is "heard 7 words" (Steve, 2026-09-29: her log had been
             keeping the household's conversations word for word)."""
             now = time.monotonic()
-            return bool(re.search(rf'\b{NAME}\b', normalize(said)) or self.enrol
+            # Diane mode (the TALK button): she is in the conversation, name or no name. The
+            # first evening (2026-10-01) she answered "Rosa, can you speak?" and then dropped
+            # every sentence after it as "not for her".
+            return bool(diane_mode() or re.search(rf'\b{NAME}\b', normalize(said)) or self.enrol
                         or (self.offer_until and now < self.offer_until)
                         or (self.pending and now < self.pending_until)
                         or (self.open_chat and self.mode == 'chat'))
@@ -1210,9 +1245,10 @@ def _node_main(args):
                     self._okay()
                     self.last_heard = now
                     return
-            self.terse = self._owner_speaking(who)
+            self.terse = self._owner_speaking(who) and not diane_mode()
             self.fun_name = None if self.terse else self._fun(who)
-            action, mode = decide(text, self.mode if self.open_chat else 'idle')
+            # Diane mode (the TALK button): the conversation is open, name or no name
+            action, mode = decide(text, 'chat' if diane_mode() else self.mode if self.open_chat else 'idle')
             level = f', {db:.0f} dBFS' if db is not None else ', typed'
             voice_note = f', {who.label}' if who is not None else ''
             shown = f'"{text}"' if action or self._for_her(text) else f'{words_in(text)}, not for her'
@@ -1343,7 +1379,10 @@ def _node_main(args):
         def _fun(self, who):
             """Who gets her fun personality, for the brain ("Name, Steve's wife"), or None: a
             voice she knows that is not the owner's (fun_voices), or one clearly not his
-            (not_owner_below). Never a voice that might be him."""
+            (not_owner_below). Never a voice that might be him - except in Diane mode (the
+            TALK button), when it is Diane whoever is talking."""
+            if diane_mode():
+                return self.fun_woman
             if (who is None or who.name is None or self.voices is None or not self.voices.has(self.owner)
                     or self._owner_speaking(who)):
                 return None
@@ -1548,6 +1587,10 @@ def _node_main(args):
                 self.mode = 'idle'
                 self._say('sleepy')
                 self.voice_off = True                 # her sounds stay on: only the talking stops
+                try:
+                    os.remove(DIANE_FLAG)             # "over and out" ends Diane mode too, else the next
+                except OSError:                       # sentence would wake her straight back up (2026-10-01)
+                    pass
                 os.makedirs(os.path.dirname(VOICE_OFF_FLAG), exist_ok=True)
                 with open(VOICE_OFF_FLAG, 'w') as f:
                     f.write(time.strftime('%Y-%m-%d %H:%M:%S') + '\n')

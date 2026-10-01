@@ -261,6 +261,11 @@ def main():
 
     goal_pub = n.create_publisher(PoseStamped, 'nav_helper/goal', 10)
     situation_pub = n.create_publisher(String, 'nav_helper/situation', 10)
+    # the exact-heading planner, in case a nav_route left its any-heading "Through" selected
+    planner_pub = n.create_publisher(String, 'planner_selector',
+                                     QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
+                                                durability=DurabilityPolicy.TRANSIENT_LOCAL))
+    planner_pub.publish(String(data='GridBased'))
 
     def drive(gx, gy, gh, label='goal'):
         """One Nav2 goal: progress each second, then the result line. -> its status."""

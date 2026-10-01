@@ -124,7 +124,7 @@ class Sounds(Node):
         # ~12 dB comes out. Steve, by ear: 100 % "5 % distorted", 95 % (-3 dB) it is -
         # the speaker is a 4 ohm 3 W driver and the reSpeaker's amp on USB power gives
         # it about 3 W at 0 dB, ~1.5 W here.
-        self.declare_parameter('volume_percent', 95)
+        self.declare_parameter('volume_percent', 100)   # the new speaker, 2026-10-01: Steve wants it at 100
         self.declare_parameter('full_control', 'PCM,1')   # '' = none
         # "over and out" (listen) leaves this flag: she starts silent after a reboot
         # 'over and out' (listen's voice_off flag) no longer mutes her sounds: Steve,

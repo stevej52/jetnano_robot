@@ -66,6 +66,17 @@ from rclpy.qos import DurabilityPolicy, QoSProfile
 from sensor_msgs.msg import BatteryState
 from std_msgs.msg import Bool, Float64, String
 
+QUIET_FLAG = os.path.expanduser('~/voice/quiet')      # jetnano_bringup quiet.py / sounds.py
+DIANE_FLAG = os.path.expanduser('~/voice/diane')      # jetnano_bringup listen.py
+VOICE_OFF_FLAG = os.path.expanduser('~/voice/voice_off')   # listen's "over and out"
+# What she says on TALK, one after another, round and round (Steve, 2026-10-01); the
+# counter is a file, so she carries on from where she was after a restart.
+HELLOS = ["Hi! Have you seen any cute Chihuahuas around here?",
+          "There's like, a lot of animals in here.",
+          "Is that a cat? So cute.",
+          "Whatcha doin'?"]
+HELLO_COUNT = os.path.expanduser('~/voice/talk_count')
+
 try:
     from nav2_msgs.msg import CollisionMonitorState
 except ImportError:  # no Nav2 on this machine: the page just never shows the guard
@@ -220,6 +231,10 @@ def make_handler(node: 'WebTeleop'):
                 ok, why = node.dash.locate() if node.dash else (False, 'no dashboard')
                 self._json({'ok': ok, 'why': why},
                            HTTPStatus.OK if ok else HTTPStatus.SERVICE_UNAVAILABLE)
+            elif path == '/talk':
+                # TALK: out of quiet mode, into Diane mode, and a hello; QUIET: silent again
+                node.talk(bool(body.get('on', True)))
+                self._json(node.status())
             elif path == '/guard':
                 ok, why = node.set_guard(bool(body.get('enabled', True)))
                 if ok:
@@ -284,6 +299,7 @@ class WebTeleop(Node):
 
         self.state = State()
         self.look_at = [0.0, 0.0]            # the pan-tilt, view degrees (pan + = left, tilt + = up)
+        self.speak_pub = self.create_publisher(String, 'speak', 10)       # the TALK button's hello
         self.pan_pub = self.create_publisher(Float64, str(self.get_parameter('pan_topic').value), 10)
         self.tilt_pub = self.create_publisher(Float64, str(self.get_parameter('tilt_topic').value), 10)
         self._quiet_at = 0.0      # when the last stop-burst ends and we go silent
@@ -453,6 +469,48 @@ class WebTeleop(Node):
     def monotonic(self) -> float:
         return self.get_clock().now().nanoseconds / 1e9
 
+    def next_hello(self) -> str:
+        """The next TALK line in turn."""
+        try:
+            with open(HELLO_COUNT) as f:
+                n = int(f.read().strip() or 0)
+        except (OSError, ValueError):
+            n = 0
+        try:
+            with open(HELLO_COUNT, 'w') as f:
+                f.write(str(n + 1) + chr(10))
+        except OSError:
+            pass
+        line = HELLOS[n % len(HELLOS)]
+        self.get_logger().info(f'TALK hello {n % len(HELLOS) + 1} of {len(HELLOS)}: "{line}"')
+        return line
+
+    def talk(self, on: bool) -> None:
+        """The driving page's TALK / QUIET button (Steve, 2026-10-01). TALK: quiet mode off
+        (~/voice/quiet, the sounds node sees it within a second), Diane mode on (~/voice/diane:
+        listen gives everyone her fun personality), then she says hello. QUIET: the flags the
+        other way round - nothing out of the speaker until TALK again."""
+        os.makedirs(os.path.dirname(QUIET_FLAG), exist_ok=True)
+        stamp = time.strftime('%Y-%m-%d %H:%M:%S') + '\n'
+        if on:
+            for flag in (QUIET_FLAG, VOICE_OFF_FLAG):      # out of whatever silence she is in
+                try:
+                    os.remove(flag)
+                except FileNotFoundError:
+                    pass
+            with open(DIANE_FLAG, 'w') as f:
+                f.write(stamp)
+            self.get_logger().info('TALK from the web page: quiet off, Diane mode on')
+            threading.Timer(1.5, lambda: self.speak_pub.publish(String(data=self.next_hello()))).start()
+        else:
+            try:
+                os.remove(DIANE_FLAG)
+            except FileNotFoundError:
+                pass
+            with open(QUIET_FLAG, 'w') as f:
+                f.write(stamp)
+            self.get_logger().info('QUIET from the web page: Diane mode off, quiet on')
+
     def status(self) -> dict:
         with self.state.lock:
             live = (self.monotonic() - self.state.stamp) <= self.command_timeout
@@ -465,6 +523,8 @@ class WebTeleop(Node):
                 'battery': (self._battery if self.monotonic() - self._battery_stamp < 5.0 else None),
                 'health': (self._health if self.monotonic() - self._health_stamp < 20.0 else None),
                 'look': self.look_at,
+                'quiet': os.path.exists(QUIET_FLAG),
+                'diane': os.path.exists(DIANE_FLAG),
                 'linear': self.state.linear if live else 0.0,
                 'angular': self.state.angular if live else 0.0,
             }

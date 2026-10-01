@@ -64,6 +64,10 @@ class Ears(Node):
         # moves), 1 the speech-recognition output (echo-cancelled, fixed gain: a level
         # meter and a recogniser both want that), 2-5 the raw mics before any gain.
         self.declare_parameter('channel', 1)
+        # The chip's processing profile (xvf.PROFILES), applied when the chip is opened and
+        # again whenever it is re-opened; '' leaves the chip as it booted. 2026-10-01: 'clean'
+        # with channel 0 is the hear-better setup to be tested with Steve.
+        self.declare_parameter('board_profile', '')
         self.declare_parameter('rate', 16000)
         # Measured 2026-09-25 on the bench: a quiet room reads -46 dBFS, her own
         # speaker at 80 % only -24 at the mic; gain and AGC hardly move either.
@@ -204,6 +208,11 @@ class Ears(Node):
                     chip = xvf.XVF()
                     self.get_logger().info('direction of arrival: reading the reSpeaker chip')
                     said = None
+                    profile = str(self.get_parameter('board_profile').value).strip()
+                    if profile:
+                        applied = chip.apply(profile)
+                        self.get_logger().info(f'reSpeaker profile {profile}: ' + ', '.join(
+                            f'{k}={v:g}' for k, v in applied.items()))
                 deg, speech = chip.read('DOA_VALUE')
                 msg = Float32MultiArray()
                 msg.data = [float(deg), float(speech)]

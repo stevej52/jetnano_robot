@@ -238,7 +238,14 @@ global_costmap:
 planner_server:
   ros__parameters:
     expected_planner_frequency: 1.0
-    planner_plugins: ["GridBased"]
+    # Two copies of the same planner. "GridBased" (the default, nav_goal / nav_park) plans to
+    # the goal's exact heading. "Through" is for nav_route: on a route every intermediate
+    # waypoint is a planner goal, and with an exact heading each one became a Reeds-Shepp
+    # reverse-and-shuffle at the island's corners (drive 13, 2026-09-30: 73 s at one corner,
+    # "detected collision ahead", route aborted). ALL_DIRECTION: a waypoint is passed facing
+    # whichever way the path through it wants. nav_route picks it on the tree's
+    # planner_selector topic and hands GridBased back afterwards.
+    planner_plugins: ["GridBased", "Through"]
     GridBased:
       plugin: "nav2_smac_planner::SmacPlannerHybrid"
       tolerance: 0.30
@@ -255,6 +262,23 @@ planner_server:
       cost_penalty: 2.0
       analytic_expansion_ratio: 3.5
       smooth_path: true
+    Through:
+      plugin: "nav2_smac_planner::SmacPlannerHybrid"
+      tolerance: 0.30
+      downsample_costmap: false
+      allow_unknown: true
+      max_iterations: 1000000
+      max_planning_time: 5.0
+      motion_model_for_search: "REEDS_SHEPP"
+      angle_quantization_bins: 72
+      minimum_turning_radius: 0.40
+      reverse_penalty: 2.0
+      change_penalty: 0.0
+      non_straight_penalty: 1.2
+      cost_penalty: 2.0
+      analytic_expansion_ratio: 3.5
+      smooth_path: true
+      goal_heading_mode: "ALL_DIRECTION"       # the waypoint's heading is advice, not a constraint
 
 smoother_server:
   ros__parameters:
