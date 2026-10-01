@@ -67,11 +67,12 @@ def test_straightens_within_the_cycles(err_deg, radius, coast, leg_max):
 def test_a_big_turn_in_the_open_is_a_three_point_turn():
     """Drive 7: arriving the way she was going, ~125 deg from the spot's heading."""
     legs = nav_park.Shuffles(nav_park.LEG_MAX_OPEN_M).next_legs(math.radians(125))
-    assert [sign for sign, _, _ in legs] == [1.0, -1.0, 1.0]            # forward, back, forward
+    n = math.ceil(math.radians(125) / (0.9 * nav_park.LEG_MAX_OPEN_M / nav_park.TURN_RADIUS_M))
+    assert [sign for sign, _, _ in legs] == [1.0 if k % 2 == 0 else -1.0 for k in range(n)]   # forward, back, ...
     assert all(steer > 0 for sign, steer, _ in legs if sign > 0)         # all three turn her left
     assert all(steer < 0 for sign, steer, _ in legs if sign < 0)
-    _, err, n = straighten(125, 0.37, 0.02, leg_max=nav_park.LEG_MAX_OPEN_M)
-    assert n <= 5 and abs(math.degrees(err)) <= 6.0
+    _, err, n = straighten(125, 0.43, 0.02, leg_max=nav_park.LEG_MAX_OPEN_M)
+    assert n <= 6 and abs(math.degrees(err)) <= 6.0
 
 
 def test_open_legs_need_fewer_moves_than_short_ones():
@@ -89,7 +90,7 @@ def test_small_corrections_use_half_lock_and_one_leg():
     assert nav_park.steer_for(math.radians(10)) == 0.5 * nav_park.STEER
     assert nav_park.steer_for(math.radians(40)) == nav_park.STEER
     assert len(nav_park.Shuffles().next_legs(math.radians(10))) == 1
-    # a 12 cm leg at full lock turns her at most ~17 deg: 40 deg is three legs on the spot,
+    # a 12 cm leg at STEER turns her at most ~14 deg: 40 deg is three legs on the spot,
     # a pair in the open (30 cm legs)
     assert len(nav_park.Shuffles().next_legs(math.radians(40))) == 3
     assert len(nav_park.Shuffles(nav_park.LEG_MAX_OPEN_M).next_legs(math.radians(40))) == 2
@@ -99,3 +100,88 @@ def test_learns_the_coast():
     plan = nav_park.Shuffles()
     plan.observe(math.radians(5), math.radians(15))
     assert math.radians(4) < plan.coast < math.radians(6)
+
+
+# --- turning early (2026-10-01): one arc into the point in front of the spot, then a straight
+# reverse in. Drive 8 arrived in front of the spot facing -131 deg and three-point-turned there.
+
+def drive_arc(x, y, heading, delta, radius):
+    """A car at full lock from (x, y, heading), turning `delta` (+ left) -> where it ends."""
+    s = 1.0 if delta > 0 else -1.0
+    n = 2000
+    for _ in range(n):
+        step = abs(delta) / n * radius
+        x += step * math.cos(heading)
+        y += step * math.sin(heading)
+        heading += s * step / radius
+    return x, y, heading
+
+
+@pytest.mark.parametrize('heading_in_deg', [0, 45, 123, -131, 180, -60])
+@pytest.mark.parametrize('delta_deg', [30, 90, 131, 179, -30, -90, -131, -179])
+def test_the_arc_from_its_start_ends_in_front_of_the_spot(heading_in_deg, delta_deg):
+    px, py, a, d = 1.2, 0.0, math.radians(heading_in_deg), math.radians(delta_deg)
+    qx, qy = nav_park.arc_start(px, py, a, d)
+    r = nav_park.ARC_RADIUS_LEFT_M if d > 0 else nav_park.ARC_RADIUS_RIGHT_M
+    ex, ey, eh = drive_arc(qx, qy, a, d, r)
+    assert math.hypot(ex - px, ey - py) < 0.005
+    assert abs(nav_park.wrap(eh - (a + d))) < 1e-6
+
+
+def test_drive_8_turns_early_instead_of_three_point_turning():
+    """From the dining room (4.49, -5.08) to the spot (0, 0, 0 deg): she comes in at ~123 deg
+    and must leave the point in front facing 0: a right arc of ~-123 deg, started short of
+    and to the left of the point in front, so the arc ends there facing the spot's heading."""
+    here = (4.49, -5.08, math.radians(-131))
+    qx, qy, approach, delta = nav_park.plan_approach(here, 1.2, 0.0, 0.0)
+    assert delta != 0.0
+    assert -math.radians(135) < delta < -math.radians(110)          # a right turn of ~123 deg
+    assert math.isclose(approach, math.atan2(qy - here[1], qx - here[0]), abs_tol=1e-9)   # faces the way she goes
+    r = nav_park.ARC_RADIUS_RIGHT_M
+    ex, ey, eh = drive_arc(qx, qy, approach, delta, r)
+    assert math.hypot(ex - 1.2, ey) < 0.01 and abs(nav_park.wrap(eh)) < 1e-6
+    assert 0.3 < math.hypot(qx - 1.2, qy) < 1.0                       # started short, within the clear 1.35 m
+
+
+def test_a_small_turn_or_a_short_hop_keeps_the_old_approach():
+    qx, qy, approach, delta = nav_park.plan_approach((3.0, 0.0, 0.0), 1.2, 0.0, math.pi)   # straight at it: 0 to turn
+    assert (qx, qy, delta) == (1.2, 0.0, 0.0)
+    qx, qy, approach, delta = nav_park.plan_approach((1.5, 0.1, 0.0), 1.2, 0.0, 0.0)       # already there
+    assert (qx, qy, delta) == (1.2, 0.0, 0.0)
+    assert nav_park.plan_approach(None, 1.2, 0.0, 0.0)[3] == 0.0
+
+
+def test_reverse_steering_turns_her_the_right_way():
+    # she should turn left (heading up): reversing, that is right-hand steering
+    assert nav_park.reverse_steer(math.radians(10)) < 0
+    assert nav_park.reverse_steer(math.radians(-10)) > 0
+    assert abs(nav_park.reverse_steer(math.radians(90))) == nav_park.REVERSE_STEER_MAX
+
+
+@pytest.mark.parametrize('x0, y0, h0_deg', [(1.26, 0.09, -7), (1.2, 0.0, 0), (1.1, -0.2, 12), (1.3, 0.15, -20), (1.2, 0.1, 25)])
+def test_reversing_in_lands_on_the_spot_straight(x0, y0, h0_deg):
+    """Drive 8's reverse in started at (1.26, 0.09) facing -7 deg and ended +31 deg off under
+    Nav2. Under the aimed reverse it ends on the spot within a few degrees."""
+    x, y, h = x0, y0, math.radians(h0_deg)
+    radius = 0.37
+    for _ in range(4000):
+        steer, along, dist = nav_park.reverse_aim(x, y, h, 0.0, 0.0, 0.0)
+        if along <= nav_park.REVERSE_DONE_M or dist <= nav_park.REVERSE_DONE_M:
+            break
+        step = 0.001
+        x -= step * math.cos(h)                        # reversing
+        y -= step * math.sin(h)
+        h += -1 * (steer / nav_park.STEER) / radius * step   # reversing flips the turn
+    assert math.hypot(x, y) <= 0.08, f'ended {math.hypot(x, y) * 100:.0f} cm from the spot'
+    assert abs(math.degrees(nav_park.wrap(h))) < 6.0, f'ended {math.degrees(nav_park.wrap(h)):+.0f} deg off'
+
+
+def test_the_reverse_aim_steers_back_to_the_line():
+    # she is left of the line (y > 0), facing along it. Reversing, her tail goes where her nose
+    # does not point: the nose must swing left (heading up) for the tail to come right, back
+    # to the line - and heading up while reversing is right-hand steering, negative (the bag
+    # of drive 8: Nav2 steered negative all the way and her heading rose)
+    steer, along, dist = nav_park.reverse_aim(1.0, 0.1, 0.0, 0.0, 0.0, 0.0)
+    assert steer < 0 and math.isclose(along, 1.0) and math.isclose(dist, math.hypot(1.0, 0.1))
+    assert nav_park.reverse_aim(1.0, -0.1, 0.0, 0.0, 0.0, 0.0)[0] > 0
+    assert nav_park.reverse_aim(1.0, 0.0, 0.0, 0.0, 0.0, 0.0)[0] == 0.0
