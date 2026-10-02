@@ -62,7 +62,11 @@ echo "   ros2 graph: $NODES nodes known to the daemon  $(date +%T)"
 # Nav2 is not part of the robot service: start it (one instance, nav2_ctl.sh refuses a second)
 if ! pgrep -f '^/opt/ros/jazzy/lib/rclcpp_components/component_container_isolated' > /dev/null; then
     echo "   Nav2 not running: starting it"
-    "$S/nav2_ctl.sh" start 2>&1 | tail -2 | sed 's/^/   /'
+    # not through a pipe: something Nav2's start spawns kept the pipe open and "| tail" waited
+    # 72 s after "Nav2 active" (drive 21, 2026-10-02: the preflight was 99 s, 81 of them here)
+    "$S/nav2_ctl.sh" start > "$D/nav2_start.log" 2>&1
+    tail -2 "$D/nav2_start.log" | sed 's/^/   /'
+    echo "   Nav2 up  $(date +%T)"
 fi
 echo "   predrive  $(date +%T)"
 # the recorder's ~6 s of start-up overlap the checks; a NO-GO stops it again

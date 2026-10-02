@@ -188,6 +188,13 @@ global_costmap:
       footprint_padding: 0.03
       # by maximum, as the local costmap: the camera layer only adds (see there)
       use_maximum: true
+      # Drives 21-22 (2026-10-02): sunlight on the floor came out of the depth camera as
+      # obstacle and closed the hall's end to the planner. The camera's cells now arrive in
+      # /planner_map at 60 (grid_to_points planner_camera_value); trinary would drop anything
+      # under lethal_cost_threshold (100) to FREE, so it is off and 60 becomes a cost of ~150:
+      # the planner avoids them when it can, passes when it must. The lidar's own 100s stay
+      # lethal; -1 stays unknown. A costmap-level parameter, like lethal_cost_threshold.
+      trinary_costmap: false
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
@@ -195,6 +202,12 @@ global_costmap:
         # The house map. navigation.launch.py nvblox:=true swaps in /planner_map: the same
         # map with the camera's obstacles stamped on (grid_to_points), one grid - see below.
         map_topic: /map                          # PLANNER_MAP
+        # Drives 21-22 (2026-10-02): sunlight on the floor came out of the depth camera as
+        # obstacle and closed the hall's end to the planner. The camera's cells now arrive at
+        # 60 (grid_to_points planner_camera_value), and this scales them to a cost instead of
+        # dropping them to free (trinary): the planner avoids them when it can, passes when it
+        # must. The lidar's own 100s stay lethal; -1 stays unknown.
+        trinary_costmap: false
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: true

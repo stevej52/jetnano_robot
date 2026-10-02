@@ -52,7 +52,23 @@ public:
     // caps her speed and the page shows it. Not hidden: degraded, and said. (The Python
     // grid_to_points had this first; the audit of 2026-10-02 found the C++ one runs.)
     stale_s_ = declare_parameter<double>("stale_s", 3.0);
-    health_pub_ = create_publisher<std_msgs::msg::String>("camera_obstacles/health", rclcpp::QoS(1).reliable());
+    // Drive 21 (2026-10-02 12:32): a stripe of sunlight on the floor by the east curtain came
+    // out of the depth camera as solid obstacle 0.2-0.5 m in front of the mapped wall, the
+    // planner's map lost the 0.9 m gap past the box, and "no valid path found" fifteen times.
+    // The lidar had the wall where the map has it. A camera cell this close to a mapped wall
+    // is the wall (or the sun), not furniture the lidar missed: left out of the planner's
+    // map. The local costmap still sees the camera live, so the guard is not affected.
+    wall_margin_m_ = declare_parameter<double>("planner_wall_margin_m", 0.40);
+    // Drive 22 (13:00, curtain drawn): the sun still came in under the hem, the camera put a
+    // blob of "obstacle" in the middle of the hall's end, and the planner failed from the
+    // first metre. A camera-only cell is never lethal for the planner any more: it goes into
+    // the planner's map at this value (below Nav2's lethal threshold of 65, scaled to a cost
+    // by the global static layer's trinary_costmap: false in nav2.yaml), so the planner goes
+    // round it when there is a way and through it when there is not; the controller and the
+    // collision guard, which see the camera live, keep the last word near it. The lidar's map
+    // stays the only thing that forbids. 0 = the camera's cells left out of the planner map.
+    camera_value_ = static_cast<int8_t>(declare_parameter<int>("planner_camera_value", 60));
+    health_pub_ =create_publisher<std_msgs::msg::String>("camera_obstacles/health", rclcpp::QoS(1).reliable());
 
     const auto reliable1 = rclcpp::QoS(1).reliable();
     pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(points_topic, reliable1);
@@ -190,10 +206,22 @@ private:
     const auto & info = map_->info;
     std::vector<int8_t> data(map_->data.begin(), map_->data.end());
     if (!camera.empty() && camera.rows == static_cast<int>(info.height) && camera.cols == static_cast<int>(info.width)) {
+      near_wall_mask();
+      camera_value_ = static_cast<int8_t>(get_parameter("planner_camera_value").as_int());   // live: ros2 param set
+      size_t left_out = 0;
       for (size_t i = 0; i < data.size(); ++i) {
-        if (camera.at<int16_t>(static_cast<int>(i / info.width), static_cast<int>(i % info.width)) >= threshold_) {
-          data[i] = 100;
+        const int r = static_cast<int>(i / info.width), c = static_cast<int>(i % info.width);
+        if (camera.at<int16_t>(r, c) >= threshold_) {
+          if (!near_wall_.empty() && near_wall_.at<uint8_t>(r, c)) {
+            ++left_out;
+          } else if (data[i] < camera_value_) {
+            data[i] = camera_value_;                // expensive, never lethal: see the parameter
+          }
         }
+      }
+      if (left_out > 0) {
+        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 30000,
+          "%zu camera cell(s) within %.2f m of a mapped wall left out of the planner's map", left_out, wall_margin_m_);
       }
     }
     const Geometry geometry{info.width, info.height, info.resolution, info.origin.position.x, info.origin.position.y};
@@ -211,6 +239,27 @@ private:
     planner_pub_->publish(msg);
   }
 
+  void near_wall_mask()
+  {
+    // the cells within planner_wall_margin_m of a /map occupied cell, once per /map message
+    if (near_wall_for_ == map_.get()) {return;}
+    near_wall_for_ = map_.get();
+    const auto & info = map_->info;
+    if (wall_margin_m_ <= 0.0 || info.resolution <= 0.0) {
+      near_wall_ = cv::Mat();
+      return;
+    }
+    cv::Mat occ(info.height, info.width, CV_8U, cv::Scalar(0));
+    for (size_t i = 0; i < map_->data.size(); ++i) {
+      if (map_->data[i] >= threshold_) {
+        occ.at<uint8_t>(static_cast<int>(i / info.width), static_cast<int>(i % info.width)) = 255;
+      }
+    }
+    const int r = static_cast<int>(std::ceil(wall_margin_m_ / info.resolution));
+    const cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(2 * r + 1, 2 * r + 1));
+    cv::dilate(occ, near_wall_, kernel);
+  }
+
   struct Geometry
   {
     uint32_t w, h; double res, x, y;
@@ -218,7 +267,10 @@ private:
   };
 
   int threshold_;
-  double height_, max_age_, stale_s_;
+  double height_, max_age_, stale_s_, wall_margin_m_;
+  int8_t camera_value_ = 60;
+  cv::Mat near_wall_;                                // see near_wall_mask()
+  const void * near_wall_for_ = nullptr;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr health_pub_;
   nav_msgs::msg::OccupancyGrid::ConstSharedPtr grid_, map_;
   double grid_t_ = 0.0;
