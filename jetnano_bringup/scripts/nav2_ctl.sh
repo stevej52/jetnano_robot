@@ -25,7 +25,7 @@ CONTAINER_RE='^/opt/ros/jazzy/lib/rclcpp_components/component_container_isolated
 # navigation.launch.py's own Python nodes: when the launch is SIGKILLed (stop, 2026-10-01 21:36)
 # they live on as orphans of init, and the next start doubles them - two nav_translators, two
 # battery_homes, two nav_helpers (the duplicates Steve found again on 2026-10-01 22:10).
-HELPER_RE='^/usr/bin/python3 /home/jeston/ros2_ws/install/jetnano_navigation/lib/jetnano_navigation/(nav_helper|battery_home|nav_translator)( |$)'
+HELPER_RE='^/usr/bin/python3 /home/jeston/ros2_ws/install/jetnano_navigation/lib/jetnano_navigation/(nav_helper|battery_home|nav_translator|mission)( |$)'
 helpers() { pgrep -f "$HELPER_RE"; }
 orphan_helpers() { for p in $(helpers); do [ "$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')" = "1" ] && echo "$p"; done; }
 

@@ -14,16 +14,18 @@
 
 """The mission controller: the one node that talks to Nav2.
 
-    ros2 topic pub --once /mission/command std_msgs/String '{data: "{\\"do\\": \\"goal\\", \\"x\\": 2.0, \\"y\\": -2.0, \\"heading_deg\\": 135}"}'
+    ros2 topic pub --once /mission/command std_msgs/String '{data: "{\\"do\\": \\"goal\\", \\"x\\": 2.0, \\"y\\": -2.0}"}'
     ros2 topic echo /mission/status      {"mission": "goal", "phase": "driving", "goal": "a1b2...", "since_s": 4.2,
                                           "feedback": {"dist_m": 3.1, "left": 1, "x": .., "y": .., "h_deg": ..},
                                           "held": null | {"since_s": 12, "why": "STOP on the page"}, "gate": "ok"}
-    ros2 topic echo /mission/result      one line per finished mission, as nav_goal printed it
+    ros2 topic echo /mission/log         what nav_route printed: a line a second, waypoints passed, detours, pictures
+    ros2 topic echo /mission/result      one line per finished mission, as nav_goal / nav_route printed it
     ros2 run jetnano_navigation mission_cmd goal X Y H [TIMEOUT]   (a client that waits and prints)
+    ros2 run jetnano_navigation mission_cmd route X Y H  X Y H ... [--timeout S]
 
 Commands (JSON on /mission/command):
-    {"do": "goal", "x", "y", "heading_deg", "timeout_s": 45, "planner": "GridBased"}
-    {"do": "route", "waypoints": [[x, y, heading_deg], ...], "timeout_s": 300}     (NavigateThroughPoses)
+    {"do": "goal", "x", "y", "heading_deg", "timeout_s": 45, "planner": "GridBased", "id": "abcd1234"}
+    {"do": "route", "waypoints": [[x, y, heading_deg], ...], "timeout_s": 300}     (route_run.RouteRun)
     {"do": "cancel"}      {"do": "resume"}      {"do": "status"}
 
 Until 2026-10-02 every script (nav_goal, nav_route, nav_park, meet, battery_home) opened its
@@ -34,9 +36,9 @@ action clients and the goal ids, and it is the one the safety gate (safety_gate.
       hold with the reason;
   gate ok/degraded again -> resume on its own if the hold lasted under resume_within_s (30),
       else stay held and say "resume to continue" (Steve's choice, 2026-10-02).
-Step 1 (this file): goal, route, cancel, resume, status, the gate. The stretch handover, the
-detour guard and the pictures of nav_route, and nav_park's arcs, move in next (steps 2-3);
-until then the scripts keep working beside it.
+Step 1: goal, route, cancel, resume, status, the gate. Step 2 (route_run.py): nav_route's
+stretches, detour guard and pictures run in here; drive.sh sends the lap through mission_cmd.
+Step 3: nav_park's arcs move in next; until then the scripts keep working beside it.
 """
 
 import json
@@ -46,18 +48,24 @@ import time
 import uuid
 
 import rclpy
+import tf2_ros
 from action_msgs.msg import GoalStatus
+from geometry_msgs.msg import PoseStamped, Twist
 from nav2_msgs.action import NavigateThroughPoses, NavigateToPose
+from nav2_msgs.srv import ClearEntireCostmap, GetCostmap
 from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
-from std_msgs.msg import String
+from std_msgs.msg import Bool, String
+from std_srvs.srv import Trigger
 
 from jetnano_navigation.nav_goal import yaw
 from jetnano_navigation.nav_route import pose_msg
+from jetnano_navigation.route_run import RouteRun
 
 STATUS_NAMES = {GoalStatus.STATUS_SUCCEEDED: 'SUCCEEDED', GoalStatus.STATUS_ABORTED: 'ABORTED',
                 GoalStatus.STATUS_CANCELED: 'CANCELED'}
+DRIVING = ('sending', 'driving', 'cancelling')      # a route run's phases with a Nav2 goal in play
 
 
 def resume_policy(held_s, resume_within_s=30.0):
@@ -81,16 +89,57 @@ class Mission(Node):
         self.to_pose = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         self.through = ActionClient(self, NavigateThroughPoses, 'navigate_through_poses')
         self.planner_pub = self.create_publisher(String, 'planner_selector', latched)
+        self.goal_pub = self.create_publisher(PoseStamped, 'nav_helper/goal', 10)    # nav_helper watches the goal
         self.status_pub = self.create_publisher(String, 'mission/status', latched)
+        self.log_pub = self.create_publisher(String, 'mission/log', 50)
         self.result_pub = self.create_publisher(String, 'mission/result', 10)
         self.create_subscription(String, 'mission/command', self._on_command, 10)
         self.create_subscription(String, 'safety/state', self._on_gate, latched)
+        self.create_subscription(Twist, 'cmd_vel_nav', self._on_cmd, 20)
+        self.create_subscription(Bool, 'e_stop_motion', lambda m: setattr(self, 'lock', m.data), 10)
+        self.costmap_cli = self.create_client(GetCostmap, '/global_costmap/get_costmap')
+        self.clear_clis = [self.create_client(ClearEntireCostmap, name) for name in
+                           ('/global_costmap/clear_entirely_global_costmap', '/local_costmap/clear_entirely_local_costmap')]
+        self.snap_cli = self.create_client(Trigger, '/nav_helper/snapshot')
+        self.tf_buf = tf2_ros.Buffer()
+        self.tf_lis = tf2_ros.TransformListener(self.tf_buf, self)
         self.gate = None                 # the gate's latest verdict (dict)
         self.active = None               # the mission in hand (dict), or None
         self.held = None                 # {'since': monotonic, 'why': str, 'mission': dict} while stopped by the gate
-        self.cancelling = None           # future of a cancel we asked for
-        self.create_timer(0.5, self._tick)
+        self.lock = None                 # the motion check's lock (e_stop_motion)
+        self.cmds = []                   # (throttle, steer) the driver got since the last tick
+        self.create_timer(0.25, self._tick)
         self.get_logger().info('mission controller: goal / route / cancel / resume on /mission/command; the safety gate is obeyed')
+
+    # ------------------------------------------------------------- services --
+    # what a route run (route_run.RouteRun) asks of the node
+
+    def map_pose(self):
+        """Where she is on the map now, or None (no spinning: the listener fills the buffer)."""
+        try:
+            if not self.tf_buf.can_transform('map', 'base_footprint', rclpy.time.Time()):
+                return None
+            t = self.tf_buf.lookup_transform('map', 'base_footprint', rclpy.time.Time())
+        except tf2_ros.TransformException:
+            return None
+        return (t.transform.translation.x, t.transform.translation.y, yaw(t.transform.rotation))
+
+    def goal_watch(self, wp):
+        """Tell nav_helper the goal (x, y, heading rad) so its pictures and rescue know the aim."""
+        self.goal_pub.publish(pose_msg(*wp))
+
+    def select_planner(self, name):
+        self.planner_pub.publish(String(data=name))        # latched: the tree's PlannerSelector keeps it
+
+    def clear_costmaps(self):
+        for cli in self.clear_clis:
+            if cli.service_is_ready():
+                cli.call_async(ClearEntireCostmap.Request())
+
+    def say(self, mission, line):
+        """A line of the mission's story: the log, and /mission/log for the client."""
+        self.get_logger().info(f'{mission["do"]} {mission["id"]}: {line}')
+        self.log_pub.publish(String(data=json.dumps({'id': mission['id'], 'line': line})))
 
     # ---------------------------------------------------------------- inputs --
 
@@ -99,6 +148,9 @@ class Mission(Node):
             self.gate = json.loads(m.data)
         except ValueError:
             return
+
+    def _on_cmd(self, m):
+        self.cmds.append((m.linear.x, m.angular.z))
 
     def _on_command(self, m):
         try:
@@ -124,36 +176,40 @@ class Mission(Node):
 
     # --------------------------------------------------------------- missions --
 
+    def _new(self, cmd):
+        return {'do': cmd.get('do'), 'id': str(cmd.get('id') or uuid.uuid4().hex[:8]), 't0': time.monotonic(), 'cmd': cmd,
+                'timeout_s': float(cmd.get('timeout_s', 45.0 if cmd.get('do') == 'goal' else 300.0)),
+                'feedback': {}, 'handle': None, 'goal_uuid': None, 'result_future': None, 'phase': 'sending', 'run': None}
+
     def _start(self, cmd):
+        mission = self._new(cmd)
         permit = (self.gate or {}).get('permit', False)
         if not permit:
             why = '; '.join((self.gate or {}).get('reasons') or ['no verdict from the safety gate'])
-            self._finish({'do': cmd.get('do'), 'id': uuid.uuid4().hex[:8], 't0': time.monotonic(), 'cmd': cmd},
-                         'REFUSED', f'the safety gate does not permit: {why}')
+            self._finish(mission, 'REFUSED', f'the safety gate does not permit: {why}')
             return
-        mission = {'do': cmd['do'], 'id': uuid.uuid4().hex[:8], 't0': time.monotonic(), 'cmd': cmd,
-                   'timeout_s': float(cmd.get('timeout_s', 45.0 if cmd['do'] == 'goal' else 300.0)),
-                   'feedback': {}, 'handle': None, 'goal_uuid': None, 'result_future': None, 'phase': 'sending'}
-        if cmd['do'] == 'goal':
-            mission['planner'] = cmd.get('planner', 'GridBased')
-            mission['waypoints'] = [[float(cmd['x']), float(cmd['y']), float(cmd.get('heading_deg', 0.0))]]
-        else:
-            mission['planner'] = cmd.get('planner', 'Through')
-            mission['waypoints'] = [[float(a), float(b), float(c)] for a, b, c in cmd['waypoints']]
+        if cmd['do'] == 'route':
+            if not self.through.server_is_ready():
+                self._finish(mission, 'REFUSED', 'Nav2 is not there (no action server)')
+                return
+            mission['run'] = RouteRun(self, cmd['waypoints'], mission['timeout_s'], lambda line: self.say(mission, line))
+            mission['phase'] = 'checking'
+            self.active = mission
+            mission['run'].start()
+            return
+        mission['planner'] = cmd.get('planner', 'GridBased')
+        mission['waypoints'] = [[float(cmd['x']), float(cmd['y']), float(cmd.get('heading_deg', 0.0))]]
         self.active = mission
+        self.goal_watch((mission['waypoints'][0][0], mission['waypoints'][0][1], math.radians(mission['waypoints'][0][2])))
         self._send(mission, mission['waypoints'])
 
     def _send(self, mission, waypoints):
-        self.planner_pub.publish(String(data=mission['planner']))
+        self.select_planner(mission['planner'])
         stamp = self.get_clock().now().to_msg()
         poses = [pose_msg(x, y, math.radians(h), stamp) for x, y, h in waypoints]
-        if mission['do'] == 'goal':
-            client, goal = self.to_pose, NavigateToPose.Goal()
-            goal.pose = poses[0]
-        else:
-            client, goal = self.through, NavigateThroughPoses.Goal()
-            goal.poses = poses
-        if not client.wait_for_server(timeout_sec=3.0):
+        client, goal = self.to_pose, NavigateToPose.Goal()
+        goal.pose = poses[0]
+        if not client.server_is_ready():
             self._finish(mission, 'REFUSED', 'Nav2 is not there (no action server)')
             return
         mission['phase'] = 'sending'
@@ -197,12 +253,13 @@ class Mission(Node):
             return
         self._finish(mission, STATUS_NAMES.get(status, str(status)), '')
 
-    def _finish(self, mission, outcome, note):
+    def _finish(self, mission, outcome, note, line=None):
         fb = mission.get('feedback') or {}
-        line = (f'result {outcome} after {time.monotonic() - mission["t0"]:.1f} s'
-                + (f'; {note}' if note else '')
-                + (f'; ended {fb["dist_m"]:.2f} m from the goal' if 'dist_m' in fb else ''))
-        self.get_logger().info(f'{mission["do"]} {mission["id"]}: {line}')
+        if line is None:
+            line = (f'result {outcome} after {time.monotonic() - mission["t0"]:.1f} s'
+                    + (f'; {note}' if note else '')
+                    + (f'; ended {fb["dist_m"]:.2f} m from the goal' if 'dist_m' in fb else ''))
+            self.get_logger().info(f'{mission["do"]} {mission["id"]}: {line}')
         self.result_pub.publish(String(data=json.dumps({'id': mission['id'], 'do': mission['do'], 'outcome': outcome,
                                                         'note': note, 'line': line, 'feedback': fb})))
         if self.active is mission:
@@ -213,9 +270,17 @@ class Mission(Node):
 
     def _cancel(self, why):
         mission = self.active
-        if mission is None or mission.get('handle') is None:
-            if mission is not None:
-                self._finish(mission, 'CANCELED', why)
+        if mission is None:
+            return
+        if mission['run'] is not None:
+            if self.held is not None and self.held['mission'] is mission:
+                mission['run'].hold()
+                mission['phase'] = mission['run'].phase
+            else:
+                mission['run'].abandon(why)
+            return
+        if mission.get('handle') is None:
+            self._finish(mission, 'CANCELED', why)
             return
         mission['phase'] = 'cancelling'
         self.get_logger().warning(f'{mission["do"]} {mission["id"]}: cancelling Nav2 goal {mission["goal_uuid"]}: {why}')
@@ -230,11 +295,16 @@ class Mission(Node):
         if not permit:
             self.get_logger().warning('cannot resume: the safety gate still does not permit')
             return
-        left = remaining_route(mission['waypoints'], (mission.get('feedback') or {}).get('left'))
-        self.get_logger().warning(f'{mission["do"]} {mission["id"]}: resuming {why} after {time.monotonic() - self.held["since"]:.0f} s '
-                                  f'held, {len(left)} pose(s) to go')
+        held_s = time.monotonic() - self.held['since']
         self.held = None
         self.active = mission
+        if mission['run'] is not None:
+            self.say(mission, f'resuming {why} after {held_s:.0f} s held, {len(mission["run"].pending or [])} waypoint(s) to go')
+            mission['run'].resume()
+            return
+        left = remaining_route(mission['waypoints'], (mission.get('feedback') or {}).get('left'))
+        self.get_logger().warning(f'{mission["do"]} {mission["id"]}: resuming {why} after {held_s:.0f} s held, '
+                                  f'{len(left)} pose(s) to go')
         mission['feedback'] = {}
         self._send(mission, left)
 
@@ -245,7 +315,18 @@ class Mission(Node):
         mission = self.active
         gate = self.gate or {}
         permit = gate.get('permit', False)
-        if mission is not None and mission['phase'] == 'driving' and not permit:
+        run = mission['run'] if mission else None
+        if run is not None:
+            cmds, self.cmds = self.cmds, []
+            run.tick(now, self.lock, cmds)
+            if run.done:
+                self._finish(mission, run.outcome, '', line=run.line)
+                return
+            mission['phase'] = run.phase
+            mission['feedback'] = run.feedback()
+        driving = mission is not None and (mission['phase'] == 'driving' if run is None else run.phase in DRIVING) \
+            and self.held is None
+        if driving and not permit:
             why = '; '.join(gate.get('reasons') or [gate.get('state', 'not permitted')])
             self.held = {'since': now, 'why': why, 'mission': mission}
             self._cancel(f'the safety gate: {why}')
@@ -254,7 +335,8 @@ class Mission(Node):
             if resume_policy(held_s, float(self.get_parameter('resume_within_s').value)) == 'resume':
                 self._resume('on its own')
             # else: stays held, the status says "resume to continue"
-        if mission is not None and mission['phase'] in ('driving', 'sending') and now - mission['t0'] > mission['timeout_s']:
+        if mission is not None and run is None and mission['phase'] in ('driving', 'sending') \
+                and now - mission['t0'] > mission['timeout_s']:
             self._cancel(f'timeout after {mission["timeout_s"]:.0f} s')
             mission['timed_out'] = True
         if now - getattr(self, '_status_at', 0.0) > 0.5:

@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""A client of the mission controller (mission.py): send one command, print the status
-once a second and the result line, exit 0 on SUCCEEDED.
+"""A client of the mission controller (mission.py): send one command, print its story
+(/mission/log: what nav_route printed - a line a second, waypoints passed, detours,
+pictures) and the result line, exit 0 on SUCCEEDED.
 
     ros2 run jetnano_navigation mission_cmd goal X Y HEADING_DEG [TIMEOUT_S]
     ros2 run jetnano_navigation mission_cmd route X Y H  X Y H ...  [--timeout S]
@@ -23,6 +24,7 @@ once a second and the result line, exit 0 on SUCCEEDED.
 import json
 import sys
 import time
+import uuid
 
 import rclpy
 from rclpy.qos import DurabilityPolicy, QoSProfile
@@ -47,7 +49,10 @@ def main(argv=None):
             timeout = float(argv[4])
     elif do == 'route':
         nums = [float(v) for v in argv[1:]]
-        cmd = {'do': 'route', 'waypoints': [nums[i:i + 3] for i in range(0, len(nums) - 2, 3)]}
+        if not nums or len(nums) % 3:
+            print('a route is X Y HEADING_DEG triplets: ' + ' '.join(argv[1:]))
+            return 2
+        cmd = {'do': 'route', 'waypoints': [nums[i:i + 3] for i in range(0, len(nums), 3)]}
     elif do in ('cancel', 'resume', 'status'):
         cmd = {'do': do}
     else:
@@ -55,13 +60,28 @@ def main(argv=None):
         return 2
     if timeout is not None:
         cmd['timeout_s'] = timeout
+    mid = uuid.uuid4().hex[:8]
+    cmd['id'] = mid
 
     rclpy.init()
     n = rclpy.create_node('mission_cmd')
     latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
-    got = {'status': None, 'result': None, 'ids': set()}
+    got = {'status': None, 'result': None, 'logged_result': False}
     n.create_subscription(String, 'mission/status', lambda m: got.__setitem__('status', json.loads(m.data)), latched)
-    n.create_subscription(String, 'mission/result', lambda m: got.__setitem__('result', json.loads(m.data)), 10)
+
+    def on_result(m):
+        r = json.loads(m.data)
+        if r.get('id') == mid:
+            got['result'] = r
+
+    def on_log(m):
+        line = json.loads(m.data)
+        if line.get('id') == mid:
+            print(line['line'], flush=True)
+            got['logged_result'] = got['logged_result'] or line['line'].startswith('result ')
+
+    n.create_subscription(String, 'mission/result', on_result, 10)
+    n.create_subscription(String, 'mission/log', on_log, 50)
     pub = n.create_publisher(String, 'mission/command', 10)
     end = time.monotonic() + 5.0
     while pub.get_subscription_count() == 0 and time.monotonic() < end:
@@ -83,12 +103,12 @@ def main(argv=None):
     while rclpy.ok():
         rclpy.spin_once(n, timeout_sec=0.1)
         r = got['result']
-        if r is not None and r['id'] not in got['ids'] and time.monotonic() - t0 > 0.3:
-            got['ids'].add(r['id'])
-            print(r['line'], flush=True)
+        if r is not None:
+            if not got['logged_result']:
+                print(r['line'], flush=True)          # a route's result line came through the log already
             outcome = r['outcome']
             break
-        if time.monotonic() - last >= 1.0:
+        if do == 'goal' and time.monotonic() - last >= 1.0:
             last = time.monotonic()
             s = got['status'] or {}
             fb = s.get('feedback') or {}

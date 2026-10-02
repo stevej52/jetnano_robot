@@ -10,7 +10,8 @@
 #     drive.sh N --no-park ...         -> route only
 #     drive.sh N --force ...           -> drive on a NO-GO from predrive (you were warned)
 #
-# Steps: predrive.sh (GO/NO-GO), rail_check (the head), record on, nav_route, nav_park,
+# Steps: predrive (GO/NO-GO), rail_check (the head), record on, the route through the mission
+# controller (mission_cmd route), nav_park,
 # record off. Everything lands in ~/audit/<date>/driveN/ (console.log, route.log, park.log,
 # drive.json) and drive.json is copied into the bag, so H2-Host's analysis can pair the
 # bag with the run and the scorecard knows which drive it is scoring.
@@ -93,7 +94,9 @@ EOF
 ros2 param set /nav_helper out_dir "$D/pictures" > /dev/null 2>&1 || echo "   (nav_helper not running: no pictures on a stop)"
 echo "== route  $(date +%T)"
 # shellcheck disable=SC2086
-timeout 700 ros2 run jetnano_navigation nav_route $ROUTE --timeout 300 > "$D/route.log" 2>&1
+# the lap runs inside the mission controller (mission.py + route_run.py, 2026-10-02): the safety
+# gate can stop and resume it there; this client only prints its story into route.log
+timeout 700 ros2 run jetnano_navigation mission_cmd route $ROUTE --timeout 300 > "$D/route.log" 2>&1
 RC=$?
 grep -v "^\[WARN\]" "$D/route.log" | grep -E "^result|passed waypoint|stretches|moved|refus|clear|battery|timeout|nobody" | sed 's/^/   /'
 T1=$(date +%s)
