@@ -1,0 +1,128 @@
+<title>XIAO Relay Watchdog Wiring</title>
+<style>
+:root { --bg:#f7f6f2; --fg:#1d1d1b; --muted:#6b6a64; --card:#ffffff; --line:#d8d6cf; --green:#2e8b57; --red:#c8402f; --blue:#2b63c7; --black:#333; --amber:#d99a1e; --accent:#2e8b57 }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#15161a; --fg:#ececea; --muted:#a3a39c; --card:#1f2026; --line:#34353c; --green:#49b878; --red:#e3604f; --blue:#5b8de8; --black:#cfcfcf; --amber:#e8b64a; color-scheme: dark } }
+:root[data-theme="dark"] { --bg:#15161a; --fg:#ececea; --muted:#a3a39c; --card:#1f2026; --line:#34353c; --green:#49b878; --red:#e3604f; --blue:#5b8de8; --black:#cfcfcf; --amber:#e8b64a; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; padding-block: 24px; padding-inline: 16px; }
+main { max-width: 900px; margin: 0 auto; }
+h1 { font-size: 1.5rem; margin: 0 0 4px; text-wrap: balance } h2 { font-size: 1.1rem; margin: 28px 0 8px }
+.sub { color: var(--muted); margin: 0 0 18px }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums } th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top } th { color: var(--muted); font-weight: 600; font-size: .85rem; letter-spacing: .03em; text-transform: uppercase }
+.sw { display:inline-block; width:12px; height:12px; border-radius:3px; vertical-align:-1px; margin-right:6px }
+.warn { border-left: 4px solid var(--red); padding-left: 12px; margin: 14px 0 }
+ol li { margin: 6px 0 } code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .92em; background: color-mix(in srgb, var(--fg) 7%, transparent); padding: 1px 5px; border-radius: 4px }
+svg { width: 100%; height: auto; max-width: 100%; display: block }
+.svgwrap { overflow-x: auto; min-width: 0 }
+</style>
+<main>
+<h1>XIAO RP2040 relay watchdog: wiring</h1>
+<p class="sub">Four wires. The XIAO sits between Jetson header pin 7 and the relay's IN. Relay closes only while pin 7 toggles at 20 Hz; it opens 0.2 s after the toggling stops.</p>
+
+<div class="card svgwrap">
+<svg viewBox="0 0 860 470" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, sans-serif" font-size="13">
+  <!-- Jetson header stub -->
+  <rect x="20" y="40" width="150" height="190" rx="8" fill="var(--card)" stroke="var(--line)"/>
+  <text x="95" y="30" text-anchor="middle" fill="var(--fg)" font-weight="600">Jetson 40-pin header</text>
+  <text x="95" y="62" text-anchor="middle" fill="var(--muted)" font-size="11">odd row, top end</text>
+  <g>
+    <circle cx="60" cy="90" r="11" fill="var(--amber)"/><text x="60" y="94" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">1</text><text x="80" y="94" fill="var(--muted)" font-size="11">3.3 V (square)</text>
+    <circle cx="60" cy="122" r="11" fill="var(--blue)"/><text x="60" y="126" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">3</text><text x="80" y="126" fill="var(--muted)" font-size="11">SDA (servo board)</text>
+    <circle cx="60" cy="154" r="11" fill="var(--blue)"/><text x="60" y="158" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">5</text><text x="80" y="158" fill="var(--muted)" font-size="11">SCL (servo board)</text>
+    <circle cx="60" cy="186" r="12" fill="var(--green)"/><text x="60" y="190" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">7</text><text x="80" y="190" fill="var(--fg)" font-size="12" font-weight="700">heartbeat out</text>
+    <circle cx="60" cy="216" r="11" fill="var(--black)"/><text x="60" y="220" text-anchor="middle" fill="#fff" font-size="11" font-weight="700">9</text><text x="80" y="220" fill="var(--muted)" font-size="11">GND (jumper, soldered)</text>
+  </g>
+
+  <!-- XIAO -->
+  <rect x="330" y="50" width="200" height="260" rx="14" fill="var(--card)" stroke="var(--line)" stroke-width="1.5"/>
+  <text x="430" y="36" text-anchor="middle" fill="var(--fg)" font-weight="600">XIAO RP2040 (top view, USB-C up)</text>
+  <rect x="405" y="50" width="50" height="14" rx="4" fill="var(--line)"/>
+  <text x="430" y="92" text-anchor="middle" fill="var(--muted)" font-size="11">B (boot) · R (reset)</text>
+  <!-- left pins -->
+  <g font-size="12" fill="var(--fg)">
+    <circle cx="345" cy="120" r="9" fill="var(--green)"/><text x="360" y="124" font-weight="700">D0  ← heartbeat</text>
+    <circle cx="345" cy="150" r="9" fill="var(--green)"/><text x="360" y="154" font-weight="700">D1  → relay IN</text>
+    <circle cx="345" cy="180" r="9" fill="var(--line)"/><text x="360" y="184" fill="var(--muted)">D2</text>
+    <circle cx="345" cy="210" r="9" fill="var(--line)"/><text x="360" y="214" fill="var(--muted)">D3</text>
+    <circle cx="345" cy="240" r="9" fill="var(--line)"/><text x="360" y="244" fill="var(--muted)">D4</text>
+    <circle cx="345" cy="270" r="9" fill="var(--line)"/><text x="360" y="274" fill="var(--muted)">D5</text>
+    <circle cx="345" cy="300" r="9" fill="var(--line)"/><text x="360" y="304" fill="var(--muted)">D6</text>
+  </g>
+  <!-- right pins -->
+  <g font-size="12" fill="var(--fg)">
+    <circle cx="515" cy="120" r="9" fill="var(--red)"/><text x="500" y="124" text-anchor="end" font-weight="700">5V ← V+</text>
+    <circle cx="515" cy="150" r="9" fill="var(--black)"/><text x="500" y="154" text-anchor="end" font-weight="700">GND</text>
+    <circle cx="515" cy="180" r="9" fill="var(--line)"/><text x="500" y="184" text-anchor="end" fill="var(--muted)">3V3</text>
+    <circle cx="515" cy="210" r="9" fill="var(--line)"/><text x="500" y="214" text-anchor="end" fill="var(--muted)">D10</text>
+    <circle cx="515" cy="240" r="9" fill="var(--line)"/><text x="500" y="244" text-anchor="end" fill="var(--muted)">D9</text>
+    <circle cx="515" cy="270" r="9" fill="var(--line)"/><text x="500" y="274" text-anchor="end" fill="var(--muted)">D8</text>
+    <circle cx="515" cy="300" r="9" fill="var(--line)"/><text x="500" y="304" text-anchor="end" fill="var(--muted)">D7</text>
+  </g>
+
+  <!-- relay + servo board -->
+  <rect x="640" y="50" width="200" height="120" rx="8" fill="var(--card)" stroke="var(--line)"/>
+  <text x="740" y="36" text-anchor="middle" fill="var(--fg)" font-weight="600">Relay module</text>
+  <g font-size="12">
+    <circle cx="660" cy="80" r="9" fill="var(--green)"/><text x="676" y="84" fill="var(--fg)" font-weight="700">IN</text><text x="705" y="84" fill="var(--muted)" font-size="11">(was on pin 7)</text>
+    <circle cx="660" cy="110" r="9" fill="var(--red)"/><text x="676" y="114" fill="var(--fg)">DC+ ← V+</text>
+    <circle cx="660" cy="140" r="9" fill="var(--black)"/><text x="676" y="144" fill="var(--fg)">DC− ← GND</text>
+    <text x="760" y="114" fill="var(--muted)" font-size="11">COM→OE  NC→VCC</text>
+    <text x="760" y="130" fill="var(--muted)" font-size="11">NO→GND  jumper H</text>
+    <text x="760" y="150" fill="var(--muted)" font-size="11">(unchanged)</text>
+  </g>
+  <rect x="640" y="200" width="200" height="90" rx="8" fill="var(--card)" stroke="var(--line)"/>
+  <text x="740" y="190" text-anchor="middle" fill="var(--fg)" font-weight="600">PCA9685 servo board</text>
+  <g font-size="12">
+    <circle cx="660" cy="230" r="9" fill="var(--red)"/><text x="676" y="234" fill="var(--fg)">V+ (5.19 V from the BEC)</text>
+    <circle cx="660" cy="262" r="9" fill="var(--black)"/><text x="676" y="266" fill="var(--fg)">GND</text>
+  </g>
+
+  <!-- wires -->
+  <g fill="none" stroke-width="3" stroke-linecap="round">
+    <path d="M72 186 C 200 186, 220 120, 336 120" stroke="var(--green)"/>
+    <path d="M354 150 C 480 150, 560 80, 651 80" stroke="var(--green)" stroke-dasharray="7 5"/>
+    <path d="M524 120 C 600 120, 600 230, 651 230" stroke="var(--red)"/>
+    <path d="M524 150 C 610 150, 600 262, 651 262" stroke="var(--black)"/>
+  </g>
+  <text x="200" y="150" fill="var(--green)" font-size="11" font-weight="600">wire 1: pin 7 → D0</text>
+  <text x="560" y="62" fill="var(--green)" font-size="11" font-weight="600">wire 2: D1 → IN</text>
+  <text x="560" y="205" fill="var(--red)" font-size="11" font-weight="600">wire 3: 5V ← V+</text>
+  <text x="560" y="285" fill="var(--black)" font-size="11" font-weight="600">wire 4: GND ↔ GND</text>
+
+  <!-- optional resistor -->
+  <g>
+    <rect x="236" y="320" width="130" height="40" rx="6" fill="var(--card)" stroke="var(--line)" stroke-dasharray="4 3"/>
+    <text x="301" y="338" text-anchor="middle" fill="var(--muted)" font-size="11">optional 10 kΩ</text>
+    <text x="301" y="352" text-anchor="middle" fill="var(--muted)" font-size="11">D0 → GND (holds low at boot)</text>
+  </g>
+  <text x="20" y="400" fill="var(--fg)" font-size="12" font-weight="600">Order: program the XIAO over USB first, then wire it. Never have USB and the 5V wire connected at the same time.</text>
+  <text x="20" y="422" fill="var(--muted)" font-size="12">Green LED on the XIAO = relay closed = servos live. Relay drops 0.2 s after the heartbeat stops (frozen kernel, stuck node, dead executor).</text>
+  <text x="20" y="444" fill="var(--muted)" font-size="12">Pin 9 GND jumper stays as it is (it is the one that was loose on 2026-09-30 and got soldered).</text>
+</svg>
+</div>
+
+<h2>The four wires</h2>
+<div class="card">
+<table>
+<tr><th>From</th><th>To</th><th>Why</th></tr>
+<tr><td><span class="sw" style="background:var(--green)"></span>Jetson header <b>pin 7</b></td><td>XIAO <b>D0</b></td><td>the 20 Hz heartbeat from the servo node (3.3 V both sides)</td></tr>
+<tr><td><span class="sw" style="background:var(--green)"></span>XIAO <b>D1</b></td><td>relay <b>IN</b> (move it off pin 7)</td><td>the XIAO switches the relay from now on</td></tr>
+<tr><td><span class="sw" style="background:var(--red)"></span>XIAO <b>5V</b></td><td>PCA9685 <b>V+</b> (5.19 V, the relay's supply)</td><td>powers the XIAO</td></tr>
+<tr><td><span class="sw" style="background:var(--black)"></span>XIAO <b>GND</b></td><td>PCA9685 <b>GND</b></td><td>common ground with the Jetson and the relay</td></tr>
+<tr><td><span class="sw" style="background:var(--muted)"></span>10 kΩ (optional)</td><td>D0 to GND</td><td>holds the input low while the Jetson boots and pin 7 floats</td></tr>
+</table>
+</div>
+
+<div class="warn"><b>Do not</b> plug the XIAO's USB into a computer while its 5V pin is wired to V+. Its 5V pin is tied straight to USB power; the two supplies would fight. Pull the 5V wire first, every time you reprogram it.</div>
+
+<h2>Order of work</h2>
+<div class="card">
+<ol>
+<li><b>Program first, wire later.</b> Hold the XIAO's <b>B</b> button while plugging it into the laptop over USB-C. A drive <code>RPI-RP2</code> appears.</li>
+<li>Drag the CircuitPython <code>.uf2</code> for the XIAO RP2040 onto it (circuitpython.org/board/seeeduino_xiao_rp2040). It comes back as <code>CIRCUITPY</code>.</li>
+<li>Copy <code>firmware/relay_watchdog/code.py</code> from the repo onto <code>CIRCUITPY</code>, replacing the one there. Unplug it.</li>
+<li>Robot off. Move the relay's IN wire from pin 7 to XIAO <b>D1</b>. New wire pin 7 → <b>D0</b>. Then 5V and GND to the servo board.</li>
+<li>Tell me it is in. I turn on <code>output_enable_heartbeat_hz: 20.0</code> in pca9685.yaml and we run the four tests, wheels up: start-up click, stop from ROS, frozen node (relay drops in 0.2 s), XIAO unplugged (everything goes limp).</li>
+</ol>
+</div>
+</main>
