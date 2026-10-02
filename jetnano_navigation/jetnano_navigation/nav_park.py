@@ -119,6 +119,23 @@ def plan_approach(here, px, py, heading):
     return qx, qy, approach, delta
 
 
+AT_ARC_START_M = 0.35
+
+
+def at_arc_start(here, px, py, heading):
+    """Is she already standing at the start of an arc that ends at (px, py) facing `heading`?
+    The lap ends there since 2026-10-01 (drive.sh: its last waypoint is the arc start for a
+    lap coming down the hall), so the parking carries straight on instead of standing 15 s
+    while a nav_goal is planned to a point she is on. -> (yes, qx, qy, delta)."""
+    if here is None:
+        return False, px, py, 0.0
+    delta = wrap(heading - here[2])
+    if abs(delta) < ARC_MIN_RAD:
+        return False, px, py, 0.0
+    qx, qy = arc_start(px, py, here[2], delta)
+    return math.hypot(qx - here[0], qy - here[1]) <= AT_ARC_START_M, qx, qy, delta
+
+
 def reverse_steer(err_rad):
     """Steering while reversing, for the heading error `err_rad` (+ = she should turn left).
     Reversing, left-turn steering turns her right: the sign flips (see Shuffles.next_legs)."""
@@ -368,12 +385,17 @@ def main():
     try:
         straighten = Straighten(node, h, tol, LEG_MAX_OPEN_M)
         here = straighten.map_pose()
-        qx, qy, approach, delta = plan_approach(here, px, py, h)
-        if delta:
-            print(f'-- turning early: an arc of {math.degrees(delta):+.0f} deg from ({qx:+.2f}, {qy:+.2f}) '
-                  f'ends in front of the spot facing {h_deg:+.0f}', flush=True)
-        if not nav_goal(qx, qy, math.degrees(approach)):
-            raise SystemExit('could not reach the point in front of the spot')
+        there, qx, qy, delta = at_arc_start(here, px, py, h)
+        if there:
+            print(f'-- already at the start of an arc of {math.degrees(delta):+.0f} deg that ends in front of '
+                  f'the spot facing {h_deg:+.0f} ({math.hypot(qx - here[0], qy - here[1]) * 100:.0f} cm off it)', flush=True)
+        else:
+            qx, qy, approach, delta = plan_approach(here, px, py, h)
+            if delta:
+                print(f'-- turning early: an arc of {math.degrees(delta):+.0f} deg from ({qx:+.2f}, {qy:+.2f}) '
+                      f'ends in front of the spot facing {h_deg:+.0f}', flush=True)
+            if not nav_goal(qx, qy, math.degrees(approach)):
+                raise SystemExit('could not reach the point in front of the spot')
         print('-- turning to face the spot\'s heading', flush=True)
         if delta:
             straighten.arc()

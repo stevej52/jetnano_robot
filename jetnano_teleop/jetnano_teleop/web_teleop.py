@@ -233,6 +233,12 @@ def make_handler(node: 'WebTeleop'):
                 ok, why = node.dash.locate() if node.dash else (False, 'no dashboard')
                 self._json({'ok': ok, 'why': why},
                            HTTPStatus.OK if ok else HTTPStatus.SERVICE_UNAVAILABLE)
+            elif path == '/voice':
+                # the universal switch (voice_switch.py): load or unload ears/sounds/speak/listen
+                on = bool(body.get('on', True))
+                threading.Thread(target=node.voice_switch, args=(on,), daemon=True).start()
+                node.get_logger().info(f'voice stack {"LOAD" if on else "UNLOAD"} from the web page')
+                self._json({'ok': True, 'loading' if on else 'unloading': True})
             elif path == '/talk':
                 # TALK: out of every silence, Diane mode, a hello; QUIET: nothing plays; ROBOT: her own sounds, no English
                 mode = str(body.get('mode', 'talk' if body.get('on', True) else 'quiet'))
@@ -563,6 +569,20 @@ class WebTeleop(Node):
         self.get_logger().info(f'TALK hello {n % len(HELLOS) + 1} of {len(HELLOS)}: "{line}"')
         return line
 
+    def voice_loaded(self) -> bool:
+        """jetnano-voice.service active? (asked at most every 3 s)"""
+        now = self.monotonic()
+        if now - getattr(self, '_voice_at', 0.0) > 3.0:
+            from jetnano_bringup import voice_switch
+            self._voice = voice_switch.loaded()
+            self._voice_at = now
+        return getattr(self, '_voice', False)
+
+    def voice_switch(self, on: bool) -> None:
+        from jetnano_bringup import voice_switch
+        voice_switch.switch(on, quiet=True)
+        self._voice_at = 0.0
+
     def talk(self, mode: str) -> None:
         """The driving page's voice button (Steve, 2026-10-01): three modes in a cycle.
         talk:  quiet mode, "over and out" and robot-only off; Diane mode on (listen gives everyone her
@@ -591,8 +611,13 @@ class WebTeleop(Node):
             put(VOICE_OFF_FLAG, False)
             put(ROBOT_FLAG, False)
             put(DIANE_FLAG, True)
+            delay = 1.5
+            if not self.voice_loaded():                # TALK on an unloaded stack loads it: show-off mode
+                self.get_logger().info('TALK from the web page: loading the voice stack first')
+                threading.Thread(target=self.voice_switch, args=(True,), daemon=True).start()
+                delay = 18.0                           # speak needs ~15 s to be ready
             self.get_logger().info('TALK from the web page: quiet off, Diane mode on')
-            self.hello_timer = threading.Timer(1.5, lambda: os.path.exists(DIANE_FLAG) and not os.path.exists(QUIET_FLAG)
+            self.hello_timer = threading.Timer(delay, lambda: os.path.exists(DIANE_FLAG) and not os.path.exists(QUIET_FLAG)
                                                and self.speak_pub.publish(String(data=self.next_hello())))
             self.hello_timer.start()
         elif mode == 'robot':
@@ -626,6 +651,7 @@ class WebTeleop(Node):
                 'robot_only': os.path.exists(ROBOT_FLAG),
                 'voice_mode': ('quiet' if os.path.exists(QUIET_FLAG) else 'robot' if os.path.exists(ROBOT_FLAG)
                                else 'talk' if os.path.exists(DIANE_FLAG) else 'normal'),
+                'voice_loaded': self.voice_loaded(),
                 'linear': self.state.linear if live else 0.0,
                 'angular': self.state.angular if live else 0.0,
                 'drive': self.drive_status(),

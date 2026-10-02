@@ -72,6 +72,10 @@
   #guard.on { background: #1f8a3a; color: #fff; }
   #guard.off { background: #4a2a10; color: #ffb060; }
   #guard:disabled { opacity: 0.5; cursor: default; }
+  #voiceRow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 4px 0; }
+  #voiceRow small { color: #888; }
+  #voiceBtn { min-width: 6.5em; height: 40px; border: 0; border-radius: 20px; font-weight: 700; letter-spacing: 1px; }
+  #voiceBtn.on { background: #1f6fa8; color: #fff; }  #voiceBtn.off { background: #333; color: #aaa; }
   #talkRow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 4px 0; }
   #talkRow small { color: #888; }
   #talkBtns { display: flex; gap: 6px; }
@@ -119,6 +123,10 @@
     <button id="guard" disabled>&hellip;</button>
   </div>
 
+  <div id="voiceRow">
+    <span>voice stack <small id="voiceNote">ears, speaker, words</small></span>
+    <button id="voiceBtn" disabled>&hellip;</button>
+  </div>
   <div id="talkRow">
     <span>voice <small id="talkNote"></small></span>
     <span id="talkBtns">
@@ -349,6 +357,7 @@
     stopBtn.classList.toggle('go', eStop);
     stick.classList.toggle('off', eStop);
     showGuard(st.guard_enabled);
+    showVoice(st);
     showTalk(st);
     // the drive watchdog's line: who holds the wheel and what stops it, in words
     var d = st.drive || {};
@@ -389,6 +398,26 @@
   var NOTE = { talk: 'Diane mode: chatty, everyone is Diane', quiet: 'quiet mode: nothing plays',
                robot: 'robot only: beeps, no English', normal: 'normal: answers to her name' };
   var modeBtns = Array.prototype.slice.call(document.querySelectorAll('#talkBtns .mode'));
+  // The universal switch (Steve, 2026-10-01): the whole voice stack is unloaded while she is
+  // driven and tested; LOAD brings ears, speaker and words back (~15 s). TALK on an unloaded
+  // stack loads it too.
+  var voiceBtn = document.getElementById('voiceBtn');
+  var voiceNote = document.getElementById('voiceNote');
+  var voiceLoaded = null;
+  function showVoice(st) {
+    if (st.voice_loaded === undefined) { voiceBtn.textContent = 'n/a'; voiceBtn.className = ''; voiceBtn.disabled = true; return; }
+    voiceLoaded = !!st.voice_loaded;
+    voiceBtn.textContent = voiceLoaded ? 'UNLOAD' : 'LOAD';
+    voiceBtn.className = voiceLoaded ? 'on' : 'off';
+    voiceBtn.disabled = false;
+    voiceNote.textContent = voiceLoaded ? 'loaded: she hears and speaks' : 'UNLOADED: deaf and silent (tests)';
+  }
+  voiceBtn.addEventListener('click', function () {
+    if (voiceLoaded === null) return;
+    voiceBtn.disabled = true; voiceBtn.textContent = voiceLoaded ? 'unloading…' : 'loading…';
+    post('/voice', { on: !voiceLoaded }).then(function () { setTimeout(function () { voiceBtn.disabled = false; }, 4000); })
+      .catch(function () { noLink(); voiceBtn.disabled = false; });
+  });
   function showTalk(st) {
     if (st.voice_mode === undefined) {
       modeBtns.forEach(function (b) { b.disabled = true; b.className = 'mode'; });
@@ -399,9 +428,9 @@
     modeBtns.forEach(function (b) {
       var on = b.dataset.mode === voiceMode;
       b.className = 'mode ' + b.dataset.mode + (on ? ' on' : '');
-      b.disabled = on;
+      b.disabled = on || (st.voice_loaded === false && b.dataset.mode !== 'talk');   // unloaded: only TALK (it loads)
     });
-    talkNote.textContent = NOTE[voiceMode] || voiceMode;
+    talkNote.textContent = (st.voice_loaded === false ? 'unloaded - TALK loads it; ' : '') + (NOTE[voiceMode] || voiceMode);
   }
 
   modeBtns.forEach(function (b) {

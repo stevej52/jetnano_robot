@@ -122,6 +122,11 @@ def generate_launch_description():
         DeclareLaunchArgument('lead_s', default_value='0.08', description='silence before each spoken line (the old USB speaker needed 0.25)'),
         DeclareLaunchArgument('pause_s', default_value='0.2', description='silence between the lines of one reply'),
         DeclareLaunchArgument(
+            'use_voice', default_value='false',
+            description='her voice and hearing (voice.launch.py: ears, settle, sounds, speak, listen) in THIS '
+                        'launch. Off: jetnano-voice.service carries them, started on demand by `voice on` '
+                        '(Steve, 2026-10-01: unloaded while she is driven and tested)'),
+        DeclareLaunchArgument(
             'use_ears', default_value='true',
             description='the USB microphone as a sound-level sense (sound/level); "huh?" at a bang while parked'),
         DeclareLaunchArgument(
@@ -215,6 +220,11 @@ def generate_launch_description():
 
         _include('web_teleop.launch.py',
                  condition=IfCondition(LaunchConfiguration('use_web_teleop'))),
+        _include('voice.launch.py',
+                 condition=IfCondition(LaunchConfiguration('use_voice')),
+                 arguments={k: LaunchConfiguration(k) for k in (
+                     'use_sounds', 'use_ears', 'use_listen', 'listen_python', 'location', 'asr', 'mic_channel',
+                     'board_profile', 'trim_own', 'tts_url', 'tts_voice', 'lead_s', 'pause_s')}.items()),
 
         # Where am I on the saved map? (jetnano_navigation/where_am_i.py). The search
         # takes one core for ~6 s: behind everything else.
@@ -232,15 +242,6 @@ def generate_launch_description():
             condition=IfCondition(LaunchConfiguration('where_am_i')),
         ),
 
-        Node(
-            package='jetnano_bringup',
-            executable='sounds',
-            name='sounds',
-            output='screen',
-            respawn=True,
-            respawn_delay=10.0,
-            condition=IfCondition(LaunchConfiguration('use_sounds')),
-        ),
 
         # While she stands still, watch the lidar for something moving and
         # turn the pan-tilt camera to it (chirps even before the camera exists).
@@ -259,17 +260,6 @@ def generate_launch_description():
             condition=IfCondition(LaunchConfiguration('use_motion_watch')),
         ),
 
-        Node(
-            package='jetnano_bringup',
-            executable='ears',
-            name='ears',
-            output='screen',
-            respawn=True,
-            respawn_delay=10.0,
-            parameters=[{'channel': ParameterValue(LaunchConfiguration('mic_channel'), value_type=int),
-                         'board_profile': ParameterValue(LaunchConfiguration('board_profile'), value_type=str)}],
-            condition=IfCondition(LaunchConfiguration('use_ears')),
-        ),
 
         # The two CSI cameras for the iPad dashboard (web_teleop /dash): MJPEG on
         # :8082, each pipeline running only while someone watches.
@@ -316,37 +306,7 @@ def generate_launch_description():
             respawn_delay=10.0,
         ),
 
-        # Settles buzzing steering servos after a stop by ear: listens to the
-        # ears' audio for the servo chatter and wiggles the wheels through
-        # twist_mux until it stops (Steve, 2026-09-27).
-        Node(
-            package='jetnano_bringup',
-            executable='settle',
-            name='settle',
-            output='screen',
-            respawn=True,
-            respawn_delay=10.0,
-            condition=IfCondition(LaunchConfiguration('use_ears')),
-        ),
 
-        # Her English voice (text on /speak), for the sounds node's English
-        # mode and listen's English replies. Same venv as listen.
-        Node(
-            package='jetnano_bringup',
-            executable='speak',
-            name='speak',
-            output='screen',
-            respawn=True,
-            respawn_delay=10.0,
-            parameters=[{'tts_url': ParameterValue(LaunchConfiguration('tts_url'), value_type=str),
-                         'tts_voice': ParameterValue(LaunchConfiguration('tts_voice'), value_type=str),
-                         'lead_s': ParameterValue(LaunchConfiguration('lead_s'), value_type=float),
-                         'pause_s': ParameterValue(LaunchConfiguration('pause_s'), value_type=float)}],
-            prefix=[LaunchConfiguration('listen_python'), ' '],
-            condition=IfCondition(PythonExpression([
-                "'", LaunchConfiguration('use_listen'), "' == 'true' and __import__('os').path.exists('",
-                LaunchConfiguration('listen_python'), "')"])),
-        ),
 
         # The watchdog: a C++ tally of the streams (cheap), and the node that
         # decides what to restart when one goes silent.
@@ -399,22 +359,6 @@ def generate_launch_description():
                 LaunchConfiguration('listen_python'), "')"])),
         ),
 
-        # Words, from the ears' audio stream; needs the ears.
-        Node(
-            package='jetnano_bringup',
-            executable='listen',
-            name='listen',
-            output='screen',
-            respawn=True,
-            respawn_delay=10.0,
-            parameters=[{'location': LaunchConfiguration('location'), 'asr': LaunchConfiguration('asr'),
-                         'trim_own': ParameterValue(LaunchConfiguration('trim_own'), value_type=bool)}],
-            prefix=[LaunchConfiguration('listen_python'), ' '],
-            condition=IfCondition(PythonExpression([
-                "'", LaunchConfiguration('use_listen'), "' == 'true' and '",
-                LaunchConfiguration('use_ears'), "' == 'true' and __import__('os').path.exists('",
-                LaunchConfiguration('listen_python'), "')"])),
-        ),
 
         ]),
     ])

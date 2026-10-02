@@ -22,18 +22,21 @@ S="$HOME/ros2_ws/src/jetnano_robot/jetnano_bringup/scripts"
 
 N=$1; shift
 [ -n "$N" ] || { echo "usage: drive.sh N [--no-park] [--force] [X Y H ...]" >&2; exit 2; }
-PARK=1; FORCE=0
+PARK=1; FORCE=0; RAIL=0
 while [ "${1#--}" != "$1" ]; do
     case "$1" in
         --no-park) PARK=0 ;;
         --force)   FORCE=1 ;;
+        --rail)    RAIL=1 ;;
         *) echo "unknown option $1" >&2; exit 2 ;;
     esac
     shift
 done
 # the lap as driven 2026-09-30 (drives 11-14): down the hall, round the island, round the
 # table, back up the hall to (2.0, -2.0) pointing at the parking spot
-LAP="2.8 -3.5 -90  1.2 -4.4 180  -0.45 -5.6 -90  1.5 -7.3 0  4.5 -7.5 0  6.5 -7.7 20  7.05 -6.5 90  5.5 -5.5 180  3.2 -4.3 110  2.0 -2.0 135"
+# ... and ends at nav_park's arc start for a lap coming down the hall (0.85, -0.81, 134), so the
+# parking carries straight on: no 15 s stand at (2, -2) while nav_park starts and plans (drives 17/19)
+LAP="2.8 -3.5 -90  1.2 -4.4 180  -0.45 -5.6 -90  1.5 -7.3 0  4.5 -7.5 0  6.5 -7.7 20  7.05 -6.5 90  5.5 -5.5 180  3.2 -4.3 110  0.85 -0.81 134"
 ROUTE="${*:-$LAP}"
 
 D="$HOME/audit/$(date +%F)/drive$N"
@@ -43,6 +46,9 @@ echo "== drive $N  $(date '+%F %T')"
 echo "   route: $ROUTE"
 
 echo "== preflight  $(date +%T)"
+# tests are driven with her voice and hearing unloaded (Steve, 2026-10-01: the microphone's USB
+# audio stream panicked the kernel mid-lap). `voice on` brings them back.
+ros2 run jetnano_bringup voice off 2>/dev/null | sed 's/^/   /'
 # The ros2 CLI's daemon must know the graph before predrive asks it anything: cold, it
 # reported "no /vo" and "not localised" on streams that were fine (drive 15, 2026-10-01).
 ros2 daemon start > /dev/null 2>&1
@@ -62,8 +68,13 @@ echo "   predrive  $(date +%T)"
 if ! ros2 run jetnano_bringup predrive; then
     if [ "$FORCE" = 1 ]; then echo "   NO-GO overridden (--force)"; else echo "   NO-GO: not driving"; exit 1; fi
 fi
-echo "   rail check  $(date +%T)"
-ros2 run jetnano_bringup rail_check 2>/dev/null | tail -1 | sed 's/^/   /'
+# the rail check (a head-camera pan, 2 s) is OFF by default since 2026-10-01 21:00: it starts and
+# stops the head camera's pipeline, and that teardown is the known nvgpu kernel-panic trigger
+# (2026-09-28); drive 20's reset came 2 s after it. --rail turns it on.
+if [ "$RAIL" = 1 ]; then
+    echo "   rail check  $(date +%T)"
+    ros2 run jetnano_bringup rail_check 2>/dev/null | tail -1 | sed 's/^/   /'
+fi
 # she must start ON the spot: drive 16 (2026-10-01) began 1 m off it, nose against the couch,
 # and Nav2 could not move her at all
 START=$(python3 - <<'EOF'

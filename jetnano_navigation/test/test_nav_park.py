@@ -185,3 +185,19 @@ def test_the_reverse_aim_steers_back_to_the_line():
     assert steer < 0 and math.isclose(along, 1.0) and math.isclose(dist, math.hypot(1.0, 0.1))
     assert nav_park.reverse_aim(1.0, -0.1, 0.0, 0.0, 0.0, 0.0)[0] > 0
     assert nav_park.reverse_aim(1.0, 0.0, 0.0, 0.0, 0.0, 0.0)[0] == 0.0
+
+
+def test_the_lap_ends_at_the_arc_start():
+    # the lap's last waypoint (drive.sh): where a lap down the hall starts the parking arc
+    px, py, h = 1.2, 0.0, 0.0
+    qx, qy = nav_park.arc_start(px, py, math.radians(134), math.radians(-134))
+    assert math.hypot(qx - 0.85, qy + 0.81) < 0.12
+    there, _, _, delta = nav_park.at_arc_start((qx, qy, math.radians(134)), px, py, h)
+    assert there and abs(math.degrees(delta) + 134) < 1
+    # arriving 6 cm off and 22 deg crooked (drives 17 and 19) still counts
+    there, _, _, _ = nav_park.at_arc_start((qx + 0.05, qy - 0.03, math.radians(156)), px, py, h)
+    assert there
+    # from the hall (2, -2) it does not: nav_goal first, as before
+    there, _, _, _ = nav_park.at_arc_start((2.0, -2.0, math.radians(135)), px, py, h)
+    assert not there
+    assert nav_park.at_arc_start(None, px, py, h)[0] is False

@@ -206,7 +206,7 @@ class Meet(Node):
     def say(self, text: str) -> None:
         """Through /speak; wait for its listeners first (a fresh publisher's first message is lost
         until all three - speak, listen, the dashboard - have matched, 2026-10-01)."""
-        end = time.monotonic() + 5.0
+        end = time.monotonic() + 30.0                 # the voice stack may be loading (speak ~15 s)
         while self.speak_pub.get_subscription_count() < 3 and time.monotonic() < end:
             self.spin(0.1)
         self.spin(0.3)
@@ -215,7 +215,12 @@ class Meet(Node):
 
     @staticmethod
     def talk_mode() -> None:
-        """The web page's TALK button, in flags (web_teleop.talk('talk'))."""
+        """The web page's TALK button, in flags (web_teleop.talk('talk')); the voice stack loaded
+        first if it is switched off (voice_switch: ~15 s until speak and listen are up)."""
+        from jetnano_bringup import voice_switch
+        if not voice_switch.loaded():
+            print('-- loading her voice (jetnano-voice.service)', flush=True)
+            voice_switch.switch(True, quiet=True)
         os.makedirs(os.path.dirname(QUIET_FLAG), exist_ok=True)
         for flag in (QUIET_FLAG, VOICE_OFF_FLAG, ROBOT_FLAG):
             try:

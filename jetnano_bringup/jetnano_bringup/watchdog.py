@@ -148,6 +148,12 @@ TOPICS = {
     'map': ('map', '/map', 45.0, None, 'slam', None, []),       # report only: never restart mapping
 }
 
+# The voice stack (jetnano-voice.service, voice.launch.py) is off unless asked for: while
+# ~/voice/off exists (voice_switch.py) its streams and nodes are not watched at all.
+VOICE_OFF_FLAG = os.path.expanduser('~/voice/off')
+VOICE_STREAMS = ('mic', 'listening')
+VOICE_NODES = ('sounds', 'speak', 'listen', 'ears')
+
 # Nodes that respawn by themselves: reported if one stays away.
 NODES = ('pca9685', 'twist_mux', 'collision_guard', 'lifecycle_manager_guard', 'robot_state_publisher',
          'ekf_filter_node', 'rplidar', 'scan_filter', 'bno055', 'safety_monitor', 'web_teleop',
@@ -352,7 +358,11 @@ class Watchdog(Node):
             if not self._in_grace():
                 self._bad(self.node_items['topic_watch'], 'no summary from topic_watch', act=False)
             return
+        voice_off = os.path.exists(VOICE_OFF_FLAG)
         for key, item in self.items.items():
+            if voice_off and key in VOICE_STREAMS:
+                item.state, item.step, item.seen = 'ok', 0, False     # switched off on purpose: not a fault
+                continue
             label, topic, stale, min_hz, _need, depends, _ = TOPICS[key]
             need = item.need
             hz, age = self.topics.get(topic, (0.0, -1.0))
