@@ -55,6 +55,19 @@ import threading
 import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+
+class QuietHTTPServer(ThreadingHTTPServer):
+    """A browser dropping a connection (a phone's screen going off, a tab closed) is not an
+    error worth a traceback: 33 of them in one day's log (2026-10-01) looked like crashes."""
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        import sys
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (ConnectionResetError, BrokenPipeError, ConnectionAbortedError, TimeoutError)):
+            return
+        super().handle_error(request, client_address)
 from urllib.parse import parse_qs
 
 import rclpy
@@ -393,7 +406,7 @@ class CsiCameras(Node):
         port = int(self.get_parameter('port').value)
         # the pages and drive_log ask which cameras there are, and show / photograph only those
         config = {'d435_rotate': int(self.get_parameter('d435_rotate').value) % 360, 'cameras': list(cams)}
-        self.server = ThreadingHTTPServer(('0.0.0.0', port), make_handler(cams, config))
+        self.server = QuietHTTPServer(('0.0.0.0', port), make_handler(cams, config))
         self.server.daemon_threads = True
         threading.Thread(target=self.server.serve_forever, daemon=True, name='csi-http').start()
         self.get_logger().info(f'cameras on http://0.0.0.0:{port}/: {", ".join(cams)} (.mjpg / .jpg, on demand)')

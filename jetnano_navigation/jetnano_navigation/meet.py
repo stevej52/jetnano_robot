@@ -244,6 +244,11 @@ def main(argv=None):
     rclpy.init()
     node = Meet()
     try:
+        from jetnano_bringup import voice_switch
+        if not voice_switch.loaded():            # the people detector lives in the voice stack
+            print('-- loading her voice and eyes (jetnano-voice.service)', flush=True)
+            voice_switch.switch(True, quiet=True)
+            args.wait += 15.0
         q = node.person(args.wait)
         if q is None:
             print('nobody seen', flush=True)

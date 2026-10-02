@@ -53,6 +53,19 @@ import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+
+class QuietHTTPServer(ThreadingHTTPServer):
+    """A browser dropping a connection (a phone's screen going off, a tab closed) is not an
+    error worth a traceback: 33 of them in one day's log (2026-10-01) looked like crashes."""
+    daemon_threads = True
+
+    def handle_error(self, request, client_address):
+        import sys
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (ConnectionResetError, BrokenPipeError, ConnectionAbortedError, TimeoutError)):
+            return
+        super().handle_error(request, client_address)
+
 import time
 
 import rclpy
@@ -343,7 +356,10 @@ class WebTeleop(Node):
         self.create_subscription(Twist, 'cmd_vel', lambda m: self._wheel.update(out=self.monotonic(), out_lin=m.linear.x), 10)
         self.create_subscription(Twist, 'cmd_vel_mux', lambda m: self._wheel.update(mux=self.monotonic(), mux_lin=m.linear.x), 10)
         self.create_subscription(String, 'guard_flow/status', lambda m: setattr(self, '_guard_flow', (m.data, self.monotonic())), 10)
-        self.create_subscription(Odometry, 'odometry/filtered', self._on_odom, 10)
+        # raw bytes: the EKF's 100 Hz into a Python callback cost web_teleop 6 % of a core idle
+        # (benchmark 2026-10-01); only the drive watch's 0.5 s tick looks at the latest one
+        self._odom_raw = None
+        self.create_subscription(Odometry, 'odometry/filtered', self._on_odom, 10, raw=True)
         for name, topic in (('STOP (joystick)', 'e_stop_joy'), ('e-stop', 'e_stop'), ('motion check', 'e_stop_motion')):
             self.create_subscription(Bool, topic, lambda m, name=name: self._locks.__setitem__(name, self.monotonic() if m.data else 0.0), 10)
         self.create_timer(0.5, self._drive_watch)
@@ -378,7 +394,7 @@ class WebTeleop(Node):
             self.get_logger().error(f'no dashboard: {type(exc).__name__}: {exc}')
 
         port = int(self.get_parameter('port').value)
-        self.server = ThreadingHTTPServer(('0.0.0.0', port), make_handler(self))
+        self.server = QuietHTTPServer(('0.0.0.0', port), make_handler(self))
         self.server.daemon_threads = True
         threading.Thread(target=self.server.serve_forever, daemon=True,
                          name='web_teleop-http').start()
@@ -398,14 +414,17 @@ class WebTeleop(Node):
         else:
             self._guard = 'clear'
 
-    def _on_odom(self, msg) -> None:
-        v = msg.twist.twist.linear
-        self._speed = (v.x * v.x + v.y * v.y) ** 0.5
+    def _on_odom(self, raw) -> None:
+        self._odom_raw = raw
         self._speed_stamp = self.monotonic()
 
     def _drive_watch(self) -> None:
         """Told to move (the driver's /cmd_vel) but the odometry says still: a stall, said once."""
         now = self.monotonic()
+        if self._odom_raw is not None:
+            from rclpy.serialization import deserialize_message
+            v = deserialize_message(self._odom_raw, Odometry).twist.twist.linear
+            self._speed = (v.x * v.x + v.y * v.y) ** 0.5
         told = now - self._wheel['mux'] < 0.5 and abs(self._wheel['mux_lin']) > 0.05   # into the guard
         moving = now - self._speed_stamp < 1.0 and self._speed > 0.03
         if told and not moving:

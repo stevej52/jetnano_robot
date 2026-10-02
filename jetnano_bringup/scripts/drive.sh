@@ -59,14 +59,18 @@ for try in 1 2 3 4 5 6; do
 done
 echo "   ros2 graph: $NODES nodes known to the daemon  $(date +%T)"
 # Nav2 is not part of the robot service: start it (one instance, nav2_ctl.sh refuses a second)
-if "$S/nav2_ctl.sh" status 2>/dev/null | grep -qi "not running"; then
+if ! pgrep -f '^/opt/ros/jazzy/lib/rclcpp_components/component_container_isolated' > /dev/null; then
     echo "   Nav2 not running: starting it"
     "$S/nav2_ctl.sh" start 2>&1 | tail -2 | sed 's/^/   /'
 fi
 echo "   predrive  $(date +%T)"
+# the recorder's ~6 s of start-up overlap the checks; a NO-GO stops it again
+"$S/drive_record.sh" start > "$D/record_start.log" 2>&1 &
+REC=$!
 # jetnano_bringup/predrive.py: the same checks as predrive.sh in one process, seconds not a minute
 if ! ros2 run jetnano_bringup predrive; then
-    if [ "$FORCE" = 1 ]; then echo "   NO-GO overridden (--force)"; else echo "   NO-GO: not driving"; exit 1; fi
+    if [ "$FORCE" = 1 ]; then echo "   NO-GO overridden (--force)"; else
+        echo "   NO-GO: not driving"; wait $REC; "$S/drive_record.sh" stop > /dev/null 2>&1; exit 1; fi
 fi
 # the rail check (a head-camera pan, 2 s) is OFF by default since 2026-10-01 21:00: it starts and
 # stops the head camera's pipeline, and that teardown is the known nvgpu kernel-panic trigger
@@ -75,31 +79,8 @@ if [ "$RAIL" = 1 ]; then
     echo "   rail check  $(date +%T)"
     ros2 run jetnano_bringup rail_check 2>/dev/null | tail -1 | sed 's/^/   /'
 fi
-# she must start ON the spot: drive 16 (2026-10-01) began 1 m off it, nose against the couch,
-# and Nav2 could not move her at all
-START=$(python3 - <<'EOF'
-import math, rclpy, tf2_ros
-rclpy.init(); n = rclpy.create_node('start_check'); buf = tf2_ros.Buffer(); tf2_ros.TransformListener(buf, n)
-end = n.get_clock().now().nanoseconds + int(4e9)
-while n.get_clock().now().nanoseconds < end and not buf.can_transform('map', 'base_footprint', rclpy.time.Time()):
-    rclpy.spin_once(n, timeout_sec=0.1)
-try:
-    t = buf.lookup_transform('map', 'base_footprint', rclpy.time.Time()).transform
-    q = t.rotation; yaw = math.degrees(math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z)))
-    print(f'{t.translation.x:+.2f} {t.translation.y:+.2f} {yaw:+.0f} {math.hypot(t.translation.x, t.translation.y):.2f}')
-except Exception as exc:
-    print(f'? ? ? ? {exc}')
-rclpy.shutdown()
-EOF
-)
-set -- $START
-echo "   start: x $1 y $2 heading $3 deg, $4 m from the spot  $(date +%T)"
-if [ "$4" = "?" ] || awk "BEGIN{exit !($4 > 0.6)}"; then
-    if [ "$FORCE" = 1 ]; then echo "   not on the spot: driving anyway (--force)"; else echo "   NO-GO: not on the parking spot (drive her there first, facing the hall)"; exit 1; fi
-fi
-
 T0=$(date +%s)
-"$S/drive_record.sh" start
+wait $REC; cat "$D/record_start.log" | head -1
 BAG=$(cat "$HOME/bags/current" 2>/dev/null)
 python3 - "$D/drive.json" "$N" "$ROUTE" "$BAG" "$PARK" <<'EOF'
 import json, sys, time

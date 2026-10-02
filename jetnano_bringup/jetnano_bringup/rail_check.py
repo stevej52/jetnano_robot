@@ -98,7 +98,10 @@ def main(args=None):
     try:
         live = rail_live(node)
     finally:
-        node.destroy_node()
+        try:
+            node.destroy_node()
+        except (Exception, KeyboardInterrupt):  # noqa: BLE001 - the context is gone, or a second SIGINT, after an external shutdown
+            pass
         rclpy.shutdown()
     print('servo rail ' + ('LIVE' if live else 'DEAD' if live is False else 'UNKNOWN (no picture)'))
     return 0 if live else 1

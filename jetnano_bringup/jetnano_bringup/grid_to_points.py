@@ -237,7 +237,10 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
-        node.destroy_node()
+        try:
+            node.destroy_node()
+        except (Exception, KeyboardInterrupt):  # noqa: BLE001 - the context is gone, or a second SIGINT, after an external shutdown
+            pass
         if rclpy.ok():
             rclpy.shutdown()
 

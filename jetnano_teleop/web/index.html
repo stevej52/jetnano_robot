@@ -124,7 +124,7 @@
   </div>
 
   <div id="voiceRow">
-    <span>voice stack <small id="voiceNote">ears, speaker, words</small></span>
+    <span>voice stack <small id="voiceNote">ears, speaker, words, people</small></span>
     <button id="voiceBtn" disabled>&hellip;</button>
   </div>
   <div id="talkRow">
@@ -410,7 +410,7 @@
     voiceBtn.textContent = voiceLoaded ? 'UNLOAD' : 'LOAD';
     voiceBtn.className = voiceLoaded ? 'on' : 'off';
     voiceBtn.disabled = false;
-    voiceNote.textContent = voiceLoaded ? 'loaded: she hears and speaks' : 'UNLOADED: deaf and silent (tests)';
+    voiceNote.textContent = voiceLoaded ? 'loaded: she hears, speaks and sees people' : 'UNLOADED: deaf, silent, no people (tests)';
   }
   voiceBtn.addEventListener('click', function () {
     if (voiceLoaded === null) return;

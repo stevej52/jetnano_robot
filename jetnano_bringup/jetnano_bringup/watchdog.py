@@ -138,7 +138,10 @@ TOPICS = {
     'mic': ('microphone', '/sound/audio', 3.0, 5.0, 'seen', None, [
         ('signal', proc('jetnano_bringup/ears'), 12.0),
         ('signal', proc('jetnano_bringup/ears'), 30.0)]),
-    'listening': ('listening', '/speech/heartbeat', 8.0, None, 'seen', 'mic', [
+    # 20 s, not 8: twice on 2026-10-01 (20:08, 20:28 - the second with 92 MB of RAM free) a
+    # healthy listen missed a few 2 s beats and was restarted for it (24 s deaf, the model
+    # loaded again). A real hang still shows in 20 s.
+    'listening': ('listening', '/speech/heartbeat', 20.0, None, 'seen', 'mic', [
         ('signal', proc('jetnano_bringup/listen'), 15.0),
         ('signal', proc('jetnano_bringup/listen'), 30.0)]),
     'battery': ('battery monitor', '/battery', 5.0, None, 'seen', None, [
@@ -932,7 +935,10 @@ def main(args=None):
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
-        node.destroy_node()
+        try:
+            node.destroy_node()
+        except (Exception, KeyboardInterrupt):  # noqa: BLE001 - the context is gone, or a second SIGINT, after an external shutdown
+            pass
         if rclpy.ok():
             rclpy.shutdown()
 

@@ -31,6 +31,7 @@ whether a recording runs (a warning). Topics are given 4 s to show up.
 """
 
 import json
+import math
 import os
 import subprocess
 import sys
@@ -191,6 +192,17 @@ def main(args=None):
     o('ESC armed this boot') if any('ESC armed' in ln for ln in arm) else b('the motor driver never armed the ESC this boot')
     outs = [ln for ln in arm if 'outputs' in ln]
     o('servo outputs enabled') if outs and 'ENABLED' in outs[-1] else b('servo outputs are DISABLED')
+
+    # on the spot? (drive 16, 2026-10-01: started 1 m off it, nose to the couch, and could not move)
+    try:
+        tr = n.buf.lookup_transform('map', 'base_footprint', Time()).transform
+        qx = tr.rotation
+        yaw = math.degrees(math.atan2(2 * (qx.w * qx.z + qx.x * qx.y), 1 - 2 * (qx.y * qx.y + qx.z * qx.z)))
+        off = math.hypot(tr.translation.x, tr.translation.y)
+        line = f'start x {tr.translation.x:+.2f} y {tr.translation.y:+.2f} heading {yaw:+.0f} deg, {off:.2f} m from the spot'
+        o(line) if off <= 0.6 else b(line + ' - not on the parking spot (drive her there first, facing the hall)')
+    except Exception:  # noqa: BLE001
+        b('no map pose for the start check')
 
     bat = n.seen.get('battery')
     try:

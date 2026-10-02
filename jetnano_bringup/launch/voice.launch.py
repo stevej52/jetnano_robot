@@ -1,8 +1,9 @@
 # Copyright 2026 stevej52
 # Licensed under the Apache License, Version 2.0. See LICENSE.
 """Her voice and hearing, as a stack of its own: the microphone (ears), the servo-buzz settler
-(it listens through the ears), her sounds (the speaker), her English voice (speak) and the
-words (listen). OFF and unloaded unless asked for.
+(it listens through the ears), her sounds (the speaker), her English voice (speak), the
+words (listen) and, since it exists for meeting people, the people detector. OFF and
+unloaded unless asked for.
 
     ros2 launch jetnano_bringup voice.launch.py [mic_channel:=0 board_profile:=clean ...]
     ros2 run jetnano_bringup voice on|off|status      (jetnano-voice.service, see voice_switch.py)
@@ -26,6 +27,7 @@ def generate_launch_description():
     venv_ok = PythonExpression(["__import__('os').path.exists('", listen_python, "')"])
     return LaunchDescription([
         DeclareLaunchArgument('use_sounds', default_value='true', description='her beeps and sounds (the speaker)'),
+        DeclareLaunchArgument('use_people', default_value='true', description='the people detector (YOLOv8-pose on the GPU, 750 MB)'),
         DeclareLaunchArgument('use_ears', default_value='true', description='the reSpeaker microphone'),
         DeclareLaunchArgument('use_listen', default_value='true', description='words and replies (needs listen_python)'),
         DeclareLaunchArgument('listen_python', default_value='/home/jeston/venv-voice/bin/python3'),
@@ -38,6 +40,13 @@ def generate_launch_description():
         DeclareLaunchArgument('tts_voice', default_value='nicole'),
         DeclareLaunchArgument('lead_s', default_value='0.08'),
         DeclareLaunchArgument('pause_s', default_value='0.2'),
+
+        # Who is in front of her (people.py -> /people), for meet. Steve, 2026-10-01: "the people
+        # detector definitely should load only for meet, and if the voice and hearing are turned
+        # off then the people detector needs to be turned off as well."
+        Node(package='jetnano_bringup', executable='people', name='people', output='screen',
+             respawn=True, respawn_delay=15.0,
+             condition=IfCondition(LaunchConfiguration('use_people'))),
 
         Node(package='jetnano_bringup', executable='sounds', name='sounds', output='screen',
              respawn=True, respawn_delay=10.0,

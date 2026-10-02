@@ -246,7 +246,7 @@ class BatteryMonitor(Node):
             # read in place of the bus voltage) reset the average, said "flat" and locked
             # the motors on the floor. A jump only counts when three readings agree.
             self.get_logger().warning(f'INA219 reading {voltage:.2f} V ignored: {self._v_slow:.2f} V a moment ago '
-                                      '(a spike, or the wrong register on the bus)')
+                                      '(a garbled I2C read, not the rail: 44 of 47 on 2026-10-01 were exactly 7.37 V)', throttle_duration_sec=60.0)
             return
         if restart is not None:
             self._v_slow = restart                    # first reading, or a pack swapped
@@ -365,7 +365,10 @@ def main(args=None):
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
-        node.destroy_node()
+        try:
+            node.destroy_node()
+        except (Exception, KeyboardInterrupt):  # noqa: BLE001 - the context is gone, or a second SIGINT, after an external shutdown
+            pass
         if rclpy.ok():
             rclpy.shutdown()
 

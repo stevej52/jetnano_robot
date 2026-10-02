@@ -417,7 +417,10 @@ def main():
             straighten.plan.coast = coast
             straighten.run()
     finally:
-        node.destroy_node()
+        try:
+            node.destroy_node()
+        except (Exception, KeyboardInterrupt):  # noqa: BLE001 - the context is gone, or a second SIGINT, after an external shutdown
+            pass
         rclpy.shutdown()
     print('parked' if ok else 'the last leg did not succeed', flush=True)
 

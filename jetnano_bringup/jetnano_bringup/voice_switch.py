@@ -15,9 +15,9 @@
 """The universal off switch for her voice and hearing (Steve, 2026-10-01).
 
     ros2 run jetnano_bringup voice on        -> start jetnano-voice.service (ears, settle, sounds,
-                                                speak, listen: launch/voice.launch.py), ~15 s to words
+                                                speak, listen, people: launch/voice.launch.py), ~15 s to words
     ros2 run jetnano_bringup voice off       -> stop it: the microphone's USB audio stream, the
-                                                speaker and 1.4 GB of RAM go away; nothing listens
+                                                speaker, the people detector and 2.2 GB of RAM go away; nothing listens
     ros2 run jetnano_bringup voice status    -> "loaded" / "unloaded", and what is running
 
 Off is the default: the service is not enabled at boot, and drive.sh switches it off before a
@@ -27,13 +27,14 @@ the TALK / QUIET / ROBOT ONLY modes are separate (~/voice/quiet, diane, robot_on
 """
 
 import os
+import re
 import subprocess
 import sys
 import time
 
 SERVICE = 'jetnano-voice.service'
 OFF_FLAG = os.path.expanduser('~/voice/off')
-VOICE_NODES = ('ears', 'settle', 'sounds', 'speak', 'listen')
+VOICE_NODES = ('ears', 'settle', 'sounds', 'speak', 'listen', 'people')
 
 
 def loaded() -> bool:
@@ -41,9 +42,10 @@ def loaded() -> bool:
 
 
 def running() -> list:
-    out = subprocess.run(['pgrep', '-af', 'lib/jetnano_bringup/(ears|settle|sounds|speak|listen)( |$)'],
+    out = subprocess.run(['pgrep', '-af', 'lib/jetnano_bringup/(ears|settle|sounds|speak|listen|people)( |$)'],
                          capture_output=True, text=True).stdout
-    return sorted({ln.split('/')[-1].split(' ')[0] for ln in out.splitlines() if ln.strip()})
+    names = re.findall(r'lib/jetnano_bringup/(ears|settle|sounds|speak|listen|people)(?: |$)', out, re.M)
+    return sorted(set(names))
 
 
 def switch(on: bool, quiet: bool = False) -> bool:

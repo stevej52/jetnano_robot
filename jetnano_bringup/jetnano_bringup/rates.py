@@ -103,7 +103,10 @@ def main(args=None):
         for topic in a.topics:
             print(f'{topic}: {measure(node, topic, a.seconds)}')
     finally:
-        node.destroy_node()
+        try:
+            node.destroy_node()
+        except (Exception, KeyboardInterrupt):  # noqa: BLE001 - the context is gone, or a second SIGINT, after an external shutdown
+            pass
         if rclpy.ok():
             rclpy.shutdown()
 

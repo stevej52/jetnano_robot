@@ -161,9 +161,9 @@ def generate_launch_description():
             'use_csi_cameras', default_value='true',
             description='the two Pi cameras (pan-tilt front, rear) as MJPEG on port 8082, only while watched'),
         DeclareLaunchArgument(
-            'use_people', default_value='true',
-            description='the people detector (YOLOv8-pose on the GPU, D435 colour + depth -> /people): '
-                        'who is in view, how far, where their face is. ~430 MB, a few % CPU idle'),
+            'use_people', default_value='false',
+            description='the people detector in THIS launch (YOLOv8-pose on the GPU, 750 MB). Off: it lives '
+                        'in the voice stack (voice.launch.py) and loads with it, for meet (Steve, 2026-10-01)'),
         DeclareLaunchArgument(
             'use_rear_camera', default_value='true',
             description='false: the rear camera is not served at all (broken 2026-09-30) - the recorder '
@@ -223,7 +223,7 @@ def generate_launch_description():
         _include('voice.launch.py',
                  condition=IfCondition(LaunchConfiguration('use_voice')),
                  arguments={k: LaunchConfiguration(k) for k in (
-                     'use_sounds', 'use_ears', 'use_listen', 'listen_python', 'location', 'asr', 'mic_channel',
+                     'use_sounds', 'use_ears', 'use_listen', 'use_people', 'listen_python', 'location', 'asr', 'mic_channel',
                      'board_profile', 'trim_own', 'tts_url', 'tts_voice', 'lead_s', 'pause_s')}.items()),
 
         # Where am I on the saved map? (jetnano_navigation/where_am_i.py). The search

@@ -22,12 +22,21 @@ source "$HOME/ros2_ws/install/setup.bash"
 export ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-7}
 LAUNCH_RE='^/usr/bin/python3 /opt/ros/jazzy/bin/ros2 launch jetnano_navigation navigation.launch.py'
 CONTAINER_RE='^/opt/ros/jazzy/lib/rclcpp_components/component_container_isolated'
+# navigation.launch.py's own Python nodes: when the launch is SIGKILLed (stop, 2026-10-01 21:36)
+# they live on as orphans of init, and the next start doubles them - two nav_translators, two
+# battery_homes, two nav_helpers (the duplicates Steve found again on 2026-10-01 22:10).
+HELPER_RE='^/usr/bin/python3 /home/jeston/ros2_ws/install/jetnano_navigation/lib/jetnano_navigation/(nav_helper|battery_home|nav_translator)( |$)'
+helpers() { pgrep -f "$HELPER_RE"; }
+orphan_helpers() { for p in $(helpers); do [ "$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')" = "1" ] && echo "$p"; done; }
 
 launches()   { pgrep -f "$LAUNCH_RE"; }
 containers() { pgrep -f "$CONTAINER_RE"; }
 
 case "${1:-status}" in
     start)
+        O=$(orphan_helpers)
+        # shellcheck disable=SC2086
+        [ -n "$O" ] && { kill -INT $O 2>/dev/null; sleep 1; echo "orphaned nav helpers stopped: $(echo $O | wc -w)"; }
         shift
         if [ -n "$(launches)$(containers)" ]; then
             echo "Nav2 is already running (launch $(launches | tr '\n' ' ')container $(containers | tr '\n' ' ')); nav2_ctl.sh stop first"
@@ -58,7 +67,10 @@ case "${1:-status}" in
         C=$(containers); L=$(launches)
         # shellcheck disable=SC2086
         [ -n "$L$C" ] && { kill -KILL $L $C 2>/dev/null; sleep 1; echo "Nav2 needed SIGKILL"; }
-        [ -z "$(launches)$(containers)" ] && echo "Nav2 stopped" || { echo "Nav2 STILL running:"; ps -o pid,args -p $(launches) $(containers); exit 1; }
+        H=$(helpers)
+        # shellcheck disable=SC2086
+        [ -n "$H" ] && { kill -INT $H 2>/dev/null; sleep 1; H=$(helpers); [ -n "$H" ] && kill -KILL $H 2>/dev/null; }
+        [ -z "$(launches)$(containers)$(helpers)" ] && echo "Nav2 stopped" || { echo "Nav2 STILL running:"; ps -o pid,args -p $(launches) $(containers) $(helpers); exit 1; }
         ;;
     status)
         L=$(launches | wc -l); C=$(containers | wc -l)

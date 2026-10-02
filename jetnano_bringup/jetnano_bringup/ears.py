@@ -188,7 +188,10 @@ class Ears(Node):
                         t = x[:, self.talk_channel].astype(np.float32)
                         m = Float32()
                         m.data = 20.0 * math.log10(max(float(np.sqrt(np.mean(t * t))), 1.0) / 32767.0)
-                        self.talk_pub.publish(m)
+                        try:
+                            self.talk_pub.publish(m)
+                        except Exception:  # noqa: BLE001 - the node is being destroyed: this thread is done
+                            break
                     data = x[:, self.channel].tobytes()
                 self._chunk(data)
             err = proc.stderr.read().decode(errors='replace').strip() if proc.stderr else ''
@@ -282,7 +285,10 @@ def main(args=None):
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
-        node.destroy_node()
+        try:
+            node.destroy_node()
+        except (Exception, KeyboardInterrupt):  # noqa: BLE001 - the context is gone, or a second SIGINT, after an external shutdown
+            pass
         if rclpy.ok():
             rclpy.shutdown()
 
