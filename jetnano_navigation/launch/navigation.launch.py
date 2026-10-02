@@ -137,6 +137,19 @@ def generate_launch_description():
             parameters=[{'use_sim_time': ParameterValue(LaunchConfiguration('use_sim_time'), value_type=bool)}],
         ),
 
+        # The mission controller (mission.py): the one node that talks to Nav2 - goal / route /
+        # cancel / resume on /mission/command, status on /mission/status - and the one the
+        # safety gate talks to (architecture stage 2, 2026-10-02).
+        Node(
+            package='jetnano_navigation',
+            executable='mission',
+            name='mission',
+            output='screen',
+            respawn=True,
+            respawn_delay=2.0,
+            parameters=[{'use_sim_time': ParameterValue(LaunchConfiguration('use_sim_time'), value_type=bool)}],
+        ),
+
         # A low battery (battery/level "low", the countdown) cancels her goal and parks her
         # (Steve, 2026-09-30: "go home when the countdown plays").
         Node(

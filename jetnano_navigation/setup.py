@@ -35,6 +35,8 @@ setup(
             'meet = jetnano_navigation.meet:main',
             'nav_helper = jetnano_navigation.nav_helper:main',
             'battery_home = jetnano_navigation.battery_home:main',
+            'mission = jetnano_navigation.mission:main',
+            'mission_cmd = jetnano_navigation.mission_cmd:main',
         ],
     },
 )

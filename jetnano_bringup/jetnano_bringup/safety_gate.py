@@ -183,8 +183,13 @@ class SafetyGate(Node):
         changed = state != self.state or reasons != self.reasons
         if state != self.state:
             self.since = now
-            log = self.get_logger().warning if state in ('stopped', 'inhibited') else self.get_logger().info
-            log(f'safety gate: {self.state} -> {state}' + (': ' + '; '.join(reasons) if reasons else ''))
+            line = f'safety gate: {self.state} -> {state}' + (': ' + '; '.join(reasons) if reasons else '')
+            # two call sites on purpose: rclpy pins a severity to each source line
+            # ("Logger severity cannot be changed between calls" killed the process, 2026-10-02)
+            if state in ('stopped', 'inhibited'):
+                self.get_logger().warning(line)
+            else:
+                self.get_logger().info(line)
         if speed != self.speed:
             m = SpeedLimit()
             m.percentage = True
