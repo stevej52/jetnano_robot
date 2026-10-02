@@ -49,6 +49,7 @@ setup(
             'predrive = jetnano_bringup.predrive:main',
             'guard_flow = jetnano_bringup.guard_flow:main',
             'voice = jetnano_bringup.voice_switch:main',
+            'housekeeping = jetnano_bringup.housekeeping:main',
             'settle = jetnano_bringup.settle:main',
             'motion_check = jetnano_bringup.motion_check:main',
             'csi_cameras = jetnano_bringup.csi_cameras:main',

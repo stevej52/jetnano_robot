@@ -175,26 +175,9 @@ def generate_launch_description():
             )],
         ),
 
-        # The INA219 on the same I2C header (A0 bridged: 0x41). Without the
-        # board it logs once every 30 s and keeps trying; a pack under 6 V
-        # (the wall supply) is reported as absent and never stops anything.
-        GroupAction(
-            condition=IfCondition(LaunchConfiguration('use_battery')),
-            actions=[Node(
-                package='jetnano_bringup',
-                executable='battery_monitor',
-                name='battery_monitor',
-                output='screen',
-                respawn=True,
-                respawn_delay=10.0,
-                parameters=[{
-                    'i2c_bus': LaunchConfiguration('battery_i2c_bus'),
-                    'address': 0x41,
-                    'voltage_only': LaunchConfiguration('battery_voltage_only'),
-                    'simulate': LaunchConfiguration('battery_simulate'),
-                }],
-            )],
-        ),
+        # The INA219 battery monitor runs in robot.launch.py's housekeeping process since
+        # 2026-10-01 (config/housekeeping.yaml: bus 1, 0x41, the kernel's ina2xx driver). The
+        # use_battery / battery_* arguments stay declared for the scripts that pass them.
 
         # Four VL53L0X behind a TCA9548A, looking down at the corners. Its
         # driver lives in a venv (see cliff_guard.py), so the node runs under

@@ -48,6 +48,7 @@ the system without the board.
 import json
 import shlex
 import subprocess
+import os
 import time
 from collections import deque
 
@@ -147,6 +148,7 @@ class BatteryMonitor(Node):
         self.declare_parameter('rate', 2.0)
         self.declare_parameter('slow_s', 5.0)            # the thresholds judge this long an average
         self.declare_parameter('level_window_s', 60.0)   # judge_level: a minute of readings
+        self.declare_parameter('hwmon', 'ina219')     # the kernel driver's name; '' = smbus only
         self.declare_parameter('simulate', False)
 
         self.address = int(self.get_parameter('address').value)
@@ -186,7 +188,32 @@ class BatteryMonitor(Node):
             self._open()
         self.create_timer(1.0 / float(self.get_parameter('rate').value), self._tick)
 
+    def _hwmon(self):
+        """The kernel ina2xx driver's hwmon directory for this chip (parameter `hwmon`, the
+        driver's name, e.g. "ina219"), or None: then smbus. The kernel reads the bus without
+        colliding with its own INA3221 at 0x40; userspace smbus did, and came back with the
+        config register (7.37 V) 44 times on 2026-10-01."""
+        name = str(self.get_parameter('hwmon').value) if self.has_parameter('hwmon') else ''
+        if not name:
+            return None
+        import glob
+        for d in glob.glob('/sys/class/hwmon/hwmon*'):
+            try:
+                with open(f'{d}/name') as f:
+                    if f.read().strip() == name and os.path.exists(f'{d}/in1_input'):
+                        return d
+            except OSError:
+                continue
+        return None
+
     def _open(self) -> bool:
+        hw = self._hwmon()
+        if hw is not None:
+            self.hwmon_dir = hw
+            self.bus = 'hwmon'
+            self.get_logger().info(f'INA219 through the kernel driver ({hw})'
+                                   + (' (voltage only)' if self.voltage_only else f', shunt {self.shunt} ohm'))
+            return True
         if smbus is None:
             self.get_logger().error('python3-smbus is not installed')
             return False
@@ -213,6 +240,13 @@ class BatteryMonitor(Node):
 
     def _read(self):
         """(voltage V, current A) - current positive = discharging."""
+        if self.bus == 'hwmon':
+            with open(f'{self.hwmon_dir}/in1_input') as f:
+                voltage = int(f.read().strip()) / 1000.0
+            if self.voltage_only:
+                return voltage, float('nan')
+            with open(f'{self.hwmon_dir}/curr1_input') as f:
+                return voltage, int(f.read().strip()) / 1000.0
         raw_bus = swap16(self.bus.read_word_data(self.address, REG_BUS))
         voltage = (raw_bus >> 3) * 0.004
         if self.voltage_only:

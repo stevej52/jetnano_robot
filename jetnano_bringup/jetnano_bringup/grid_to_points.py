@@ -76,6 +76,8 @@ class GridToPoints(Node):
         # the grid on the house map, for the planner's camera_layer (nav2.yaml); '' = off
         self.declare_parameter('map_grid_topic', '/nvblox_node/map_grid')
         self.declare_parameter('map_topic', '/map')
+        self.declare_parameter('stale_s', 3.0)
+        self.stale_s = float(self.get_parameter('stale_s').value)
         self.declare_parameter('map_grid_hz', 2.0)
         # /map plus the camera's obstacles, for the planner (navigation.launch.py nvblox:=true)
         self.declare_parameter('planner_map_topic', '/planner_map')
@@ -152,6 +154,18 @@ class GridToPoints(Node):
 
         cloud = PointCloud2()
         cloud.header = grid.header
+        # nvblox keeps publishing its last grid, with its last stamp, when nothing new is
+        # integrated (2026-10-01 19:31: 73 s and counting). The guard refuses a stale source
+        # and then holds EVERY command, the lidar's included, for as long as it lasts. A grid
+        # older than stale_s goes out as an empty cloud stamped now: the camera's obstacles
+        # are gone until it moves again, the lidar still guards, and guard_flow says so.
+        age = (self.get_clock().now() - rclpy.time.Time.from_msg(grid.header.stamp)).nanoseconds * 1e-9
+        if age > self.stale_s:
+            points = points[:0]
+            cells = cells[:0]
+            cloud.header.stamp = self.get_clock().now().to_msg()
+            self.get_logger().warning(f'nvblox grid {age:.0f} s stale: camera obstacles off until it moves again',
+                                      throttle_duration_sec=30.0)
         cloud.height = 1
         cloud.width = len(cells)
         cloud.fields = [

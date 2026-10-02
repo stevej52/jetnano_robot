@@ -145,7 +145,7 @@ TOPICS = {
         ('signal', proc('jetnano_bringup/listen'), 15.0),
         ('signal', proc('jetnano_bringup/listen'), 30.0)]),
     'battery': ('battery monitor', '/battery', 5.0, None, 'seen', None, [
-        ('signal', proc('jetnano_bringup/battery_monitor'), 15.0)]),
+        ('signal', proc('jetnano_bringup/housekeeping'), 15.0)]),      # battery_monitor lives in housekeeping.py
     'cliff': ('cliff sensors', '/cliff/ranges', 3.0, None, 'seen', None, [
         ('signal', proc('jetnano_bringup/cliff_guard'), 15.0)]),
     'map': ('map', '/map', 45.0, None, 'slam', None, []),       # report only: never restart mapping

@@ -1,0 +1,33 @@
+# Parameters for the nodes that share the housekeeping process (housekeeping.py), a section
+# per node. They used to be inline in robot.launch.py / sensors.launch.py.
+
+motion_watch:
+  ros__parameters:
+    # the pan-tilt as measured 2026-09-26 (pca9685.yaml): both servos run backwards - a
+    # higher pan angle looks left (sign +1 for a left-positive bearing), a higher tilt angle
+    # looks down (sign -1)
+    pan_center_deg: 74.6
+    pan_limit_deg: 69.0
+    pan_sign: 1.0
+    tilt_center_deg: 90.0
+    tilt_limit_deg: 78.0
+    tilt_sign: -1.0
+
+guard_flow:
+  ros__parameters:
+    act: true
+    hold_s: 2.0
+    stale_s: 3.0
+
+battery_monitor:
+  ros__parameters:
+    # The INA219 on bus 1 (pins 27/28), A0 bridged: 0x41, the pack's voltage only (the
+    # shunt is not in the motor path). Read through the kernel's ina2xx driver (hwmon
+    # "ina219", bound at service start by jetnano-robot.service.d/ina219-hwmon.conf): a
+    # userspace smbus read shares the bus with the kernel's own INA3221 at 0x40 and came
+    # back garbled as exactly 7.37 V 44 times on 2026-10-01. smbus is the fallback.
+    i2c_bus: 1
+    address: 65
+    voltage_only: true
+    hwmon: "ina219"
+    simulate: false

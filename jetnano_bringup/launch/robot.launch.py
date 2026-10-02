@@ -243,23 +243,23 @@ def generate_launch_description():
         ),
 
 
-        # While she stands still, watch the lidar for something moving and
-        # turn the pan-tilt camera to it (chirps even before the camera exists).
+
+
+        # The small housekeeping nodes in one process (housekeeping.py): motion_watch (the
+        # head turns to what moves), guard_flow (the collision guard's in vs out) and
+        # battery_monitor (the INA219 through the kernel driver). Their parameters are in
+        # config/housekeeping.yaml, a section per node. Three processes were three
+        # executors and ~240 MB (benchmark 2026-10-01); Steve: "fewer nodes".
         Node(
             package='jetnano_bringup',
-            executable='motion_watch',
-            name='motion_watch',
+            executable='housekeeping',
+            # no name= here: a __node:= remap would rename ALL three nodes in the process
+            # (they came up as three "housekeeping"s, and their parameter sections did not apply)
             output='screen',
             respawn=True,
             respawn_delay=10.0,
-            # the pan-tilt as measured 2026-09-26 (pca9685.yaml): both servos run
-            # backwards - a higher pan angle looks left (so sign +1 for a left-
-            # positive bearing), a higher tilt angle looks down (sign -1)
-            parameters=[{'pan_center_deg': 74.6, 'pan_limit_deg': 69.0, 'pan_sign': 1.0,
-                         'tilt_center_deg': 90.0, 'tilt_limit_deg': 78.0, 'tilt_sign': -1.0}],
-            condition=IfCondition(LaunchConfiguration('use_motion_watch')),
+            parameters=[PathJoinSubstitution([FindPackageShare('jetnano_bringup'), 'config', 'housekeeping.yaml'])],
         ),
-
 
         # The two CSI cameras for the iPad dashboard (web_teleop /dash): MJPEG on
         # :8082, each pipeline running only while someone watches.
@@ -293,18 +293,6 @@ def generate_launch_description():
             condition=IfCondition(LaunchConfiguration('use_people')),
         ),
 
-        # Does the collision guard let commands through? Drive 16 (2026-10-01): its camera
-        # source's stamps froze, it swallowed every command for 12 minutes, nobody was told.
-        # guard_flow watches in vs out and the source's stamps, says uh-oh, tells the driving
-        # page (guard_flow/status) and restarts grid_to_points, then the container launch.
-        Node(
-            package='jetnano_bringup',
-            executable='guard_flow',
-            name='guard_flow',
-            output='screen',
-            respawn=True,
-            respawn_delay=10.0,
-        ),
 
 
 
