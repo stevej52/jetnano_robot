@@ -71,7 +71,8 @@ elif [ "$NL" -gt 1 ] || [ "$NC" -gt 1 ]; then bad "more than one Nav2 ($NL launc
 elif timeout 6 ros2 service call /lifecycle_manager_navigation/is_active std_srvs/srv/Trigger 2>/dev/null | grep -q "success=True"; then ok "one Nav2, active"
 else bad "Nav2 running but not active"; fi
 
-timeout 4 ros2 topic echo --once /vo >/dev/null 2>&1 && ok "visual odometry flowing" || bad "no /vo"
+VO=0; for try in 1 2 3; do timeout 5 ros2 topic echo --once /vo >/dev/null 2>&1 && { VO=1; break; }; done   # discovery can take over 4 s (drive 15, 2026-10-01: a false NO-GO)
+[ "$VO" = 1 ] && ok "visual odometry flowing" || bad "no /vo"
 
 M=$(timeout 5 ros2 param get /safety_monitor motion.enabled 2>/dev/null | grep -oE "True|False")
 [ "$M" = "True" ] && ok "motion check on" || bad "motion check is ${M:-unknown} (ros2 param set /safety_monitor motion.enabled true)"

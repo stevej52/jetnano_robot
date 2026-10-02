@@ -56,11 +56,11 @@ def test_a_short_or_open_route_is_fine():
 LAP = '2.8 -3.5 -90  1.2 -4.4 180  -0.45 -5.6 -90  1.5 -7.3 0  4.5 -7.5 0  6.5 -7.7 20  7.05 -6.5 90  5.5 -5.5 180  3.2 -4.3 110'
 
 
-def test_drive_12s_lap_is_two_stretches():
+def test_drive_12s_lap_is_two_stretches_cut_late():
     lap = nav_route.parse_route(LAP.split())
     st = nav_route.chunks(lap, (0.0, 0.0))
-    assert [len(c) for c in st] == [2, 8]                      # cut after the hall exit: the rest is clear of its end
-    assert st[0] == lap[:2] and st[1] == lap[1:]               # the second starts with the first's last
+    assert [len(c) for c in st] == [8, 2]                      # cut as late as possible: the island and the table in one go
+    assert st[0] == lap[:8] and st[1] == lap[7:]               # the second starts with the first's last
     assert nav_route.chunks(lap[:-1], (0.0, 0.0)) == [lap[:-1]]
 
 
@@ -68,7 +68,7 @@ def test_two_laps_are_two_stretches_and_a_figure_eight_is_one():
     lap = nav_route.parse_route('3 0 0  3 3 90  0 3 180  0 1.5 -90'.split())
     assert nav_route.chunks(lap, (0.0, 0.0)) == [lap]
     # lap 2 starts where lap 1 began and ends where lap 1 ended: cut at each, swapped on the move
-    assert [len(c) for c in nav_route.chunks(lap + lap, (0.0, 0.0))] == [2, 4, 4]
+    assert [len(c) for c in nav_route.chunks(lap + lap, (0.0, 0.0))] == [4, 4, 2]
     eight = nav_route.parse_route('2 1 45  3 2 0  2 3 135  1 2 180  2 1 -45  3 0 0  4 1 90'.split())
     assert len(nav_route.chunks(eight, (1.0, 0.0))) == 1
 
@@ -85,3 +85,19 @@ def test_pose_msg_carries_the_heading():
     assert (p.pose.position.x, p.pose.position.y) == (1.0, -2.0)
     assert math.isclose(p.pose.orientation.z, math.sin(math.radians(45)))
     assert math.isclose(p.pose.orientation.w, math.cos(math.radians(45)))
+
+
+def test_detour_is_the_long_way_round():
+    # drive 14 (2026-10-01): at (4.19, -7.48) with 5 waypoints to go, Nav2 planned 19.4 m round
+    # the far side of the table where 10.6 m was the way; drive 13 took 12.2 m for the same
+    remaining = [(6.5, -7.7, 0.0), (7.05, -6.5, 0.0), (5.5, -5.5, 0.0), (3.2, -4.3, 0.0), (2.0, -2.0, 0.0)]
+    straight = nav_route.remaining_straight((4.19, -7.48, 0.0), remaining)
+    assert 10.0 < straight < 11.5
+    assert nav_route.is_detour(19.4, straight)
+    assert not nav_route.is_detour(12.2, straight)
+    assert not nav_route.is_detour(float('nan'), straight)      # no feedback yet
+
+
+def test_remaining_straight_chains_the_waypoints():
+    assert nav_route.remaining_straight((0.0, 0.0, 0.0), [(3.0, 0.0, 0.0), (3.0, 4.0, 0.0)]) == 7.0
+    assert nav_route.remaining_straight((1.0, 1.0, 0.0), []) == 0.0

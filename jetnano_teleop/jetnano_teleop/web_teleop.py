@@ -58,6 +58,7 @@ import time
 import rclpy
 from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import Twist
+from nav_msgs.msg import Odometry
 from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
 from rcl_interfaces.srv import GetParameters, SetParameters
 from rclpy.executors import ExternalShutdownException
@@ -318,6 +319,29 @@ class WebTeleop(Node):
             self.create_subscription(
                 CollisionMonitorState, 'collision_guard/state', self._on_guard, 10)
 
+        # The drive watchdog (Steve, 2026-10-01, after drive 16 left her nose-to-couch and the
+        # page could not move her: "I want it to be clear when we're in this driving mode"):
+        # who holds the wheel (the page, the joystick, Nav2), which locks are on, what the
+        # guard blocks and in which direction, and whether a robot told to move is moving -
+        # in plain words on the page (status 'drive'), and an "uh-oh" when she is told to
+        # move and does not.
+        self._wheel = {'nav': 0.0, 'nav_lin': 0.0, 'teleop': 0.0, 'out': 0.0, 'out_lin': 0.0, 'mux': 0.0, 'mux_lin': 0.0}
+        self._guard_flow = ('ok', 0.0)      # guard_flow/status: why the guard holds everything, if it does
+        self._locks = {}            # lock name -> when it was last seen raised
+        self._speed = 0.0
+        self._speed_stamp = 0.0
+        self._stall_since = None
+        self._stall_said = 0.0
+        self.create_subscription(Twist, 'cmd_vel_nav', lambda m: self._wheel.update(nav=self.monotonic(), nav_lin=m.linear.x), 10)
+        self.create_subscription(Twist, 'cmd_vel_teleop', lambda m: self._wheel.update(teleop=self.monotonic()), 10)
+        self.create_subscription(Twist, 'cmd_vel', lambda m: self._wheel.update(out=self.monotonic(), out_lin=m.linear.x), 10)
+        self.create_subscription(Twist, 'cmd_vel_mux', lambda m: self._wheel.update(mux=self.monotonic(), mux_lin=m.linear.x), 10)
+        self.create_subscription(String, 'guard_flow/status', lambda m: setattr(self, '_guard_flow', (m.data, self.monotonic())), 10)
+        self.create_subscription(Odometry, 'odometry/filtered', self._on_odom, 10)
+        for name, topic in (('STOP (joystick)', 'e_stop_joy'), ('e-stop', 'e_stop'), ('motion check', 'e_stop_motion')):
+            self.create_subscription(Bool, topic, lambda m, name=name: self._locks.__setitem__(name, self.monotonic() if m.data else 0.0), 10)
+        self.create_timer(0.5, self._drive_watch)
+
         # The battery, from battery_monitor: shown in the page header.
         self._battery = None        # (voltage, percentage 0..100 or None, 'ok'|'low'|'flat')
         self._battery_stamp = 0.0
@@ -367,6 +391,57 @@ class WebTeleop(Node):
             self._guard = 'slowed'
         else:
             self._guard = 'clear'
+
+    def _on_odom(self, msg) -> None:
+        v = msg.twist.twist.linear
+        self._speed = (v.x * v.x + v.y * v.y) ** 0.5
+        self._speed_stamp = self.monotonic()
+
+    def _drive_watch(self) -> None:
+        """Told to move (the driver's /cmd_vel) but the odometry says still: a stall, said once."""
+        now = self.monotonic()
+        told = now - self._wheel['mux'] < 0.5 and abs(self._wheel['mux_lin']) > 0.05   # into the guard
+        moving = now - self._speed_stamp < 1.0 and self._speed > 0.03
+        if told and not moving:
+            if self._stall_since is None:
+                self._stall_since = now
+            elif now - self._stall_since > 1.5 and now - self._stall_said > 10.0:
+                self._stall_said = now
+                self.get_logger().warning(f'drive watchdog: told to move ({self._wheel["out_lin"]:+.2f}) for '
+                                          f'{now - self._stall_since:.1f} s, the odometry says {self._speed:.2f} m/s')
+                self.say_pub.publish(String(data='uhoh'))
+        else:
+            self._stall_since = None
+
+    def drive_status(self) -> dict:
+        """Who drives, what stops it, in words. Called with the state lock held."""
+        now = self.monotonic()
+        wheel = ('page' if self._driving else 'joystick' if now - self._wheel['teleop'] < 1.0
+                 else 'nav2' if now - self._wheel['nav'] < 1.0 else 'nobody')
+        locks = [n for n, t in self._locks.items() if now - t < 2.0]
+        if self.state.e_stop:
+            locks.insert(0, 'STOP (page)')
+        blocked = self._guard if (self._driving or wheel == 'nav2') else 'clear'
+        ahead = (self.state.linear if self._driving else self._wheel['nav_lin']) >= 0
+        stalled = self._stall_since is not None and now - self._stall_since > 1.5
+        flow, flow_at = self._guard_flow
+        holding = flow.startswith('holding') and now - flow_at < 3.0
+        if holding:
+            note = 'THE OBSTACLE GUARD IS HOLDING HER: ' + flow[len('holding: '):] + ' - being fixed, or switch the guard OFF'
+        elif locks:
+            note = 'LOCKED: ' + ', '.join(locks) + (' - press GO' if 'STOP (page)' in locks else '')
+        elif blocked == 'blocked':
+            note = 'BLOCKED ' + ('AHEAD - back up' if ahead else 'BEHIND - go forward') + ' (obstacle guard)'
+        elif stalled:
+            note = 'TOLD TO MOVE BUT NOT MOVING - stuck, or no servo power'
+        elif wheel == 'nav2':
+            note = 'NAV2 IS DRIVING (a lap or a goal) - your stick overrides it'
+        elif blocked == 'slowed':
+            note = 'slowed: obstacle near'
+        else:
+            note = ''
+        return {'wheel': wheel, 'locks': locks, 'guard': blocked, 'stalled': stalled,
+                'speed': round(self._speed, 2), 'note': note}
 
     def _on_battery(self, msg) -> None:
         if not msg.present:
@@ -506,20 +581,28 @@ class WebTeleop(Node):
                     os.remove(flag)
                 except FileNotFoundError:
                     pass
+        # the hello / boop a moment later - unless the mode has changed again by then (2026-10-01:
+        # three taps in half a second, and the hello played in QUIET mode)
+        t = getattr(self, 'hello_timer', None)
+        if t is not None:
+            t.cancel()
         if mode == 'talk':
             put(QUIET_FLAG, False)
             put(VOICE_OFF_FLAG, False)
             put(ROBOT_FLAG, False)
             put(DIANE_FLAG, True)
             self.get_logger().info('TALK from the web page: quiet off, Diane mode on')
-            threading.Timer(1.5, lambda: self.speak_pub.publish(String(data=self.next_hello()))).start()
+            self.hello_timer = threading.Timer(1.5, lambda: os.path.exists(DIANE_FLAG) and not os.path.exists(QUIET_FLAG)
+                                               and self.speak_pub.publish(String(data=self.next_hello())))
+            self.hello_timer.start()
         elif mode == 'robot':
             put(QUIET_FLAG, False)
             put(VOICE_OFF_FLAG, False)
             put(DIANE_FLAG, False)
             put(ROBOT_FLAG, True)
             self.get_logger().info('ROBOT ONLY from the web page: her own sounds, no English')
-            threading.Timer(1.2, lambda: self.say_pub.publish(String(data='boop'))).start()
+            self.hello_timer = threading.Timer(1.2, lambda: os.path.exists(ROBOT_FLAG) and self.say_pub.publish(String(data='boop')))
+            self.hello_timer.start()
         else:
             put(DIANE_FLAG, False)
             put(ROBOT_FLAG, False)
@@ -545,6 +628,7 @@ class WebTeleop(Node):
                                else 'talk' if os.path.exists(DIANE_FLAG) else 'normal'),
                 'linear': self.state.linear if live else 0.0,
                 'angular': self.state.angular if live else 0.0,
+                'drive': self.drive_status(),
             }
 
     # ---------------------------------------------------------------- loop --

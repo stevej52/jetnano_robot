@@ -156,6 +156,10 @@ def generate_launch_description():
             'use_csi_cameras', default_value='true',
             description='the two Pi cameras (pan-tilt front, rear) as MJPEG on port 8082, only while watched'),
         DeclareLaunchArgument(
+            'use_people', default_value='true',
+            description='the people detector (YOLOv8-pose on the GPU, D435 colour + depth -> /people): '
+                        'who is in view, how far, where their face is. ~430 MB, a few % CPU idle'),
+        DeclareLaunchArgument(
             'use_rear_camera', default_value='true',
             description='false: the rear camera is not served at all (broken 2026-09-30) - the recorder '
                         'and the stuck-help packet then skip it'),
@@ -283,6 +287,33 @@ def generate_launch_description():
                              "['front', 'rear'] if '", LaunchConfiguration('use_rear_camera'),
                              "' == 'true' else ['front']"]), value_type=List[str])}],
             condition=IfCondition(LaunchConfiguration('use_csi_cameras')),
+        ),
+
+        # Who is in front of her (Steve, 2026-10-01: "recognize a person, drive up to
+        # them, look at them and talk to them"): YOLOv8n-pose as a TensorRT engine on
+        # the D435's colour stream, ranged with its depth -> /people (JSON) for
+        # jetnano_navigation meet. 3 Hz with nobody in view, 8 Hz with someone.
+        Node(
+            package='jetnano_bringup',
+            executable='people',
+            name='people',
+            output='screen',
+            respawn=True,
+            respawn_delay=15.0,
+            condition=IfCondition(LaunchConfiguration('use_people')),
+        ),
+
+        # Does the collision guard let commands through? Drive 16 (2026-10-01): its camera
+        # source's stamps froze, it swallowed every command for 12 minutes, nobody was told.
+        # guard_flow watches in vs out and the source's stamps, says uh-oh, tells the driving
+        # page (guard_flow/status) and restarts grid_to_points, then the container launch.
+        Node(
+            package='jetnano_bringup',
+            executable='guard_flow',
+            name='guard_flow',
+            output='screen',
+            respawn=True,
+            respawn_delay=10.0,
         ),
 
         # Settles buzzing steering servos after a stop by ear: listens to the

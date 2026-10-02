@@ -113,21 +113,45 @@ def route_is_closed(route):
 def chunks(route, start=None):
     """Cut the route into stretches none of which ends on itself (route_is_closed), each
     starting with the one before's last waypoint so she still goes there. Only a stretch's
-    END matters - crossing your own path or a figure-eight is one stretch - so this works
-    back from the route's end: a stretch reaches back as far as its last waypoint stays clear
-    of it. `start` (x, y) is where she is: the leg from there to the first waypoint counts."""
+    END matters - crossing your own path or a figure-eight is one stretch. Cut as LATE as
+    possible: the first stretch reaches as far as its last waypoint stays clear of its own
+    earlier legs, and so on. (Until 2026-10-01 evening this worked back from the end, which
+    made the FIRST stretch the short one and put the handover - a stop of ~9 s while Nav2
+    plans the next stretch from scratch - at the island on every lap.) `start` (x, y) is
+    where she is: the leg from there to the first waypoint counts for the first stretch."""
     head = [(start[0], start[1], 0.0)] if start is not None else []
     out = []
-    end = len(route)
-    while end > 0:
-        begin = 0
-        while begin < end - 1 and route_is_closed((head if begin == 0 else []) + route[begin:end]):
-            begin += 1
-        out.insert(0, route[begin:end])
-        if begin == 0:
+    begin = 0
+    while begin < len(route):
+        end = len(route)
+        while end - begin > 1 and route_is_closed((head if begin == 0 else []) + route[begin:end]):
+            end -= 1
+        out.append(route[begin:end])
+        if end == len(route):
             break
-        end = begin + 1 if end - begin > 1 else begin     # the earlier stretch ends where this one starts
+        begin = end - 1                   # the next stretch starts where this one ends
     return out
+
+
+DETOUR_FACTOR, DETOUR_PLUS_M, DETOUR_TRIES, DETOUR_WAIT_S = 1.4, 2.0, 6, 5.0   # ~30 s for a person to step aside
+
+
+def remaining_straight(pose, remaining):
+    """Metres from `pose` through the remaining waypoints as the crow flies."""
+    x, y = pose[0], pose[1]
+    d = 0.0
+    for wx, wy, _ in remaining:
+        d += math.hypot(wx - x, wy - y)
+        x, y = wx, wy
+    return d
+
+
+def is_detour(path_m, straight_m):
+    """Nav2's path is the long way round (drive 14, 2026-10-01: a transient block on the south
+    side of the table, and the Through planner sent her 19 m round the north side for an 11 m
+    stretch, into a chair leg at the far corner). A Reeds-Shepp path runs ~1.15x the straight
+    line; 1.4x plus 2 m is a detour."""
+    return path_m == path_m and path_m > DETOUR_FACTOR * straight_m + DETOUR_PLUS_M
 
 
 def pose_msg(x, y, h, stamp=None):
@@ -286,7 +310,7 @@ def main():
         goal = NavigateThroughPoses.Goal()
         stamp = n.get_clock().now().to_msg()
         goal.poses = [pose_msg(x, y, h, stamp) for x, y, h in stretch]
-        fb['left'], fb['goal'] = len(stretch), None
+        fb['left'], fb['goal'], fb['dist'] = len(stretch), None, float('nan')   # no stale distance (drive 15)
         send = client.send_goal_async(goal, feedback_callback=on_feedback)
         while not send.done():
             rclpy.spin_once(n, timeout_sec=0.1)
@@ -302,34 +326,117 @@ def main():
     said = 0
     locked_during = False
     status = GoalStatus.STATUS_ABORTED
+    def cancel_goal(handle):
+        cancel = handle.cancel_goal_async()
+        while not cancel.done():
+            rclpy.spin_once(n, timeout_sec=0.1)
+
+    def clear_costmaps():
+        from nav2_msgs.srv import ClearEntireCostmap
+        for name in ('/global_costmap/clear_entirely_global_costmap', '/local_costmap/clear_entirely_local_costmap'):
+            cli = n.create_client(ClearEntireCostmap, name)
+            if cli.wait_for_service(timeout_sec=2.0):
+                fut = cli.call_async(ClearEntireCostmap.Request())
+                rclpy.spin_until_future_complete(n, fut, timeout_sec=3.0)
+            n.destroy_client(cli)
+
+    # pictures whenever she stops or is sent round (Steve, 2026-10-01: "maybe a cat, they are all
+    # running around - if it ever stops or diverts or detours then take some pics"): nav_helper's
+    # ~/snapshot (the house map round her, a close-up, the camera sweep) into its out_dir/<time>/,
+    # asked for without waiting so the loop keeps watching her; at most one per stop, 6 per route
+    from std_srvs.srv import Trigger
+    snap_cli = n.create_client(Trigger, '/nav_helper/snapshot')
+    snaps = {'pending': None, 'why': '', 'n': 0}
+
+    def snap(why):
+        if snaps['pending'] is not None or snaps['n'] >= 6:
+            return
+        if not snap_cli.service_is_ready():
+            print(f'   (no nav_helper for pictures: {why})', flush=True)
+            snaps['n'] = 99
+            return
+        snaps['pending'], snaps['why'] = snap_cli.call_async(Trigger.Request()), why
+        snaps['n'] += 1
+
+    def snap_poll():
+        f = snaps['pending']
+        if f is not None and f.done():
+            snaps['pending'] = None
+            try:
+                r = f.result()
+                d = json.loads(r.message).get('dir', '?') if r.message else '?'
+                print(f'   pictures ({snaps["why"]}): {d}' + ('' if r.success else ' - none taken'), flush=True)
+            except Exception as exc:  # noqa: BLE001
+                print(f'   pictures ({snaps["why"]}): failed ({str(exc)[:60]})', flush=True)
+
+    still = {'pose': None, 'since': None, 'snapped': False}
     select_planner('Through')
+    detours = 0
     for k, stretch in enumerate(stretches):
-        handle, res = send_stretch(stretch)
-        handed_over = False
-        while not res.done():
-            rclpy.spin_once(n, timeout_sec=0.05)
-            locked_during = locked_during or bool(st['lock'])
-            while said < len(passed):
-                num, s_ = passed[said]
-                said += 1
-                print(f'{s_:5.1f} s  passed waypoint {num}', flush=True)
-            if fb['left'] <= 1 and k + 1 < len(stretches):
-                handed_over = True           # only this stretch's last is left: the next one starts with it
-                break
-            if time.time() - last >= 1.0:
-                last = time.time()
-                p = fb['pose'] or start
-                c = st['cmd'][-1] if st['cmd'] else (0.0, 0.0)
-                print(f'{time.time() - t0:5.1f} s  at x {p[0]:+.2f} y {p[1]:+.2f} h {math.degrees(p[2]):+4.0f}  '
-                      f'{len(route) - len(passed)} to go, '
-                      f'{fb["dist"]:.2f} m  driver: throttle {c[0]:+.2f} steer {c[1]:+.2f}'
-                      + ('  MOTION LOCK' if st['lock'] else ''), flush=True)
-            if time.time() - t0 > timeout:
-                print('timeout: cancelling the route', flush=True)
-                cancel = handle.cancel_goal_async()
-                while not cancel.done():
+        while True:                      # once, or again after a detour with the waypoints still to go
+            handle, res = send_stretch(stretch)
+            handed_over = detour = False
+            while not res.done():
+                rclpy.spin_once(n, timeout_sec=0.05)
+                locked_during = locked_during or bool(st['lock'])
+                while said < len(passed):
+                    num, s_ = passed[said]
+                    said += 1
+                    print(f'{s_:5.1f} s  passed waypoint {num}', flush=True)
+                if fb['left'] <= 1 and k + 1 < len(stretches):
+                    handed_over = True       # only this stretch's last is left: the next one starts with it
+                    break
+                if time.time() - last >= 1.0:
+                    last = time.time()
+                    p = fb['pose'] or start
+                    c = st['cmd'][-1] if st['cmd'] else (0.0, 0.0)
+                    print(f'{time.time() - t0:5.1f} s  at x {p[0]:+.2f} y {p[1]:+.2f} h {math.degrees(p[2]):+4.0f}  '
+                          f'{len(route) - len(passed)} to go, '
+                          f'{fb["dist"]:.2f} m  driver: throttle {c[0]:+.2f} steer {c[1]:+.2f}'
+                          + ('  MOTION LOCK' if st['lock'] else ''), flush=True)
+                    snap_poll()
+                    # standing still 3 s with the route live (not the motion lock's doing): pictures
+                    if fb['pose']:
+                        moved = still['pose'] is None or math.hypot(p[0] - still['pose'][0], p[1] - still['pose'][1]) > 0.05
+                        if moved:
+                            still.update(pose=p, since=time.time(), snapped=False)
+                        elif not still['snapped'] and not st['lock'] and time.time() - still['since'] >= 3.0:
+                            still['snapped'] = True
+                            print(f'{time.time() - t0:5.1f} s  stopped {time.time() - still["since"]:.0f} s at '
+                                  f'({p[0]:+.2f}, {p[1]:+.2f}): taking pictures', flush=True)
+                            snap(f'stopped at {p[0]:+.2f}, {p[1]:+.2f}')
+                    remaining = stretch[len(stretch) - fb['left']:] if 0 < fb['left'] <= len(stretch) else []
+                    if fb['pose'] and remaining and is_detour(fb['dist'], remaining_straight(fb['pose'], remaining)):
+                        straight = remaining_straight(fb['pose'], remaining)
+                        detours += 1
+                        print(f'{time.time() - t0:5.1f} s  DETOUR: Nav2 plans {fb["dist"]:.1f} m where the way is '
+                              f'{straight:.1f} m - cancelling (try {detours} of {DETOUR_TRIES})', flush=True)
+                        if detours == 1:
+                            snap(f'detour at {fb["pose"][0]:+.2f}, {fb["pose"][1]:+.2f}')
+                        cancel_goal(handle)
+                        detour = True
+                        break
+                if time.time() - t0 > timeout:
+                    print('timeout: cancelling the route', flush=True)
+                    cancel_goal(handle)
+                    break
+            if detour:
+                if detours >= DETOUR_TRIES:
+                    print('the way stays blocked: giving up', flush=True)
+                    status = GoalStatus.STATUS_ABORTED
+                    break
+                if detours == 3:
+                    print('   clearing the costmaps', flush=True)
+                    clear_costmaps()
+                end = time.time() + DETOUR_WAIT_S   # time for the block to pass or the costmap to settle
+                while time.time() < end:
                     rclpy.spin_once(n, timeout_sec=0.1)
-                break
+                done_before += len(stretch) - len(remaining)
+                stretch = remaining          # the same stretch, the waypoints still to go
+                continue
+            break
+        if detour:
+            break
         if handed_over:
             done_before += len(stretch) - 1
             continue

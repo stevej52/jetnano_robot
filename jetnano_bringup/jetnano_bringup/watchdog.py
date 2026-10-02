@@ -159,7 +159,12 @@ NODE_LABELS = {'pca9685': 'motor driver', 'twist_mux': 'command mixer', 'collisi
                'safety_monitor': 'safety monitor', 'lidar_odom_relay': 'lidar odometry relay'}
 
 HTTP = {
-    'web page': ('http://127.0.0.1:8081/status', [('signal', proc('jetnano_teleop/web_teleop'), 12.0)]),
+    # 2026-10-01 19:40: web_teleop died while its install was being rebuilt, the launch's own
+    # respawn gave up ("No such file"), the watchdog found nothing to signal and gave up too -
+    # the driving page was dead until the whole service was restarted. Hence the second step:
+    # launch the node again ourselves.
+    'web page': ('http://127.0.0.1:8081/status', [('signal', proc('jetnano_teleop/web_teleop'), 12.0),
+                                                   ('launch', 'web_teleop.launch.py', 30.0)]),
     # the browsers' video (all three cameras) since 2026-09-27; NVIDIA's web_video_server on
     # 8080 is no longer on their path (it hung under load and ignored SIGINT)
     'video': ('http://127.0.0.1:8082/', [('signal', proc('jetnano_bringup/csi_cameras'), 15.0),
@@ -268,6 +273,7 @@ class Watchdog(Node):
         self.sys = {}
         self.english = False
         self.container_busy_until = 0.0  # one container action at a time
+        self._relaunched = {}            # launch file name -> Popen, the 'launch' action's children
         self.stuck_sound = set()         # sound processes asleep in the kernel at the last check
         self.slam_active = False
         self.slam_since = 0.0
@@ -689,6 +695,7 @@ class Watchdog(Node):
     @staticmethod
     def _describe(action: str, arg) -> str:
         return {'signal': f'restart {str(arg).split("/")[-1].split("(")[0]}',
+                'launch': f'launch {arg} again',
                 'usb_reset': f'reset USB device {arg}',
                 'container_launch': 'restart the container launch',
                 'docker_restart': 'restart the container',
@@ -704,6 +711,8 @@ class Watchdog(Node):
         try:
             if action == 'signal':
                 self._restart_process(arg)
+            elif action == 'launch':
+                self._relaunch(arg)
             elif action == 'usb_reset':
                 self._usb_reset(arg)
             elif action == 'container_launch':
@@ -790,6 +799,23 @@ class Watchdog(Node):
                 return f.read().rsplit(')', 1)[1].split()[0]
         except (OSError, IndexError):
             return ''
+
+    def _relaunch(self, name: str) -> None:
+        """`ros2 launch jetnano_bringup <name>` as our own child when the robot launch's respawn
+        has given the node up (web_teleop, 2026-10-01). In the service's cgroup, so a service
+        stop takes it with everything else; its output goes to ~/watchdog/relaunch-<name>.log."""
+        child = self._relaunched.get(name)
+        if child is not None and child.poll() is None:
+            self.get_logger().info(f'{name}: already launched again by me (pid {child.pid})')
+            return
+        log = os.path.expanduser(f'~/watchdog/relaunch-{name}.log')
+        os.makedirs(os.path.dirname(log), exist_ok=True)
+        stamp = time.strftime('%Y-%m-%d %H:%M:%S')
+        with open(log, 'ab') as f:
+            f.write(f'== {stamp} ros2 launch jetnano_bringup {name}'.encode() + b'\n')
+            self._relaunched[name] = subprocess.Popen(['ros2', 'launch', 'jetnano_bringup', name],
+                                                      stdout=f, stderr=subprocess.STDOUT)
+        self.get_logger().warning(f'{name}: launched again (pid {self._relaunched[name].pid}), log {log}')
 
     def _restart_process(self, pattern: str) -> None:
         """SIGINT, then TERM, then KILL; the launch file respawns it."""

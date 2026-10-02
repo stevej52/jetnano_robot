@@ -19,6 +19,9 @@
   #battery.flat { color: #f66; font-weight: 700; }
   #battery:empty { display: none; }
   #health { font-size: 13px; color: #fb6; background: #3a2a10; border-radius: 6px; padding: 4px 8px; margin: 0 0 6px; }
+  #drive { display: none; font-size: 15px; font-weight: 700; color: #fff; background: #8a1d1d; border-radius: 6px;
+    padding: 6px 10px; margin: 0 0 6px; }
+  #drive.show { display: block; }  #drive.info { background: #1f4f7a; }
   #health:empty { display: none; }
   #status { font-size: 14px; padding: 3px 10px; border-radius: 12px; background: #333; }
   #status.ok { background: #1d4d2a; }
@@ -71,12 +74,13 @@
   #guard:disabled { opacity: 0.5; cursor: default; }
   #talkRow { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 4px 0; }
   #talkRow small { color: #888; }
-  #talk { min-width: 6.5em; height: 40px; border: 0; border-radius: 20px; font-weight: 700; letter-spacing: 1px;
-          background: #333; color: #ccc; }
-  #talk.talk { background: #1f6fa8; color: #fff; }
-  #talk.quiet { background: #4a2a10; color: #ffb060; }
-  #talk.robot { background: #2a3a4a; color: #9fd3ff; }
-  #talk:disabled { opacity: 0.5; cursor: default; }
+  #talkBtns { display: flex; gap: 6px; }
+  #talkBtns .mode { height: 40px; padding: 0 12px; border: 2px solid transparent; border-radius: 20px; font-weight: 700;
+    letter-spacing: 1px; background: #2a2a2a; color: #777; }
+  #talkBtns .mode.on.talk { background: #1f6fa8; color: #fff; border-color: #9fd3ff; }
+  #talkBtns .mode.on.quiet { background: #4a2a10; color: #ffb060; border-color: #ffb060; }
+  #talkBtns .mode.on.robot { background: #2a3a4a; color: #9fd3ff; border-color: #9fd3ff; }
+  #talkBtns .mode:disabled:not(.on) { opacity: 0.5; }
   footer { font-size: 12px; color: #777; padding: 10px 4px; }
 </style>
 </head>
@@ -87,6 +91,7 @@
     <span class="right"><span id="battery"></span><span id="status">connecting</span></span>
   </header>
   <div id="health"></div>
+  <div id="drive"></div>
 
   <img id="video" alt="camera" draggable="false">
 
@@ -116,7 +121,11 @@
 
   <div id="talkRow">
     <span>voice <small id="talkNote"></small></span>
-    <button id="talk" disabled>&hellip;</button>
+    <span id="talkBtns">
+      <button class="mode" data-mode="talk" disabled>TALK</button>
+      <button class="mode" data-mode="quiet" disabled>QUIET</button>
+      <button class="mode" data-mode="robot" disabled>ROBOT ONLY</button>
+    </span>
   </div>
 
   <footer>Drag the knob: up and down is throttle, left and right is steering, further is more, and the rim is
@@ -138,10 +147,10 @@
   var knob = document.getElementById('knob');
   var readout = document.getElementById('readout');
   var stopBtn = document.getElementById('stop');
-  var talkBtn = document.getElementById('talk');
   var talkNote = document.getElementById('talkNote');
   var guardBtn = document.getElementById('guard');
   var guardNote = document.getElementById('guardNote');
+  var drive = document.getElementById('drive');
   var slider = document.getElementById('speedSlider');
   var speedOut = document.getElementById('speedOut');
 
@@ -341,6 +350,10 @@
     stick.classList.toggle('off', eStop);
     showGuard(st.guard_enabled);
     showTalk(st);
+    // the drive watchdog's line: who holds the wheel and what stops it, in words
+    var d = st.drive || {};
+    drive.textContent = d.note || '';
+    drive.className = d.note ? ('show' + ((d.note.indexOf('NAV2') === 0 || d.note.indexOf('slowed') === 0) ? ' info' : '')) : '';
     // the watchdog's list of problems; nothing shown when all is well
     health.textContent = (st.health && st.health.length) ? '⚠ ' + st.health.join(' · ') : '';
     if (st.battery) {
@@ -367,29 +380,37 @@
     }
   }
 
-  // The voice button cycles TALK -> QUIET -> ROBOT ONLY -> TALK. The label is the NEXT mode;
-  // the note is the current one. TALK: Diane mode, chatty, no name needed. QUIET: nothing plays.
-  // ROBOT ONLY: her own beeps and sounds, never English.
+  // Three voice buttons, the lit one is the mode she is in; pressing a mode sets that mode
+  // (pressing the lit one does nothing). Until 2026-10-01 evening one button cycled
+  // TALK -> QUIET -> ROBOT ONLY with the NEXT mode as its label: Steve read the label as the
+  // state, tapped through all three in half a second, and the hello played in QUIET mode.
+  // TALK: Diane mode, chatty, no name needed. QUIET: nothing plays. ROBOT ONLY: beeps, no English.
   var voiceMode = null;
-  var NEXT = { talk: 'quiet', quiet: 'robot', robot: 'talk', normal: 'talk' };
-  var LABEL = { talk: 'TALK', quiet: 'QUIET', robot: 'ROBOT ONLY' };
   var NOTE = { talk: 'Diane mode: chatty, everyone is Diane', quiet: 'quiet mode: nothing plays',
                robot: 'robot only: beeps, no English', normal: 'normal: answers to her name' };
+  var modeBtns = Array.prototype.slice.call(document.querySelectorAll('#talkBtns .mode'));
   function showTalk(st) {
-    if (st.voice_mode === undefined) { talkBtn.textContent = 'n/a'; talkBtn.className = ''; talkBtn.disabled = true; return; }
+    if (st.voice_mode === undefined) {
+      modeBtns.forEach(function (b) { b.disabled = true; b.className = 'mode'; });
+      talkNote.textContent = 'n/a';
+      return;
+    }
     voiceMode = st.voice_mode;
-    var next = NEXT[voiceMode] || 'talk';
-    talkBtn.textContent = LABEL[next];
-    talkBtn.className = next === 'talk' ? 'talk' : next === 'quiet' ? 'quiet' : 'robot';
-    talkBtn.disabled = false;
+    modeBtns.forEach(function (b) {
+      var on = b.dataset.mode === voiceMode;
+      b.className = 'mode ' + b.dataset.mode + (on ? ' on' : '');
+      b.disabled = on;
+    });
     talkNote.textContent = NOTE[voiceMode] || voiceMode;
   }
 
-  talkBtn.addEventListener('click', function () {
-    if (voiceMode === null) return;
-    talkBtn.disabled = true;
-    post('/talk', { mode: NEXT[voiceMode] || 'talk' }).then(show).catch(function () {
-      noLink(); talkBtn.disabled = false;
+  modeBtns.forEach(function (b) {
+    b.addEventListener('click', function () {
+      if (voiceMode === null || b.dataset.mode === voiceMode) return;
+      modeBtns.forEach(function (x) { x.disabled = true; });
+      post('/talk', { mode: b.dataset.mode }).then(show).catch(function () {
+        noLink(); modeBtns.forEach(function (x) { x.disabled = false; });
+      });
     });
   });
 
