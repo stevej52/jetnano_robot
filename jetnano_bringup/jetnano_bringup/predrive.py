@@ -69,6 +69,7 @@ class Predrive(Node):
             self.create_subscription(String, 'battery/level', lambda m: self._got('battery', m.data), qos)
         self.create_subscription(Odometry, 'vo', lambda m: self._got('vo', time.monotonic()), be)
         self.create_subscription(DiagnosticArray, 'diagnostics', self._on_diag, 10)
+        self.create_subscription(String, 'safety/state', lambda m: self._got('gate', m.data), latched)
         self.create_subscription(Twist, 'cmd_vel_mux', lambda m: self._count('mux_cmds', m), 10)
         self.create_subscription(Twist, 'cmd_vel', lambda m: self._count('guard_out', m), 10)
         self.buf = Buffer()
@@ -218,6 +219,16 @@ def main(args=None):
         w(f'pack at {volts} V: a short drive at most (low line 10.5)')
     else:
         o(f'pack {volts} V ({level})')
+
+    gate = n.seen.get('gate')
+    try:
+        gj = json.loads(gate) if gate else {}
+    except ValueError:
+        gj = {}
+    if gj.get('state') in ('ok', 'degraded'):
+        o(f'safety gate: {gj["state"]}' + (' (' + '; '.join(gj.get('reasons', [])) + ')' if gj.get('reasons') else ''))
+    else:
+        b(f'safety gate: {gj.get("state", "no verdict")}' + (' - ' + '; '.join(gj.get('reasons', [])) if gj.get('reasons') else ''))
 
     rec = subprocess.run([os.path.expanduser('~/ros2_ws/src/jetnano_robot/jetnano_bringup/scripts/drive_record.sh'), 'status'],
                          capture_output=True, text=True).stdout.splitlines()

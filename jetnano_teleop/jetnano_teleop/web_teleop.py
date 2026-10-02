@@ -356,6 +356,10 @@ class WebTeleop(Node):
         self.create_subscription(Twist, 'cmd_vel', lambda m: self._wheel.update(out=self.monotonic(), out_lin=m.linear.x), 10)
         self.create_subscription(Twist, 'cmd_vel_mux', lambda m: self._wheel.update(mux=self.monotonic(), mux_lin=m.linear.x), 10)
         self.create_subscription(String, 'guard_flow/status', lambda m: setattr(self, '_guard_flow', (m.data, self.monotonic())), 10)
+        # the safety gate (safety_gate.py): the one answer to "may she drive, and why not"
+        self._safety = None
+        self.create_subscription(String, 'safety/state', self._on_safety,
+                                 QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
         # raw bytes: the EKF's 100 Hz into a Python callback cost web_teleop 6 % of a core idle
         # (benchmark 2026-10-01); only the drive watch's 0.5 s tick looks at the latest one
         self._odom_raw = None
@@ -451,7 +455,10 @@ class WebTeleop(Node):
         stalled = self._stall_since is not None and now - self._stall_since > 1.5
         flow, flow_at = self._guard_flow
         holding = flow.startswith('holding') and now - flow_at < 3.0
-        if holding:
+        gate = self._safety[0] if self._safety and now - self._safety[1] < 5.0 else None
+        if gate and gate.get('state') in ('stopped', 'inhibited'):
+            note = ('STOPPED: ' if gate['state'] == 'stopped' else 'NOT PERMITTED: ') + '; '.join(gate.get('reasons') or ['?'])
+        elif holding:
             note = 'THE OBSTACLE GUARD IS HOLDING HER: ' + flow[len('holding: '):] + ' - being fixed, or switch the guard OFF'
         elif locks:
             note = 'LOCKED: ' + ', '.join(locks) + (' - press GO' if 'STOP (page)' in locks else '')
@@ -465,8 +472,10 @@ class WebTeleop(Node):
             note = 'slowed: obstacle near'
         else:
             note = ''
+        if gate and gate.get('state') == 'degraded' and not note:
+            note = 'slowed to %.0f %%: ' % gate.get('speed_pct', 50) + '; '.join(gate.get('reasons') or [])
         return {'wheel': wheel, 'locks': locks, 'guard': blocked, 'stalled': stalled,
-                'speed': round(self._speed, 2), 'note': note}
+                'speed': round(self._speed, 2), 'note': note, 'gate': gate}
 
     def _on_battery(self, msg) -> None:
         if not msg.present:
@@ -587,6 +596,12 @@ class WebTeleop(Node):
         line = HELLOS[n % len(HELLOS)]
         self.get_logger().info(f'TALK hello {n % len(HELLOS) + 1} of {len(HELLOS)}: "{line}"')
         return line
+
+    def _on_safety(self, m) -> None:
+        try:
+            self._safety = (json.loads(m.data), self.monotonic())
+        except ValueError:
+            pass
 
     def voice_loaded(self) -> bool:
         """jetnano-voice.service active? (asked at most every 3 s)"""

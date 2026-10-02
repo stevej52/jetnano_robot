@@ -73,3 +73,10 @@ twist_mux:
         topic: e_stop_motion
         timeout: 0.0
         priority: 255
+      # the safety gate (safety_gate.py, 2026-10-02): held while she is inhibited (not enough
+      # known: no lidar, no odometry, no battery verdict, the bench) or stopped; it explains
+      # itself on /safety/state. The locks above stay as defence in depth.
+      e_stop_gate:
+        topic: e_stop_gate
+        timeout: 0.0
+        priority: 255

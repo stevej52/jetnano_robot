@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Her small housekeeping nodes in ONE process: motion_watch, guard_flow, battery_monitor.
+"""Her small housekeeping nodes in ONE process: motion_watch, guard_flow, battery_monitor, safety_gate.
 
     ros2 run jetnano_bringup housekeeping --ros-args --params-file config/housekeeping.yaml
 
@@ -31,15 +31,16 @@ from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from jetnano_bringup.battery_monitor import BatteryMonitor
 from jetnano_bringup.guard_flow import GuardFlow
 from jetnano_bringup.motion_watch import MotionWatch
+from jetnano_bringup.safety_gate import SafetyGate
 
 
 def main(args=None):
     rclpy.init(args=args)
-    nodes = [MotionWatch(), GuardFlow(), BatteryMonitor()]
-    ex = MultiThreadedExecutor(num_threads=3)
+    nodes = [MotionWatch(), GuardFlow(), BatteryMonitor(), SafetyGate()]
+    ex = MultiThreadedExecutor(num_threads=4)
     for n in nodes:
         ex.add_node(n)
-    nodes[0].get_logger().info('housekeeping: motion_watch, guard_flow and battery_monitor in one process')
+    nodes[0].get_logger().info('housekeeping: motion_watch, guard_flow, battery_monitor and safety_gate in one process')
     try:
         ex.spin()
     except (KeyboardInterrupt, ExternalShutdownException):

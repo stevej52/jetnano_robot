@@ -41,13 +41,12 @@ import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
-from nav2_msgs.msg import CollisionMonitorState, SpeedLimit
+from nav2_msgs.msg import CollisionMonitorState
 from sensor_msgs.msg import CameraInfo, PointCloud2
 from std_msgs.msg import String
 
 CONTAINER, CONTAINER_LAUNCH = 'isaac_vo', r'cuvslam_.*\.launch\.py'     # cuvslam_vo.sh picks the file
 GRID_TO_POINTS = '/lib/jetnano_watchdog/grid_to_points'                    # the C++ one runs (drive.launch.py)
-DEGRADED_SPEED_PCT = 50.0       # with the camera's obstacles gone the lidar guards alone: half speed
 
 
 class GuardFlow(Node):
@@ -84,8 +83,8 @@ class GuardFlow(Node):
         self.guard_action = 0
         self.guard_at = 0.0
         self.create_subscription(CollisionMonitorState, 'collision_guard/state', self._on_guard_state, 10)
-        self.speed_pub = self.create_publisher(SpeedLimit, 'speed_limit', 10)
-        self.capped = False
+        # (the speed cap while the camera's obstacles are stale is the safety gate's, since
+        # 2026-10-02 08:00: one owner of /speed_limit; this node reports)
         self.status_pub = self.create_publisher(String, 'guard_flow/status', 10)
         self.say_pub = self.create_publisher(String, 'say', 10)
         self.create_timer(0.5, self._tick)
@@ -104,17 +103,6 @@ class GuardFlow(Node):
     def _on_guard_state(self, m):
         self.guard_action = int(m.action_type)
         self.guard_at = time.monotonic()
-
-    def _cap_speed(self, capped: bool) -> None:
-        if capped == self.capped:
-            return
-        self.capped = capped
-        m = SpeedLimit()
-        m.percentage = True
-        m.speed_limit = DEGRADED_SPEED_PCT if capped else 100.0
-        self.speed_pub.publish(m)
-        self.get_logger().warning(f'speed {"capped at %.0f %%" % DEGRADED_SPEED_PCT if capped else "back to 100 %"}: '
-                                  f'camera obstacles {"stale - lidar only" if capped else "fresh again"}')
 
     def depth_words(self) -> str:
         now = time.monotonic()
@@ -141,7 +129,6 @@ class GuardFlow(Node):
         camera_stale = now - self.pts_at < 2.0 and self.pts_age > stale
         if camera_stale:
             why = (why + '; ' if why else '') + f'camera obstacles stale {self.pts_age:.0f} s - {self.depth_words()}'
-        self._cap_speed(camera_stale)
         if why:
             if self.bad_since is None:
                 self.bad_since = now

@@ -363,6 +363,11 @@
     var d = st.drive || {};
     drive.textContent = d.note || '';
     drive.className = d.note ? ('show' + ((d.note.indexOf('NAV2') === 0 || d.note.indexOf('slowed') === 0) ? ' info' : '')) : '';
+    // the safety gate's word in the header: ok / degraded / stopped / inhibited
+    if (d.gate && d.gate.state && d.gate.state !== 'ok' && !st.e_stop) {
+      status.textContent = d.gate.state === 'degraded' ? 'degraded - slower' : d.gate.state;
+      status.className = d.gate.state === 'degraded' ? 'slowed' : 'blocked';
+    }
     // the watchdog's list of problems; nothing shown when all is well
     health.textContent = (st.health && st.health.length) ? '⚠ ' + st.health.join(' · ') : '';
     if (st.battery) {

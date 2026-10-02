@@ -13,6 +13,10 @@ motion_watch:
     tilt_limit_deg: 78.0
     tilt_sign: -1.0
 
+safety_gate:
+  ros__parameters:
+    rate_hz: 5.0
+
 guard_flow:
   ros__parameters:
     act: true
