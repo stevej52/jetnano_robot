@@ -34,6 +34,7 @@ if that does not clear it within 25 s, restart the launch inside the Isaac conta
 
 import os
 import signal
+import struct
 import subprocess
 import time
 
@@ -41,7 +42,7 @@ import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
-from sensor_msgs.msg import PointCloud2
+from sensor_msgs.msg import Image, PointCloud2
 from std_msgs.msg import String
 
 CONTAINER, CONTAINER_LAUNCH = 'isaac_vo', 'odometry.launch.py'
@@ -67,6 +68,15 @@ class GuardFlow(Node):
         self.create_subscription(Twist, 'cmd_vel_mux', lambda m: self._cmd('mux_at', m), 10)
         self.create_subscription(Twist, 'cmd_vel', lambda m: self._cmd('out_at', m), 10)
         self.create_subscription(PointCloud2, '/nvblox_node/obstacle_points', self._on_points, be)
+        # the depth stream behind nvblox, raw (the header's stamp is bytes 4-12 of the CDR; no
+        # deserialising): when the grid goes stale this tells WHICH of three things happened -
+        # no depth frames (the camera's stream died), frames with old stamps (the camera's clock
+        # drifted off ROS time and nvblox refuses them), or fresh frames (nvblox itself stalled).
+        # 2026-10-01 19:31: twelve minutes frozen, and the log could not say which.
+        self.depth_n = 0
+        self.depth_lag = 0.0
+        self.depth_at = 0.0
+        self.create_subscription(Image, '/camera/depth/image_rect_raw', self._on_depth_raw, be, raw=True)
         self.status_pub = self.create_publisher(String, 'guard_flow/status', 10)
         self.say_pub = self.create_publisher(String, 'say', 10)
         self.create_timer(0.5, self._tick)
@@ -75,6 +85,23 @@ class GuardFlow(Node):
     def _cmd(self, key, m):
         if abs(m.linear.x) > 0.02 or abs(m.angular.z) > 0.02:
             setattr(self, key, time.monotonic())
+
+    def _on_depth_raw(self, raw):
+        self.depth_n += 1
+        self.depth_at = time.monotonic()
+        if self.depth_n % 10 == 0:                 # every 10th frame is plenty for a lag figure
+            sec, nsec = struct.unpack('<iI', bytes(raw[4:12]))
+            self.depth_lag = self.get_clock().now().nanoseconds / 1e9 - (sec + nsec * 1e-9)
+
+    def depth_words(self) -> str:
+        now = time.monotonic()
+        if not self.depth_at:
+            return 'no depth frames ever'
+        if now - self.depth_at > 2.0:
+            return f'no depth frames for {now - self.depth_at:.0f} s (the camera depth stream died)'
+        if abs(self.depth_lag) > 2.0:
+            return f'depth frames arrive but stamped {self.depth_lag:+.1f} s off ROS time (the camera clock)'
+        return f'depth frames arrive, stamps fresh ({self.depth_lag * 1000:+.0f} ms): nvblox itself stalled'
 
     def _on_points(self, m):
         self.pts_at = time.monotonic()
@@ -88,7 +115,7 @@ class GuardFlow(Node):
         if now - self.mux_at < 1.0 and now - self.out_at > hold:
             why = 'commands go in, nothing comes out'
         if now - self.pts_at < 2.0 and self.pts_age > stale:
-            why = (why + '; ' if why else '') + f'camera obstacles stale {self.pts_age:.0f} s'
+            why = (why + '; ' if why else '') + f'camera obstacles stale {self.pts_age:.0f} s - {self.depth_words()}'
         if why:
             if self.bad_since is None:
                 self.bad_since = now

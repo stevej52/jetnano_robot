@@ -31,7 +31,12 @@ log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" | tee -a "$LOG"; }
 if $SSH "$ROBOT" true 2>/dev/null; then
     listing=$($SSH "$ROBOT" 'cd bags 2>/dev/null || exit 0
         for d in drive-*/; do d=${d%/}; case $d in *-extra) continue ;; esac
-            [ -f "$d/metadata.yaml" ] || { echo RECORDING; exit 0; }; done
+            [ -f "$d/metadata.yaml" ] && continue
+            # a bag without metadata is a recording in progress - unless it is a corpse: a
+            # kernel panic left drive-20261001-205742 as a 0-byte mcap, and it blocked every
+            # pull for three hours ("Rosie is recording")
+            if [ -z "$(find "$d" -name "*.mcap" -size +0 -mmin -10 2>/dev/null)" ] && [ -z "$(find "$d" -mmin -10 2>/dev/null)" ]; then continue; fi
+            echo RECORDING; exit 0; done
         for m in drive-*/metadata.yaml; do d=${m%/metadata.yaml}
             echo "$d"; [ -d "$d-extra" ] && echo "$d-extra"; [ -f "$d.log" ] && echo "$d.log"; done' 2>/dev/null)
     if [ "$listing" = RECORDING ]; then
