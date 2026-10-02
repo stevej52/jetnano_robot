@@ -255,6 +255,10 @@ public:
       if (declare_parameter("motion.cancel_nav_goal", true)) {
         nav_cancel_ = create_client<action_msgs::srv::CancelGoal>(
           declare_parameter("motion.nav_cancel_service", std::string("/navigate_to_pose/_action/cancel_goal")));
+        // a lap runs on NavigateThroughPoses (nav_route): cancel that too, or the route goal
+        // outlives the lock (the audit of 2026-10-02)
+        route_cancel_ = create_client<action_msgs::srv::CancelGoal>(
+          declare_parameter("motion.route_cancel_service", std::string("/navigate_through_poses/_action/cancel_goal")));
       }
       send_lock(false);
       RCLCPP_INFO(get_logger(), "motion: stops her if told to drive (>= %.2f) for %.1f s while the "
@@ -547,19 +551,20 @@ private:
 
   void cancel_nav_goal()
   {
-    if (!nav_cancel_) {return;}
-    if (!nav_cancel_->service_is_ready()) {
-      RCLCPP_INFO(get_logger(), "no Nav2 to cancel (%s not there)", nav_cancel_->get_service_name());
-      return;
+    for (auto & client : {nav_cancel_, route_cancel_}) {
+      if (!client) {continue;}
+      if (!client->service_is_ready()) {
+        RCLCPP_INFO(get_logger(), "no Nav2 to cancel (%s not there)", client->get_service_name());
+        continue;
+      }
+      auto req = std::make_shared<action_msgs::srv::CancelGoal::Request>();   // an empty id: every goal
+      const std::string name = client->get_service_name();
+      client->async_send_request(req,
+        [this, name](rclcpp::Client<action_msgs::srv::CancelGoal>::SharedFuture f) {
+          const auto n = f.get()->goals_canceling.size();
+          if (n) {RCLCPP_WARN(get_logger(), "cancelled %zu goal(s) on %s", n, name.c_str());}
+        });
     }
-    // an empty request (zero goal id, zero stamp) cancels every goal the server has
-    nav_cancel_->async_send_request(
-      std::make_shared<action_msgs::srv::CancelGoal::Request>(),
-      [this](rclcpp::Client<action_msgs::srv::CancelGoal>::SharedFuture f) {
-        const auto r = f.get();
-        RCLCPP_WARN(get_logger(), "cancelled Nav2's goal (%zu goal(s), return code %d)",
-          r->goals_canceling.size(), r->return_code);
-      });
   }
 
   void vo_tick()
@@ -646,7 +651,7 @@ private:
   std::chrono::steady_clock::time_point cmd_at_{}, input_at_{}, locked_at_{}, lock_sent_{}, paused_until_{};
   std::deque<VoSample> vo_, lo_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr lock_pub_;
-  rclcpp::Client<action_msgs::srv::CancelGoal>::SharedPtr nav_cancel_;
+  rclcpp::Client<action_msgs::srv::CancelGoal>::SharedPtr nav_cancel_, route_cancel_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr say_pub_, state_pub_;
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr pause_sub_;

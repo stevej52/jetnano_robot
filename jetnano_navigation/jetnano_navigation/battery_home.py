@@ -76,6 +76,7 @@ class BatteryHome(Node):
         self.create_subscription(PoseWithCovarianceStamped, '/pose', self._on_pose, 10)
         self.speak = self.create_publisher(String, 'speak', 10)
         self.cancel = self.create_client(CancelGoal, '/navigate_to_pose/_action/cancel_goal')
+        self.cancel_route = self.create_client(CancelGoal, '/navigate_through_poses/_action/cancel_goal')   # a lap
         self.get_logger().info('watching battery/level: on "low" she cancels her goal and parks')
 
     def _on_where(self, m):
@@ -114,15 +115,23 @@ class BatteryHome(Node):
         threading.Thread(target=self._go_home, daemon=True).start()
 
     def _cancel_nav(self):
-        if not self.cancel.wait_for_service(timeout_sec=3.0):
-            return 'Nav2 not running: nothing to cancel'
-        fut = self.cancel.call_async(CancelGoal.Request())     # an empty goal id: everything
-        end = time.monotonic() + 5.0
-        while not fut.done() and time.monotonic() < end:
-            time.sleep(0.05)
-        if not fut.done():
-            return 'cancel: no answer in 5 s'
-        return f'cancelled {len(fut.result().goals_canceling)} goal(s)'
+        """Every Nav2 goal, single (nav_goal, nav_park) and route (nav_route) alike."""
+        total, words = 0, []
+        for client, what in ((self.cancel, 'goal'), (self.cancel_route, 'route')):
+            if not client.wait_for_service(timeout_sec=3.0):
+                words.append(f'no {what} server')
+                continue
+            fut = client.call_async(CancelGoal.Request())     # an empty goal id: everything
+            end = time.monotonic() + 5.0
+            while not fut.done() and time.monotonic() < end:
+                time.sleep(0.05)
+            if not fut.done():
+                words.append(f'{what}: no answer in 5 s')
+                continue
+            total += len(fut.result().goals_canceling)
+        if not words:
+            return f'cancelled {total} goal(s)'
+        return f'cancelled {total} goal(s); ' + ', '.join(words)
 
     def _go_home(self):
         self.get_logger().warning(self._cancel_nav())

@@ -11,7 +11,9 @@ Type=simple
 # node, start the container, then follow it so systemd knows if it dies.
 # (Docker's own restart policy gives up when the runtime hook fails at boot;
 # the container is created with --restart no and this unit owns it.)
-ExecStart=/bin/sh -c 'for i in $(seq 1 60); do [ -e /dev/nvgpu/igpu0 ] && break; sleep 2; done; docker start isaac_vo && exec docker wait isaac_vo'
+# `docker wait` exits 0 and PRINTS the container's exit code, so Restart=on-failure never saw a
+# container crash (the audit of 2026-10-02): exit with the container's own code instead.
+ExecStart=/bin/sh -c 'for i in $(seq 1 60); do [ -e /dev/nvgpu/igpu0 ] && break; sleep 2; done; docker start isaac_vo || exit 1; rc=$(docker wait isaac_vo); exit "${rc:-1}"'
 ExecStop=/usr/bin/docker stop -t 10 isaac_vo
 Restart=on-failure
 RestartSec=15

@@ -110,8 +110,8 @@ TOPICS = {
         ('signal', proc('laser_filters/scan_to_scan_filter_chain'), 10.0),
         ('signal', proc('laser_filters/scan_to_scan_filter_chain'), 20.0)]),
     'imu': ('I M U', '/imu/data', 1.5, 25.0, 'always', None, [
-        ('signal', proc('jetnano_bringup/bno055_lean'), 12.0),
-        ('signal', proc('jetnano_bringup/bno055_lean'), 30.0)]),
+        ('signal', proc('jetnano_watchdog/bno055_imu'), 12.0),       # C++ since 2026-09-30; the audit of
+        ('signal', proc('jetnano_watchdog/bno055_imu'), 30.0)]),      # 2026-10-02 found the Python path here
     'odometry': ('odometry', '/odometry/filtered', 1.5, 10.0, 'always', None, [
         ('signal', proc('robot_localization/ekf_node'), 10.0),
         ('signal', proc('robot_localization/ekf_node'), 20.0)]),
@@ -125,8 +125,8 @@ TOPICS = {
     # dropped off the DDS graph while its process lived on, and the guard - rightly -
     # refused to drive on a stale source; nothing noticed until Steve tried to drive.
     'obstacles': ('camera obstacles for the guard', '/nvblox_node/obstacle_points', 3.0, 2.0, 'soon', 'nvblox', [
-        ('signal', proc('jetnano_bringup/grid_to_points'), 10.0),
-        ('signal', proc('jetnano_bringup/grid_to_points'), 20.0)]),
+        ('signal', proc('jetnano_watchdog/grid_to_points'), 10.0),    # C++ since 2026-09-30 (drive.launch.py)
+        ('signal', proc('jetnano_watchdog/grid_to_points'), 20.0)]),
     # MOLA (robot.launch.py lidar_odom:=true): its launch respawns it when it dies, and
     # stopping mola-cli ends that launch, so a silent-but-alive one gets the same cure.
     # Judged by MOLA's own output, not the relay's /lidar_odom: since 2026-09-28 the relay
@@ -785,8 +785,15 @@ class Watchdog(Node):
             tick = os.sysconf('SC_CLK_TCK')
             pids = self._pids(pattern)
             if not pids:
-                return True          # between death and respawn: the launch brings it back
-                                     # (and the node check reports it if that never happens)
+                # between death and respawn the launch brings it back - but only for so long:
+                # a pattern that matches nothing (the audit of 2026-10-02: two stale Python
+                # paths) must not suppress recovery for ever
+                gone_since = getattr(item, 'gone_since', None)
+                if gone_since is None:
+                    item.gone_since = up
+                    return True
+                return up - gone_since < 20.0
+            item.gone_since = None
             for pid in pids:
                 with open(f'/proc/{pid}/stat') as f:
                     start = int(f.read().rsplit(')', 1)[1].split()[19]) / tick

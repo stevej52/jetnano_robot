@@ -183,6 +183,7 @@ class BatteryMonitor(Node):
         self._last_error = 0.0
         self._warned = False
         self._stopped = False
+        self._reconciled = False       # the first verdict releases a lock left by an earlier instance
         self._sim_v = float(self.get_parameter('simulate_start_v').value)
         if not self.simulate:
             self._open()
@@ -315,6 +316,17 @@ class BatteryMonitor(Node):
         self.readings.append((now, float(voltage)))
         while self.readings and now - self.readings[0][0] > self.window_s:
             self.readings.popleft()
+        # The mux holds the e_stop lock until released, and only the instance that set it
+        # knew to (the audit of 2026-10-02): a restarted monitor says its verdict once, out loud,
+        # so a lock left by its predecessor cannot keep her still with everything "running".
+        if not self._reconciled:
+            self._reconciled = True
+            if present and judged > self.stop_v or not present:
+                release = Bool()
+                release.data = False
+                self.stop_pub.publish(release)
+                self.get_logger().info('battery lock released at start (the pack is %s)'
+                                       % (f'{judged:.2f} V' if present else 'absent'))
         if not present:
             self._warned = self._stopped = False
             self._low_since = None

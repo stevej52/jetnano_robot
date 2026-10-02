@@ -34,7 +34,6 @@ if that does not clear it within 25 s, restart the launch inside the Isaac conta
 
 import os
 import signal
-import struct
 import subprocess
 import time
 
@@ -42,11 +41,13 @@ import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
-from sensor_msgs.msg import Image, PointCloud2
+from nav2_msgs.msg import CollisionMonitorState, SpeedLimit
+from sensor_msgs.msg import CameraInfo, PointCloud2
 from std_msgs.msg import String
 
-CONTAINER, CONTAINER_LAUNCH = 'isaac_vo', 'odometry.launch.py'
-GRID_TO_POINTS = '/lib/jetnano_bringup/grid_to_points'
+CONTAINER, CONTAINER_LAUNCH = 'isaac_vo', r'cuvslam_.*\.launch\.py'     # cuvslam_vo.sh picks the file
+GRID_TO_POINTS = '/lib/jetnano_watchdog/grid_to_points'                    # the C++ one runs (drive.launch.py)
+DEGRADED_SPEED_PCT = 50.0       # with the camera's obstacles gone the lidar guards alone: half speed
 
 
 class GuardFlow(Node):
@@ -73,10 +74,18 @@ class GuardFlow(Node):
         # no depth frames (the camera's stream died), frames with old stamps (the camera's clock
         # drifted off ROS time and nvblox refuses them), or fresh frames (nvblox itself stalled).
         # 2026-10-01 19:31: twelve minutes frozen, and the log could not say which.
+        # ... from camera_info, which carries the same stamps at a few hundred bytes a frame (the
+        # audit of 2026-10-02: the raw image was ~14 MB/s across the host for eight bytes)
         self.depth_n = 0
         self.depth_lag = 0.0
         self.depth_at = 0.0
-        self.create_subscription(Image, '/camera/depth/image_rect_raw', self._on_depth_raw, be, raw=True)
+        self.create_subscription(CameraInfo, '/camera/depth/camera_info', self._on_depth_info, be)
+        # the guard's own verdict: a STOP for an obstacle is her doing her job, not a fault
+        self.guard_action = 0
+        self.guard_at = 0.0
+        self.create_subscription(CollisionMonitorState, 'collision_guard/state', self._on_guard_state, 10)
+        self.speed_pub = self.create_publisher(SpeedLimit, 'speed_limit', 10)
+        self.capped = False
         self.status_pub = self.create_publisher(String, 'guard_flow/status', 10)
         self.say_pub = self.create_publisher(String, 'say', 10)
         self.create_timer(0.5, self._tick)
@@ -86,12 +95,26 @@ class GuardFlow(Node):
         if abs(m.linear.x) > 0.02 or abs(m.angular.z) > 0.02:
             setattr(self, key, time.monotonic())
 
-    def _on_depth_raw(self, raw):
+    def _on_depth_info(self, m):
         self.depth_n += 1
         self.depth_at = time.monotonic()
         if self.depth_n % 10 == 0:                 # every 10th frame is plenty for a lag figure
-            sec, nsec = struct.unpack('<iI', bytes(raw[4:12]))
-            self.depth_lag = self.get_clock().now().nanoseconds / 1e9 - (sec + nsec * 1e-9)
+            self.depth_lag = self.get_clock().now().nanoseconds / 1e9 - (m.header.stamp.sec + m.header.stamp.nanosec * 1e-9)
+
+    def _on_guard_state(self, m):
+        self.guard_action = int(m.action_type)
+        self.guard_at = time.monotonic()
+
+    def _cap_speed(self, capped: bool) -> None:
+        if capped == self.capped:
+            return
+        self.capped = capped
+        m = SpeedLimit()
+        m.percentage = True
+        m.speed_limit = DEGRADED_SPEED_PCT if capped else 100.0
+        self.speed_pub.publish(m)
+        self.get_logger().warning(f'speed {"capped at %.0f %%" % DEGRADED_SPEED_PCT if capped else "back to 100 %"}: '
+                                  f'camera obstacles {"stale - lidar only" if capped else "fresh again"}')
 
     def depth_words(self) -> str:
         now = time.monotonic()
@@ -112,10 +135,13 @@ class GuardFlow(Node):
         now = time.monotonic()
         hold, stale = float(self.get_parameter('hold_s').value), float(self.get_parameter('stale_s').value)
         why = ''
-        if now - self.mux_at < 1.0 and now - self.out_at > hold:
-            why = 'commands go in, nothing comes out'
-        if now - self.pts_at < 2.0 and self.pts_age > stale:
+        guard_stopping = now - self.guard_at < 1.0 and self.guard_action == CollisionMonitorState.STOP
+        if now - self.mux_at < 1.0 and now - self.out_at > hold and not guard_stopping:
+            why = 'commands go in, nothing comes out (and the guard reports no obstacle stop)'
+        camera_stale = now - self.pts_at < 2.0 and self.pts_age > stale
+        if camera_stale:
             why = (why + '; ' if why else '') + f'camera obstacles stale {self.pts_age:.0f} s - {self.depth_words()}'
+        self._cap_speed(camera_stale)
         if why:
             if self.bad_since is None:
                 self.bad_since = now
@@ -144,7 +170,9 @@ class GuardFlow(Node):
             self.fix_step, self.fix_at['container'] = 2, now
             self.get_logger().warning('still holding: restarting the launch in the Isaac container')
             try:
-                subprocess.run(['docker', 'exec', CONTAINER, 'pkill', '-INT', '-f', CONTAINER_LAUNCH], timeout=15)
+                r = subprocess.run(['docker', 'exec', CONTAINER, 'pkill', '-INT', '-f', CONTAINER_LAUNCH], timeout=15)
+                if r.returncode != 0:
+                    self.get_logger().error(f'container restart: pkill matched nothing for {CONTAINER_LAUNCH} (rc {r.returncode})')
             except (OSError, subprocess.TimeoutExpired) as exc:
                 self.get_logger().warning(f'container restart: {exc}')
 

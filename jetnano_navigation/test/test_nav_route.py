@@ -98,6 +98,17 @@ def test_detour_is_the_long_way_round():
     assert not nav_route.is_detour(float('nan'), straight)      # no feedback yet
 
 
+def test_chunks_always_makes_progress():
+    # the audit's counterexample (2026-10-02): the last point sits on the leg out from the start
+    r = [(3.0, 0.0, 0.0), (0.2, 0.0, 0.0)]
+    st = nav_route.chunks(r, (0.0, 0.0))
+    assert [len(c) for c in st] == [1, 1] and st[0] == r[:1] and st[1] == r[1:]
+    # out, back to the start, and out again: every waypoint reached, every stretch ends clear
+    r = [(3.0, 0.0, 0.0), (0.1, 0.0, 0.0), (3.0, 0.5, 0.0)]
+    st = nav_route.chunks(r, (0.0, 0.0))
+    assert sum(len(c) for c in st) >= len(r) and st[-1][-1] == r[-1]
+
+
 def test_remaining_straight_chains_the_waypoints():
     assert nav_route.remaining_straight((0.0, 0.0, 0.0), [(3.0, 0.0, 0.0), (3.0, 4.0, 0.0)]) == 7.0
     assert nav_route.remaining_straight((1.0, 1.0, 0.0), []) == 0.0

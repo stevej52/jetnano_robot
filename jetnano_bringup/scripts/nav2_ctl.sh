@@ -60,7 +60,12 @@ case "${1:-status}" in
         ;;
     stop)
         L=$(launches); C=$(containers)
-        [ -z "$L$C" ] && { echo "Nav2 not running"; exit 0; }
+        if [ -z "$L$C" ]; then
+            H=$(helpers)
+            # shellcheck disable=SC2086
+            [ -n "$H" ] && { kill -INT $H 2>/dev/null; sleep 1; echo "Nav2 not running; $(echo $H | wc -w) orphaned helper(s) stopped"; } || echo "Nav2 not running"
+            exit 0
+        fi
         # shellcheck disable=SC2086
         [ -n "$L" ] && kill -TERM $L 2>/dev/null
         for _ in $(seq 1 10); do sleep 1; [ -z "$(launches)$(containers)" ] && break; done

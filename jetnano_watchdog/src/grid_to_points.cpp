@@ -26,6 +26,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
 #include "sensor_msgs/msg/point_field.hpp"
+#include "std_msgs/msg/string.hpp"
 #include "tf2_msgs/msg/tf_message.hpp"
 
 class GridToPoints : public rclcpp::Node
@@ -43,6 +44,15 @@ public:
     const double map_grid_hz = declare_parameter<double>("map_grid_hz", 2.0);
     const auto planner_topic = declare_parameter<std::string>("planner_map_topic", "/planner_map");
     max_age_ = declare_parameter<double>("grid_max_age_s", 2.0);
+    // nvblox keeps publishing its last grid, with its last stamp, when nothing new is integrated
+    // (2026-10-01 19:31: 73 s and counting). The guard refuses a stale source and then holds
+    // EVERY command, the lidar's included (drive 16, twelve minutes). A grid older than stale_s
+    // goes out as an EMPTY cloud stamped now - the camera's obstacles are gone until it moves
+    // again, the lidar still guards - and camera_obstacles/health says "stale N s" so guard_flow
+    // caps her speed and the page shows it. Not hidden: degraded, and said. (The Python
+    // grid_to_points had this first; the audit of 2026-10-02 found the C++ one runs.)
+    stale_s_ = declare_parameter<double>("stale_s", 3.0);
+    health_pub_ = create_publisher<std_msgs::msg::String>("camera_obstacles/health", rclcpp::QoS(1).reliable());
 
     const auto reliable1 = rclcpp::QoS(1).reliable();
     pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(points_topic, reliable1);
@@ -107,6 +117,18 @@ private:
     }
     sensor_msgs::msg::PointCloud2 cloud;
     cloud.header = grid->header;
+    const double age = now().seconds() - rclcpp::Time(grid->header.stamp).seconds();
+    std_msgs::msg::String health;
+    if (age > stale_s_) {
+      pts.clear();
+      cloud.header.stamp = now();
+      health.data = "stale " + std::to_string(static_cast<int>(age)) + " s";
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 30000,
+        "nvblox grid %.0f s stale: camera obstacles off until it moves again (lidar guards on)", age);
+    } else {
+      health.data = "ok";
+    }
+    health_pub_->publish(health);
     cloud.height = 1;
     cloud.width = static_cast<uint32_t>(pts.size() / 3);
     cloud.fields.resize(3);
@@ -196,7 +218,8 @@ private:
   };
 
   int threshold_;
-  double height_, max_age_;
+  double height_, max_age_, stale_s_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr health_pub_;
   nav_msgs::msg::OccupancyGrid::ConstSharedPtr grid_, map_;
   double grid_t_ = 0.0;
   bool have_tf_ = false;

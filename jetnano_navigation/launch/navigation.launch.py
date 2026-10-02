@@ -178,6 +178,8 @@ def generate_launch_description():
                 name='nav2_container',
                 package='rclcpp_components',
                 executable='component_container_isolated',
+                respawn=True,                 # the audit of 2026-10-02: the core had no respawn, its helpers did
+                respawn_delay=5.0,
                 parameters=[params_file, {'autostart': ParameterValue(
                     LaunchConfiguration('autostart'), value_type=bool)}],
                 output='screen',

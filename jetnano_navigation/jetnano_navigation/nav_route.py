@@ -129,7 +129,10 @@ def chunks(route, start=None):
         out.append(route[begin:end])
         if end == len(route):
             break
-        begin = end - 1                   # the next stretch starts where this one ends
+        # the next stretch starts where this one ends - unless this one is a single waypoint,
+        # which cannot be shared or the loop never moves (the audit of 2026-10-02 reproduced it
+        # with [(3, 0), (0.2, 0)] from (0, 0): the second point sits on the start leg)
+        begin = end - 1 if end - begin > 1 else end
     return out
 
 
