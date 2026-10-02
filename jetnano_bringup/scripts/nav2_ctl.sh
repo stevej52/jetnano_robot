@@ -20,6 +20,8 @@ set +u
 source /opt/ros/jazzy/setup.bash
 source "$HOME/ros2_ws/install/setup.bash"
 export ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-7}
+# no Fast-DDS shared memory (robot-environment/system/fastdds_udp_only.xml, 2026-10-02)
+export FASTRTPS_DEFAULT_PROFILES_FILE=${FASTRTPS_DEFAULT_PROFILES_FILE:-/etc/jetnano/fastdds_udp_only.xml}
 LAUNCH_RE='^/usr/bin/python3 /opt/ros/jazzy/bin/ros2 launch jetnano_navigation navigation.launch.py'
 CONTAINER_RE='^/opt/ros/jazzy/lib/rclcpp_components/component_container_isolated'
 # navigation.launch.py's own Python nodes: when the launch is SIGKILLed (stop, 2026-10-01 21:36)

@@ -15,6 +15,8 @@ set +u
 source /opt/ros/jazzy/setup.bash
 source "$HOME/ros2_ws/install/setup.bash"
 export ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-7}
+# no Fast-DDS shared memory (robot-environment/system/fastdds_udp_only.xml, 2026-10-02)
+export FASTRTPS_DEFAULT_PROFILES_FILE=${FASTRTPS_DEFAULT_PROFILES_FILE:-/etc/jetnano/fastdds_udp_only.xml}
 NOGO=(); WARN=()
 ok()   { printf '  ok    %s\n' "$1"; }
 bad()  { printf '  NO-GO %s\n' "$1"; NOGO+=("$1"); }
