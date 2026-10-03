@@ -49,9 +49,11 @@ Unplug the 5V wire first whenever you reprogram it.
    `code.py` that is already there.
 4. Unplug it, then wire it as in the table above.
 
-The relay module's own LED shows the relay state (dimmer than before: the XIAO drives IN at
-3.3 V). The XIAO's green LED did not light on the first fit (the program's LED pin name);
-the relay is the thing to watch.
+The XIAO's RGB pixel is the indicator (firmware 54048e8, to load at the next USB session):
+**blue, swelling and fading once a second like a heartbeat** while the heartbeat is alive and
+the relay is closed; a short **amber blink every two seconds** while the board has power but
+no heartbeat; dark means no power and no relay. The relay module's own LED shows the relay
+state too (dimmer than before: the XIAO drives IN at 3.3 V).
 
 ## The heartbeat
 
