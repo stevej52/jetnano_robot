@@ -113,7 +113,9 @@ def main(args=None):
     motion = n.call(n.motion_param, GetParameters.Request(names=['motion.enabled'])) or n.call(n.motion_param, GetParameters.Request(names=['motion.enabled']))
     while time.monotonic() - t0 < LISTEN_S:
         rclpy.spin_once(n, timeout_sec=0.05)
-        if all(k in n.seen for k in ('where', 'battery', 'vo', 'locks')) and n.buf.can_transform('map', 'base_footprint', Time()):
+        # 'gate' too: under UDP-only discovery its latched verdict came a moment after the other four,
+        # and predrive had already stopped listening (drive 26, 2026-10-02: "safety gate: no verdict")
+        if all(k in n.seen for k in ('where', 'battery', 'vo', 'locks', 'gate')) and n.buf.can_transform('map', 'base_footprint', Time()):
             if time.monotonic() - t0 > 1.5:               # a moment more for the mux/guard counts
                 break
 
