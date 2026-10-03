@@ -73,11 +73,35 @@ class Cli:
         return self.ready
 
 
+class Svc:
+    """A Trigger service the test answers by hand."""
+    def __init__(self, ready=True):
+        self.ready, self.calls = ready, []
+
+    def service_is_ready(self):
+        return self.ready
+
+    def call_async(self, req):
+        f = Fut(done=False)
+        self.calls.append(f)
+        return f
+
+
+class Reply:
+    def __init__(self, success, message):
+        self.success, self.message = success, message
+
+
 class Node:
     def __init__(self, pose=(0.0, 0.0, 0.0)):
         self.through = Through()
         self.costmap_cli = Cli()
         self.snap_cli = Cli()
+        self.retrace_cli = Svc()
+        self.ask_cli = Svc()
+        self.retrace_m = []
+        self.spoken = []
+        self.voice_loads = 0
         self.pose = pose
         self.planners = []
         self.watched = []
@@ -97,6 +121,15 @@ class Node:
 
     def clear_costmaps(self):
         self.cleared += 1
+
+    def set_retrace(self, m):
+        self.retrace_m.append(m)
+
+    def speak(self, text):
+        self.spoken.append(text)
+
+    def load_voice(self):
+        self.voice_loads += 1
 
 
 def feedback(handle, x, y, dist, left):
@@ -218,3 +251,66 @@ def test_timeout_abandons():
 def test_yaw_of_identity_is_zero():
     from geometry_msgs.msg import Quaternion
     assert yaw(Quaternion(w=1.0)) == 0.0
+
+
+def test_rescue_sequence():
+    import json
+    from action_msgs.msg import GoalStatus
+    n, run, said = make()
+    run.tick(time.monotonic(), False, [])
+    goal, h1, fb_cb = n.through.sent[0]
+    fb_cb(feedback(h1, 2.0, 0.0, 6.0, 2))             # waypoint 1 passed, two left in this stretch
+    h1.result_fut.finish(result(GoalStatus.STATUS_ABORTED))
+    assert run.phase == 'rescue retrace' and n.retrace_m == [route_run.RETRACE_M] and len(n.retrace_cli.calls) == 1
+    n.retrace_cli.calls[0].finish(Reply(True, 'backed out 0.80 m of 0.80'))
+    run.tick(time.monotonic(), False, [])
+    assert run.phase == 'driving' and len(n.through.sent) == 2, 'retried with what was left'
+    assert [p.pose.position.x for p in n.through.sent[1][0].poses] == [3.0, 0.0]
+    goal2, h2, fb2 = n.through.sent[1]
+    h2.result_fut.finish(result(GoalStatus.STATUS_ABORTED))
+    assert run.phase == 'rescue ask' and len(n.ask_cli.calls) == 1 and n.voice_loads == 1
+    advice = {'advice': {'what': 'an open dishwasher', 'temporary': True, 'action': 'via', 'x': 1.5, 'y': 1.5,
+                         'why': 'go north of the island', 'say': 'I will go round the island.'}, 'seconds': 12, 'dir': '/tmp/x'}
+    n.ask_cli.calls[0].finish(Reply(True, json.dumps(advice)))
+    run.tick(time.monotonic(), False, [])
+    assert n.spoken == ['I will go round the island.']
+    assert run.phase == 'driving' and len(n.through.sent) == 3
+    xs = [(round(p.pose.position.x, 1), round(p.pose.position.y, 1)) for p in n.through.sent[2][0].poses]
+    assert xs == [(1.5, 1.5), (3.0, 3.0), (0.0, 3.0)], 'the via point first, then what was left'
+    goal3, h3, fb3 = n.through.sent[2]
+    fb3(feedback(h3, 1.5, 1.5, 4.0, 2))                 # the via point passed: not a waypoint
+    fb3(feedback(h3, 3.0, 3.0, 2.0, 1))                 # waypoint 2 passed
+    assert any('passed waypoint 2' in s for s in said) and not any('passed waypoint 3' in s for s in said)
+    assert [num for num, _ in run.passed] == [1, 2], 'the via point is not counted as a waypoint'
+    assert [num for num, _ in run.passed] == [1, 2], 'the via point is not counted as a waypoint'
+
+
+def test_rescue_gives_up_by_skipping_the_waypoint():
+    import json
+    from action_msgs.msg import GoalStatus
+    n, run, said = make()
+    run.tick(time.monotonic(), False, [])
+    goal, h1, fb_cb = n.through.sent[0]
+    fb_cb(feedback(h1, 2.0, 0.0, 6.0, 2))             # waypoint 1 passed, two left in this stretch
+    h1.result_fut.finish(result(GoalStatus.STATUS_ABORTED))
+    n.retrace_cli.calls[0].finish(Reply(True, 'backed out'))
+    run.tick(time.monotonic(), False, [])
+    n.through.sent[1][1].result_fut.finish(result(GoalStatus.STATUS_ABORTED))
+    n.ask_cli.calls[0].finish(Reply(True, json.dumps({'advice': {'what': 'a wall', 'action': 'give_up', 'why': 'no way', 'say': ''}})))
+    run.tick(time.monotonic(), False, [])
+    assert run.rescue['skipped'] == 1 and len(n.through.sent) == 3
+    assert [p.pose.position.x for p in n.through.sent[2][0].poses] == [0.0], 'waypoint 2 skipped, on to 3'
+    assert any('skipping waypoint 2' in s for s in said)
+
+
+def test_rescue_with_no_answer_skips():
+    from action_msgs.msg import GoalStatus
+    n, run, said = make()
+    run.tick(time.monotonic(), False, [])
+    n.through.sent[0][1].result_fut.finish(result(GoalStatus.STATUS_ABORTED))
+    n.retrace_cli.calls[0].finish(Reply(True, 'backed out'))
+    run.tick(time.monotonic(), False, [])
+    n.through.sent[1][1].result_fut.finish(result(GoalStatus.STATUS_ABORTED))
+    assert run.phase == 'rescue ask'
+    run.tick(time.monotonic() + route_run.ASK_WAIT_S + 1, False, [])
+    assert run.rescue['skipped'] == 1 and run.phase == 'driving'

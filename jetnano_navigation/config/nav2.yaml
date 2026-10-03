@@ -87,7 +87,8 @@ controller_server:
 
     FollowPath:
       plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
-      desired_linear_vel: 0.30          # first autonomous tests 2026-09-27
+      desired_linear_vel: 0.36          # 0.30 from the first tests 2026-09-27; one notch up after the
+                                        # clean lap of drive 25 (2026-10-02, 94 s, throttle never above 0.20)
       lookahead_dist: 0.45
       min_lookahead_dist: 0.50   # 2026-09-27: 0.25 flicked the steering near goals
       max_lookahead_dist: 0.80

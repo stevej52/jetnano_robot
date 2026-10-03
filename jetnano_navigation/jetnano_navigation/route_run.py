@@ -26,7 +26,10 @@ responsive to the safety gate and to commands:
   again; six tries, then the route fails;
 - pictures (nav_helper ~/snapshot) on a 3 s stop or the first detour, at most six;
 - a line a second with where she is and what the driver gets, the passed waypoints, and
-  the result line nav_route printed.
+  the result line nav_route printed;
+- the rescue when Nav2 gives up on a waypoint (nav_goal --rescue, inside the lap since
+  2026-10-02): back out along her track and retry, ask Claude with her pictures (at most
+  RESCUE_ASKS), do as advised (wait, via, retrace), else skip that waypoint and go on.
 The gate's holds are the controller's: it calls hold() (cancel, keep the rest) and
 resume() (send the rest again).
 
@@ -47,6 +50,9 @@ from jetnano_navigation.nav_goal import SEARCH_M, clear_goal, grid_from_costmap,
 from jetnano_navigation.nav_route import (DETOUR_TRIES, DETOUR_WAIT_S, chunks, is_detour, pose_msg,
                                           remaining_straight)
 
+RESCUE_ASKS = 2         # asks of Claude per route (nav_goal --rescue: the same)
+RETRACE_M = 0.8         # back out this far along her own track before the first retry
+ASK_WAIT_S = 200.0      # the pictures, the brain, the answer
 STILL_M = 0.05          # not moved this far = standing still
 STILL_S = 3.0           # standing still this long with the route live -> pictures
 SNAPS_MAX = 6
@@ -88,6 +94,13 @@ class RouteRun:
         self.last_line = 0.0
         self.cmds = []                    # (throttle, steer) the driver got, for the result line
         self.locked_during = False
+        # the rescue (nav_goal --rescue, inside the lap since 2026-10-02 drive 23: an open
+        # dishwasher aborted the lap, and the rescue run by hand went round the island on
+        # Claude's advice): Nav2 gives up -> back out along her track and try again -> ask
+        # Claude with her pictures -> wait / via / retrace as advised, or skip the blocked
+        # waypoint and carry on; the lap only fails when nothing is left to go for
+        self.rescue = {'retraced': False, 'asks': 0, 'skipped': 0, 'future': None, 'advice': None}
+        self.via_first = False            # the stretch in hand starts with a via point, not a waypoint
 
     # ---------------------------------------------------------------- start --
 
@@ -176,6 +189,9 @@ class RouteRun:
         left = f.feedback.number_of_poses_remaining
         while left < self.fb['left']:
             self.fb['left'] -= 1
+            if self.via_first:
+                self.via_first = False                   # Claude's via point passed: not a waypoint
+                continue
             num = self.done_before + len(self.stretch) - self.fb['left']
             self.passed.append((num, time.monotonic() - self.t0))
             self.say(f'{time.monotonic() - self.t0:5.1f} s  passed waypoint {num}')
@@ -190,6 +206,9 @@ class RouteRun:
             self.handle = None
             if why == 'hold':
                 self.phase = 'held'
+            elif why == 'rescue':
+                self.phase = 'driving'                    # so _rescue counts the stretch as the one in hand
+                return self._rescue('the way stayed blocked')
             else:
                 self.phase = 'detour wait'                # time for the block to pass or the costmap to settle
                 self.deadline = time.monotonic() + DETOUR_WAIT_S
@@ -197,13 +216,136 @@ class RouteRun:
         if status == GoalStatus.STATUS_SUCCEEDED:
             self.passed.append((len(self.route), time.monotonic() - self.t0))   # the last is reached, not passed
             return self.finish('SUCCEEDED', '')
+        if status == GoalStatus.STATUS_ABORTED and self.phase == 'driving':
+            self.handle = None
+            return self._rescue('Nav2 gave up')
         names = {GoalStatus.STATUS_ABORTED: 'ABORTED', GoalStatus.STATUS_CANCELED: 'CANCELED'}
         self.finish(names.get(status, str(status)), '')
+
+    # --------------------------------------------------------------- rescue --
+
+    def _rescue(self, why):
+        """Nav2 could not get there: the next step of the rescue, from where she stands."""
+        r = self.rescue
+        remaining = self.remaining()
+        if not remaining:
+            return self.finish('ABORTED', why)
+        num = self.done_before + len(self.stretch) - len(remaining) + 1
+        if not r['retraced']:
+            r['retraced'] = True
+            self.say(f'rescue: {why} short of waypoint {num}: backing out along her own track, then trying again')
+            self.n.set_retrace(RETRACE_M)
+            r['future'] = self.n.retrace_cli.call_async(Trigger.Request()) if self.n.retrace_cli.service_is_ready() else None
+            self.pending = remaining
+            self.phase = 'rescue retrace'
+            self.deadline = time.monotonic() + 60.0
+            return
+        if r['asks'] < RESCUE_ASKS and self.n.ask_cli.service_is_ready():
+            r['asks'] += 1
+            self.say(f'rescue: {why} again; asking Claude (house map, obstacles, camera sweep), ask {r["asks"]} of {RESCUE_ASKS}')
+            self.n.load_voice()
+            r['future'] = self.n.ask_cli.call_async(Trigger.Request())
+            self.pending = remaining
+            self.phase = 'rescue ask'
+            self.deadline = time.monotonic() + ASK_WAIT_S
+            return
+        self._skip(remaining, f'{why} and the advice did not help')
+
+    def _skip(self, remaining, why):
+        """Drop the waypoint she cannot reach and go for the next one (Nav2 plans round)."""
+        num = self.done_before + len(self.stretch) - len(remaining) + 1
+        self.rescue['skipped'] += 1
+        rest = remaining[1:]
+        self.say(f'rescue: skipping waypoint {num} ({why}); {len(rest)} to go')
+        self.passed.append((num, time.monotonic() - self.t0))      # counted as passed: dealt with
+        if not rest:
+            return self.finish('ABORTED', f'waypoint {num} unreachable and nothing after it')
+        self.rescue['retraced'] = False                             # a fresh waypoint gets a fresh retrace
+        self.done_before += len(self.stretch) - len(rest)
+        self.send(rest)
+
+    def _advised(self, msg):
+        """Act on Claude's answer (nav_helper ~/ask): wait, via, retrace, or give up = skip."""
+        try:
+            out = json.loads(msg) if msg else {}
+        except ValueError:
+            out = {'error': msg}
+        advice = out.get('advice')
+        remaining = self.pending or self.remaining()
+        if not advice:
+            self.say(f'rescue: no usable advice ({out.get("error") or "unreadable answer"}); pictures in {out.get("dir", "?")}')
+            return self._skip(remaining, 'no advice')
+        self.say(f'rescue: Claude sees "{advice.get("what", "?")}"' + (' (temporary)' if advice.get('temporary') else '')
+                 + f' -> {advice.get("action")}: {advice.get("why", "")}' + f' ({out.get("seconds", "?")} s; {out.get("dir", "")})')
+        if advice.get('say'):
+            self.n.speak(advice['say'])
+        action = advice.get('action')
+        self.rescue['advice'] = action
+        if action == 'wait':
+            wait_s = float(advice.get('wait_s') or 30.0)
+            self.say(f'rescue: waiting {wait_s:.0f} s')
+            self.phase = 'rescue wait'
+            self.deadline = time.monotonic() + wait_s
+        elif action == 'via' and 'x' in advice and 'y' in advice:
+            vx, vy = float(advice['x']), float(advice['y'])
+            nx, ny, _ = remaining[0]
+            self.say(f'rescue: going via ({vx:+.2f}, {vy:+.2f})')
+            self.done_before += len(self.stretch) - len(remaining)
+            self.send([(vx, vy, math.atan2(ny - vy, nx - vx))] + remaining)
+            self.done_before -= 1                                   # the via point is not a waypoint
+            self.via_first = True
+        elif action == 'retrace':
+            self.n.set_retrace(float(advice.get('retrace_m') or RETRACE_M))
+            self.rescue['future'] = self.n.retrace_cli.call_async(Trigger.Request()) if self.n.retrace_cli.service_is_ready() else None
+            self.phase = 'rescue retrace'
+            self.deadline = time.monotonic() + 60.0
+        else:                                                       # give_up, or something new
+            self._skip(remaining, f'Claude says {action or "nothing"}')
+
+    def _rescue_tick(self, now):
+        r = self.rescue
+        if self.phase == 'rescue retrace':
+            fut = r['future']
+            if fut is not None and not fut.done() and now < self.deadline:
+                return
+            if fut is not None and fut.done():
+                try:
+                    self.say(f'rescue: {fut.result().message}')
+                except Exception as exc:  # noqa: BLE001
+                    self.say(f'rescue: retrace failed ({str(exc)[:60]})')
+            elif fut is None:
+                self.say('rescue: no nav_helper to back out with: trying again from here')
+            else:
+                self.say('rescue: the retrace did not answer in 60 s: trying again from here')
+            r['future'] = None
+            pending, self.pending = self.pending, None
+            self.done_before += len(self.stretch) - len(pending)
+            self.send(pending)
+        elif self.phase == 'rescue ask':
+            fut = r['future']
+            if fut is not None and fut.done():
+                r['future'] = None
+                try:
+                    msg = fut.result().message
+                except Exception as exc:  # noqa: BLE001
+                    msg = json.dumps({'error': str(exc)[:80]})
+                self._advised(msg)
+            elif now >= self.deadline:
+                r['future'] = None
+                self.say(f'rescue: no answer in {ASK_WAIT_S:.0f} s')
+                self._skip(self.pending or self.remaining(), 'no answer')
+        elif self.phase == 'rescue wait':
+            if now >= self.deadline:
+                pending, self.pending = self.pending, None
+                self.done_before += len(self.stretch) - len(pending)
+                self.send(pending)
 
     def _cancel_then(self, why, pending):
         """Cancel the running stretch; when Nav2 confirms, wait (detour) or hold with `pending` to go."""
         self.pending = pending
         if self.handle is None:                           # still being accepted: nothing to cancel yet
+            if why == 'rescue':
+                return self._rescue('the way stayed blocked')
             self.phase = 'held' if why == 'hold' else 'detour wait'
             self.deadline = time.monotonic() + DETOUR_WAIT_S
             return
@@ -258,6 +400,9 @@ class RouteRun:
                 self.send(self.pending)                   # the same stretch, the waypoints still to go
                 self.pending = None
             return
+        if self.phase.startswith('rescue'):
+            self._rescue_tick(now)
+            return
         if self.phase not in ('driving', 'sending', 'cancelling'):
             return
         if now - self.t0 > self.timeout_s:
@@ -298,8 +443,9 @@ class RouteRun:
             if self.detours == 1:
                 self._snap(f'detour at {p[0]:+.2f}, {p[1]:+.2f}')
             if self.detours >= DETOUR_TRIES:
-                self.say('the way stays blocked: giving up')
-                return self.abandon('the way stays blocked')
+                self.say('the way stays blocked: the rescue takes over')
+                self.detours = 0
+                return self._cancel_then('rescue', remaining)
             if self.detours == 3:
                 self.say('   clearing the costmaps')
                 self.n.clear_costmaps()
@@ -357,7 +503,10 @@ class RouteRun:
         self.line = (f'result {outcome} after {time.monotonic() - self.t0:.1f} s'
                      + (' (the motion check stopped her)' if self.locked_during else '')
                      + (f'; {note}' if note else '')
-                     + f'; passed {len(self.passed)} of {len(self.route)} waypoints' + where
+                     + f'; passed {len(self.passed)} of {len(self.route)} waypoints'
+                     + (f' ({self.rescue["skipped"]} skipped, {self.rescue["asks"]} ask(s) of Claude)'
+                        if self.rescue['asks'] or self.rescue['skipped'] else '')
+                     + where
                      + f'; driver got {len(self.cmds)} commands, throttle {min(thr, default=0):.2f}-{max(thr, default=0):.2f}'
                      + f'; forward/reverse switches {switches}')
         self.say(self.line)

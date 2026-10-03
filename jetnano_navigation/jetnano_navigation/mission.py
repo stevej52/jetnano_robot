@@ -53,6 +53,8 @@ from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped, Twist
 from nav2_msgs.action import NavigateThroughPoses, NavigateToPose
 from nav2_msgs.srv import ClearEntireCostmap, GetCostmap
+from rcl_interfaces.msg import Parameter, ParameterValue
+from rcl_interfaces.srv import SetParameters
 from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
@@ -101,6 +103,11 @@ class Mission(Node):
         self.clear_clis = [self.create_client(ClearEntireCostmap, name) for name in
                            ('/global_costmap/clear_entirely_global_costmap', '/local_costmap/clear_entirely_local_costmap')]
         self.snap_cli = self.create_client(Trigger, '/nav_helper/snapshot')
+        # the rescue's helpers (route_run): back out along her track, ask Claude, speak
+        self.retrace_cli = self.create_client(Trigger, '/nav_helper/retrace')
+        self.ask_cli = self.create_client(Trigger, '/nav_helper/ask')
+        self.helper_params = self.create_client(SetParameters, '/nav_helper/set_parameters')
+        self.speak_pub = self.create_publisher(String, 'speak', 10)
         self.tf_buf = tf2_ros.Buffer()
         self.tf_lis = tf2_ros.TransformListener(self.tf_buf, self)
         self.gate = None                 # the gate's latest verdict (dict)
@@ -135,6 +142,29 @@ class Mission(Node):
         for cli in self.clear_clis:
             if cli.service_is_ready():
                 cli.call_async(ClearEntireCostmap.Request())
+
+    def set_retrace(self, metres):
+        """How far nav_helper's ~/retrace backs out (its retrace_m parameter), without waiting."""
+        if not self.helper_params.service_is_ready():
+            return
+        req = SetParameters.Request()
+        req.parameters = [Parameter(name='retrace_m', value=ParameterValue(type=3, double_value=float(metres)))]
+        self.helper_params.call_async(req)
+
+    def speak(self, text):
+        """Her voice, if the voice stack is loaded (load_voice() asks for it; ~15 s to come up)."""
+        self.get_logger().info(f'says: {text}')
+        self.speak_pub.publish(String(data=text))
+
+    def load_voice(self):
+        """Load the voice stack for the rescue's words (as meet does); no-op when it is loaded."""
+        try:
+            from jetnano_bringup import voice_switch
+            if not voice_switch.loaded():
+                self.get_logger().info('loading the voice stack so the rescue can speak')
+                voice_switch.switch(True, quiet=True)
+        except Exception as exc:  # noqa: BLE001
+            self.get_logger().warning(f'voice stack: {exc}')
 
     def say(self, mission, line):
         """A line of the mission's story: the log, and /mission/log for the client."""

@@ -39,7 +39,8 @@ done
 # table, back up the hall to (2.0, -2.0) pointing at the parking spot
 # ... and ends at nav_park's arc start for a lap coming down the hall (0.85, -0.81, 134), so the
 # parking carries straight on: no 15 s stand at (2, -2) while nav_park starts and plans (drives 17/19)
-LAP="2.8 -3.5 -90  1.2 -4.4 180  -0.45 -5.6 -90  1.5 -7.3 0  4.5 -7.5 0  6.5 -7.7 20  7.05 -6.5 90  5.5 -5.5 180  3.2 -4.3 110  0.85 -0.81 134"
+# waypoints 1, 8 and 9 where the planner's costmap moved them on every run (drives 21-25: 15, 5 and 7-10 cm off the furniture margins)
+LAP="2.94 -3.48 -90  1.2 -4.4 180  -0.45 -5.6 -90  1.5 -7.3 0  4.5 -7.5 0  6.5 -7.7 20  7.05 -6.5 90  5.54 -5.49 180  3.14 -4.33 110  0.85 -0.81 134"
 ROUTE="${*:-$LAP}"
 
 D="$HOME/audit/$(date +%F)/drive$N"
