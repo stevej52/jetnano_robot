@@ -90,3 +90,18 @@ The node's log says `outputs ENABLED (output-enable pin 7 high, heartbeat 20 Hz)
 
 What the pca9685 node's own logs say during a test is in `journalctl -u
 jetnano-robot`.
+
+## Fitted and proven (2026-10-02, 21:16-22:04)
+
+Stop from ROS, a servo node frozen for 2 s, and re-enable all go through the XIAO; the
+relay follows within 0.2 s and comes back on release. Two lessons from the fitting:
+
+- The relay's **IN** terminal must carry one wire only, from the XIAO's D1. On the first
+  try the D1 wire sat on another relay terminal while the old pin-7 wire still fed IN: the
+  relay chattered at 20 Hz (a flickering light, servos stuttering) and looked as if it
+  "worked". Pulling the D1 wire with the relay still pulsing gave it away.
+- A cut of the relay chops whatever servo pulse is in flight, and a chopped pulse sends a
+  servo to its end stop (pan hard right, steering hard left). Every stop the servo node
+  commands now silences all channels first, waits one PWM period, then drops the pin
+  (ros2_pca9685). A cut from outside - the XIAO on a frozen node, a pulled wire - is
+  abrupt by nature and may twitch a servo once.
