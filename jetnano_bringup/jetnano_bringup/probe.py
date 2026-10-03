@@ -45,7 +45,8 @@ from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy  # noqa: E
 from rosidl_runtime_py.utilities import get_message  # noqa: E402
 
 ANY = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT, durability=DurabilityPolicy.VOLATILE)
-LATCHED = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+# reliable on purpose: a late joiner only gets the latched sample over the reliable protocol
+LATCHED = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE, durability=DurabilityPolicy.TRANSIENT_LOCAL)
 
 
 def spin_for(node, seconds, until=lambda: False):
