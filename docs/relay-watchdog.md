@@ -1,4 +1,4 @@
-# Relay watchdog (not fitted yet)
+# Relay watchdog (fitted 2026-10-02)
 
 ## Why
 
@@ -28,7 +28,7 @@ frozen kernel, a stuck node or a dead executor all stop the edges.
 |---|---|---|
 | Jetson header pin 7 | XIAO **D0** | the heartbeat (3.3 V on both sides) |
 | XIAO **D1** | relay **IN** (take it off pin 7) | the XIAO switches the relay now |
-| XIAO **5V** | PCA9685 **V+** (5.19 V, the relay's supply) | powers the XIAO |
+| XIAO **5V** (VCC on the back) | PCA9685 **V+** (a servo header's middle pin) | powers the XIAO |
 | XIAO **GND** | PCA9685 **GND** | common ground with the Jetson and the relay |
 
 The relay's own wiring doesn't change: DC+ on V+, jumper on H, COM to OE, NC to
@@ -49,12 +49,14 @@ Unplug the 5V wire first whenever you reprogram it.
    `code.py` that is already there.
 4. Unplug it, then wire it as in the table above.
 
-The green LED on the XIAO is lit while the relay is closed.
+The relay module's own LED shows the relay state (dimmer than before: the XIAO drives IN at
+3.3 V). The XIAO's green LED did not light on the first fit (the program's LED pin name);
+the relay is the thing to watch.
 
-## Turning the heartbeat on
+## The heartbeat
 
-This goes in `jetnano_bringup/config/pca9685.yaml`, and **only after the XIAO
-is fitted**:
+On since 2026-10-02 in `jetnano_bringup/config/pca9685.yaml` (fitted that evening; the
+servo node's setting had never been copied into its settings before, ros2_pca9685 537846c):
 
 ```yaml
     output_enable_heartbeat_hz: 20.0

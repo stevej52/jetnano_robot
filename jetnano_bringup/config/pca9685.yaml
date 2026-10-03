@@ -20,8 +20,9 @@
     output_enable_pin: 7
     output_enable_active_high: true
     # Toggle pin 7 at 20 Hz for the relay watchdog (a XIAO RP2040 between pin 7 and the
-    # relay: docs/relay-watchdog.md). ONLY once it is fitted - without it the relay chatters.
-    # output_enable_heartbeat_hz: 20.0
+    # relay: docs/relay-watchdog.md). Fitted and tested 2026-10-02 19:07 (stop from ROS and a
+    # frozen node both drop the relay). Without the XIAO this line makes the relay chatter.
+    output_enable_heartbeat_hz: 20.0
     channels: [throttle, steering, rear_steering, pan, tilt]
 
     # Publish servo positions as joint_states. Left off for now: the driver
