@@ -314,3 +314,59 @@ def test_rescue_with_no_answer_skips():
     assert run.phase == 'rescue ask'
     run.tick(time.monotonic() + route_run.ASK_WAIT_S + 1, False, [])
     assert run.rescue['skipped'] == 1 and run.phase == 'driving'
+
+
+def test_a_lone_waypoint_stretch_is_driven_to_its_end_before_the_next():
+    # the review's example: out 3 m and back to 0.2 m - two stretches that do not overlap
+    from action_msgs.msg import GoalStatus
+    n, run, said = make(route=[[3, 0, 0], [0.2, 0, 0]])
+    run.tick(time.monotonic(), False, [])
+    assert len(run.stretches) == 2 and len(n.through.sent) == 1
+    goal, h1, fb_cb = n.through.sent[0]
+    fb_cb(feedback(h1, 1.0, 0.0, 2.0, 1))             # one left (it is the only one): NOT a handover
+    run.tick(time.monotonic() + 1.5, False, [])
+    assert len(n.through.sent) == 1, 'the lone waypoint is driven to its end'
+    h1.result_fut.finish(result(GoalStatus.STATUS_SUCCEEDED))
+    assert any('reached waypoint 1' in s for s in said) and len(n.through.sent) == 2
+    assert [p.pose.position.x for p in n.through.sent[1][0].poses] == [0.2]
+    n.through.sent[1][1].result_fut.finish(result(GoalStatus.STATUS_SUCCEEDED))
+    assert run.done and run.outcome == 'SUCCEEDED' and [num for num, _ in run.passed] == [1, 2]
+
+
+def test_a_skipped_waypoint_is_not_reported_as_reached():
+    import json
+    from action_msgs.msg import GoalStatus
+    n, run, said = make()
+    run.tick(time.monotonic(), False, [])
+    goal, h1, fb_cb = n.through.sent[0]
+    fb_cb(feedback(h1, 2.0, 0.0, 6.0, 2))
+    h1.result_fut.finish(result(GoalStatus.STATUS_ABORTED))
+    n.retrace_cli.calls[0].finish(Reply(True, 'backed out'))
+    run.tick(time.monotonic(), False, [])
+    n.through.sent[1][1].result_fut.finish(result(GoalStatus.STATUS_ABORTED))
+    n.ask_cli.calls[0].finish(Reply(True, json.dumps({'advice': {'what': 'a wall', 'action': 'give_up', 'why': 'no way', 'say': ''}})))
+    run.tick(time.monotonic(), False, [])
+    assert run.skipped == [2] and [num for num, _ in run.passed] == [1]
+    n.pose = (0.0, 0.5, 0.0)
+    for h in (n.through.sent[2][1],):
+        h.result_fut.finish(result(GoalStatus.STATUS_SUCCEEDED))
+    # the last stretch (an overlapping one) follows; finish it
+    while not run.done and len(n.through.sent) > 3:
+        n.through.sent[-1][1].result_fut.finish(result(GoalStatus.STATUS_SUCCEEDED))
+    if not run.done:
+        run.finish('SUCCEEDED', '')
+    assert 'skipped: [2]' in run.line and '2 of 4 waypoints' not in run.line.replace('skipped', '')
+
+
+def test_gate_hold_during_the_rescue_pauses_it_and_resumes_in_place():
+    from action_msgs.msg import GoalStatus
+    n, run, said = make()
+    run.tick(time.monotonic(), False, [])
+    n.through.sent[0][1].result_fut.finish(result(GoalStatus.STATUS_ABORTED))
+    assert run.phase == 'rescue retrace'
+    run.hold()
+    assert run.phase == 'held' and run.rescue_return == 'rescue retrace'
+    run.tick(time.monotonic(), True, [])
+    assert run.phase == 'held', 'nothing moves while held'
+    run.resume()
+    assert run.phase == 'rescue retrace'

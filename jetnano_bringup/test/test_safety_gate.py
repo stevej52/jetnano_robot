@@ -47,3 +47,15 @@ def test_bench_driving_can_be_allowed_as_degraded():
     assert decide(0, bench)[0] == 'inhibited'
     state, reasons, speed = decide(0, {**bench, 'allow_bench': True})
     assert state == 'degraded' and 'wheels up' in reasons[0] and speed == DEGRADED_SPEED_PCT
+
+
+def test_verdicts_expire_and_a_frozen_stamp_counts_as_stale():
+    # the battery monitor and the camera's health report go quiet: degraded with the reason
+    state, reasons, speed = decide(0, {**OK, 'battery_age': 25.0})
+    assert state == 'degraded' and 'battery verdict 25 s old' in reasons[0] and speed == DEGRADED_SPEED_PCT
+    state, reasons, _ = decide(0, {**OK, 'camera_age': 9.0})
+    assert state == 'degraded' and 'no health report for 9 s' in reasons[0]
+    assert decide(0, {**OK, 'battery_age': 3.0, 'camera_age': 1.0}) == ('ok', [], 100.0)
+    # the node adds the measurement's lag to a stream's age: a scan arriving with a 3 s old stamp
+    # is a 3 s old scan, so the pure decision sees scan_age 3 and inhibits
+    assert decide(0, {**OK, 'scan_age': 3.0})[0] == 'inhibited'

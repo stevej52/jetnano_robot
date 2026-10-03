@@ -52,6 +52,7 @@ import tf2_ros
 from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped, Twist
 from nav2_msgs.action import NavigateThroughPoses, NavigateToPose
+from action_msgs.srv import CancelGoal
 from nav2_msgs.srv import ClearEntireCostmap, GetCostmap
 from rcl_interfaces.msg import Parameter, ParameterValue
 from rcl_interfaces.srv import SetParameters
@@ -67,7 +68,9 @@ from jetnano_navigation.route_run import RouteRun
 
 STATUS_NAMES = {GoalStatus.STATUS_SUCCEEDED: 'SUCCEEDED', GoalStatus.STATUS_ABORTED: 'ABORTED',
                 GoalStatus.STATUS_CANCELED: 'CANCELED'}
-DRIVING = ('sending', 'driving', 'cancelling')      # a route run's phases with a Nav2 goal in play
+DRIVING = ('sending', 'driving', 'cancelling', 'rescue retrace', 'rescue ask', 'rescue wait')   # phases the gate can hold
+PERMIT_MAX_AGE_S = 2.0     # a gate verdict older than this is no permission (the gate died, or stalled)
+CMD_HISTORY_MAX = 4000     # driver commands kept for a route's result line (~40 s at 100 Hz)
 
 
 def resume_policy(held_s, resume_within_s=30.0):
@@ -114,6 +117,13 @@ class Mission(Node):
         self.active = None               # the mission in hand (dict), or None
         self.held = None                 # {'since': monotonic, 'why': str, 'mission': dict} while stopped by the gate
         self.lock = None                 # the motion check's lock (e_stop_motion)
+        self.gate_at = None              # when the gate's verdict arrived (monotonic)
+        self.queued = None               # a goal/route that waits for the current mission's cancel to confirm
+        # Nav2 may still hold a goal from a controller that died (review 2026-10-03): cancel
+        # everything it has, once, when the servers are there
+        self.cancel_all = [self.create_client(CancelGoal, '/navigate_to_pose/_action/cancel_goal'),
+                           self.create_client(CancelGoal, '/navigate_through_poses/_action/cancel_goal')]
+        self.cancel_all_timer = self.create_timer(2.0, self._cancel_leftovers)
         self.cmds = []                   # (throttle, steer) the driver got since the last tick
         self.create_timer(0.25, self._tick)
         self.get_logger().info('mission controller: goal / route / cancel / resume on /mission/command; the safety gate is obeyed')
@@ -157,14 +167,19 @@ class Mission(Node):
         self.speak_pub.publish(String(data=text))
 
     def load_voice(self):
-        """Load the voice stack for the rescue's words (as meet does); no-op when it is loaded."""
-        try:
-            from jetnano_bringup import voice_switch
-            if not voice_switch.loaded():
-                self.get_logger().info('loading the voice stack so the rescue can speak')
-                voice_switch.switch(True, quiet=True)
-        except Exception as exc:  # noqa: BLE001
-            self.get_logger().warning(f'voice stack: {exc}')
+        """Load the voice stack for the rescue's words (as meet does), off the executor thread:
+        a systemctl that hangs must not stop the controller (review 2026-10-03)."""
+        import threading
+
+        def go():
+            try:
+                from jetnano_bringup import voice_switch
+                if not voice_switch.loaded():
+                    self.get_logger().info('loading the voice stack so the rescue can speak')
+                    voice_switch.switch(True, quiet=True)
+            except Exception as exc:  # noqa: BLE001
+                self.get_logger().warning(f'voice stack: {exc}')
+        threading.Thread(target=go, name='voice-load', daemon=True).start()
 
     def say(self, mission, line):
         """A line of the mission's story: the log, and /mission/log for the client."""
@@ -178,9 +193,34 @@ class Mission(Node):
             self.gate = json.loads(m.data)
         except ValueError:
             return
+        self.gate_at = time.monotonic()
+
+    def permitted(self):
+        """(ok, why): the gate permits AND said so recently - a dead or stalled gate permits nothing."""
+        gate = self.gate or {}
+        if self.gate_at is None:
+            return False, 'no verdict from the safety gate'
+        age = time.monotonic() - self.gate_at
+        if age > PERMIT_MAX_AGE_S:
+            return False, f'the safety gate has not spoken for {age:.0f} s'
+        if not gate.get('permit', False):
+            return False, '; '.join(gate.get('reasons') or [gate.get('state', 'not permitted')])
+        return True, ''
+
+    def _cancel_leftovers(self):
+        """Once: cancel every goal Nav2 holds (a zero goal id = all), from before this controller."""
+        if any(not c.service_is_ready() for c in self.cancel_all):
+            return                                   # Nav2 not there yet: next tick
+        for c in self.cancel_all:
+            c.call_async(CancelGoal.Request())       # goal_id all zeros, stamp zero: everything
+        self.get_logger().info('cancelled whatever goals Nav2 still held from before this controller')
+        self.cancel_all_timer.cancel()
 
     def _on_cmd(self, m):
-        self.cmds.append((m.linear.x, m.angular.z))
+        if self.active is None or self.active.get('run') is None:
+            return                                   # only a route keeps the driver's commands (review 2026-10-03: this grew without bound)
+        if len(self.cmds) < CMD_HISTORY_MAX:
+            self.cmds.append((m.linear.x, m.angular.z))
 
     def _on_command(self, m):
         try:
@@ -197,10 +237,12 @@ class Mission(Node):
         elif do == 'resume':
             self._resume('on request')
         elif do in ('goal', 'route'):
-            if self.active is not None:
-                self._cancel('replaced by a new command')
             self.held = None
-            self._start(cmd)
+            if self.active is not None:
+                self.queued = cmd                    # starts when the cancel is confirmed (one goal in play at a time)
+                self._cancel('replaced by a new command')
+            else:
+                self._start(cmd)
         else:
             self.get_logger().warning(f'unknown command: {do}')
 
@@ -213,9 +255,8 @@ class Mission(Node):
 
     def _start(self, cmd):
         mission = self._new(cmd)
-        permit = (self.gate or {}).get('permit', False)
+        permit, why = self.permitted()
         if not permit:
-            why = '; '.join((self.gate or {}).get('reasons') or ['no verdict from the safety gate'])
             self._finish(mission, 'REFUSED', f'the safety gate does not permit: {why}')
             return
         if cmd['do'] == 'route':
@@ -248,9 +289,11 @@ class Mission(Node):
         fut.add_done_callback(lambda f: self._on_accepted(mission, f))
 
     def _on_accepted(self, mission, fut):
-        if self.active is not mission:
-            return
         handle = fut.result()
+        if self.active is not mission:
+            if handle is not None and handle.accepted:
+                handle.cancel_goal_async()           # accepted late, for a mission that is gone: not left running
+            return
         if handle is None or not handle.accepted:
             self._finish(mission, 'REJECTED', 'Nav2 rejected the goal')
             return
@@ -297,6 +340,9 @@ class Mission(Node):
         if self.held and self.held['mission'] is mission:
             self.held = None
         self._publish_status()
+        if self.queued is not None and self.active is None:
+            cmd, self.queued = self.queued, None
+            self._start(cmd)
 
     def _cancel(self, why):
         mission = self.active
@@ -321,9 +367,9 @@ class Mission(Node):
             self.get_logger().info('nothing held: nothing to resume')
             return
         mission = self.held['mission']
-        permit = (self.gate or {}).get('permit', False)
+        permit, why = self.permitted()
         if not permit:
-            self.get_logger().warning('cannot resume: the safety gate still does not permit')
+            self.get_logger().warning(f'cannot resume: {why}')
             return
         held_s = time.monotonic() - self.held['since']
         self.held = None
@@ -343,8 +389,7 @@ class Mission(Node):
     def _tick(self):
         now = time.monotonic()
         mission = self.active
-        gate = self.gate or {}
-        permit = gate.get('permit', False)
+        permit, why_not = self.permitted()
         run = mission['run'] if mission else None
         if run is not None:
             cmds, self.cmds = self.cmds, []
@@ -357,7 +402,7 @@ class Mission(Node):
         driving = mission is not None and (mission['phase'] == 'driving' if run is None else run.phase in DRIVING) \
             and self.held is None
         if driving and not permit:
-            why = '; '.join(gate.get('reasons') or [gate.get('state', 'not permitted')])
+            why = why_not
             self.held = {'since': now, 'why': why, 'mission': mission}
             self._cancel(f'the safety gate: {why}')
         elif self.held is not None and permit and self.active is not None and self.active['phase'] == 'held':

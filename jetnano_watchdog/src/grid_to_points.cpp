@@ -115,7 +115,11 @@ private:
   void on_grid(nav_msgs::msg::OccupancyGrid::ConstSharedPtr grid)
   {
     grid_ = grid;
-    grid_t_ = now().seconds();
+    // the grid's own measurement stamp decides its age for the planner too (review 2026-10-03:
+    // the receipt time said "fresh" while nvblox's stamp stood still); an absurd stamp -> receipt
+    const double now_s = now().seconds();
+    const double stamp_s = rclcpp::Time(grid->header.stamp).seconds();
+    grid_t_ = (stamp_s > 0.0 && std::fabs(now_s - stamp_s) < 60.0) ? stamp_s : now_s;
     const auto & info = grid->info;
     const double res = info.resolution, ox = info.origin.position.x, oy = info.origin.position.y;
     const uint32_t width = info.width;

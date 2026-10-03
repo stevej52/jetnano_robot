@@ -22,7 +22,10 @@ The gate publishes:
 - `/speed_limit` (nav2_msgs/SpeedLimit): the 50 % while degraded
 
 It starts `inhibited` and only opens when the required streams are fresh (lidar scan under
-1.5 s old, odometry under 1 s) and the battery verdict allows.
+1.5 s old, odometry under 1 s) and the battery verdict allows. A stream's age includes how
+far its measurement stamp was behind ROS time when it arrived, so a stream that keeps
+arriving with a frozen stamp is as stale as one that stopped. The battery verdict (20 s)
+and the camera's health report (5 s) expire into `degraded` with the reason.
 
 ## Bench driving
 

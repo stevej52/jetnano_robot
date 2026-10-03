@@ -1,0 +1,39 @@
+[Unit]
+Description=jetnano Nav2: ros2 launch jetnano_navigation navigation.launch.py (mode:=external nvblox:=true)
+Documentation=https://github.com/stevej52/jetnano_robot
+# Nav2 is one supervised unit (review 2026-10-03, stage 4 of the architecture plan): the
+# launch owns the container, its components, the lifecycle manager and the helpers; if the
+# container dies the launch ends (navigation.launch.py) and systemd starts the whole thing
+# again. Until this unit, drive.sh and nav2_ctl.sh started Nav2 by hand with pgrep patterns,
+# and a respawned container came back empty.
+After=jetnano-robot.service
+BindsTo=jetnano-robot.service
+PartOf=jetnano-robot.service
+
+[Service]
+Type=simple
+User=jeston
+Group=jeston
+WorkingDirectory=/home/jeston
+Environment=ROS_DOMAIN_ID=7
+Environment=HOME=/home/jeston
+Environment=FASTRTPS_DEFAULT_PROFILES_FILE=/etc/jetnano/fastdds_udp_only.xml
+# Override in /etc/default/jetnano-nav2, e.g. NAV2_ARGS="mode:=external nvblox:=false"
+Environment=NAV2_ARGS=mode:=external nvblox:=true
+EnvironmentFile=-/etc/default/jetnano-nav2
+# the robot's own stack first (the lidar, the odometry, the collision guard, the camera map)
+ExecStartPre=/bin/sleep 20
+ExecStart=/bin/bash -lc 'source /opt/ros/jazzy/setup.bash && source /home/jeston/ros2_ws/install/setup.bash && exec ros2 launch jetnano_navigation navigation.launch.py $NAV2_ARGS'
+# ros2 launch shuts its nodes down on SIGINT; the helpers go with it (no orphans)
+KillSignal=SIGINT
+KillMode=mixed
+TimeoutStopSec=25
+# always: a dead container ends the launch CLEANLY (exit 0), and that must restart too;
+# bounded to three starts in two minutes, then it stays down and says so (systemctl status)
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+[Install]
+WantedBy=jetnano-robot.service

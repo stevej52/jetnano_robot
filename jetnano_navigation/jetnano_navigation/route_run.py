@@ -101,6 +101,8 @@ class RouteRun:
         # waypoint and carry on; the lap only fails when nothing is left to go for
         self.rescue = {'retraced': False, 'asks': 0, 'skipped': 0, 'future': None, 'advice': None}
         self.via_first = False            # the stretch in hand starts with a via point, not a waypoint
+        self.skipped = []                 # waypoint numbers the rescue gave up on
+        self.rescue_return = None         # the rescue phase to go back to after a gate hold
 
     # ---------------------------------------------------------------- start --
 
@@ -175,6 +177,16 @@ class RouteRun:
         self.phase = 'driving'
         handle.get_result_async().add_done_callback(lambda f: self.on_result(handle, f))
 
+    def _next_overlaps(self):
+        """True when the next stretch begins with this one's last waypoint, so Nav2 can swap goals
+        on the move. A stretch that does NOT overlap (a lone waypoint, an out-and-back) must be
+        driven to its end first (review 2026-10-03: it used to be replaced at once)."""
+        if self.k + 1 >= len(self.stretches) or not self.stretch:
+            return False
+        nxt = self.stretches[self.k + 1][0]
+        last = self.stretch[-1]
+        return abs(nxt[0] - last[0]) < 1e-6 and abs(nxt[1] - last[1]) < 1e-6
+
     def remaining(self):
         """The waypoints of the current stretch still to go."""
         left = self.fb['left']
@@ -214,6 +226,15 @@ class RouteRun:
                 self.deadline = time.monotonic() + DETOUR_WAIT_S
             return
         if status == GoalStatus.STATUS_SUCCEEDED:
+            if self.k + 1 < len(self.stretches):                 # a stretch that did not overlap: its end reached
+                num = self.done_before + len(self.stretch)
+                self.passed.append((num, time.monotonic() - self.t0))
+                self.say(f'{time.monotonic() - self.t0:5.1f} s  reached waypoint {num}')
+                self.done_before += len(self.stretch)
+                self.k += 1
+                self.handle = None
+                self.send(self.stretches[self.k])
+                return
             self.passed.append((len(self.route), time.monotonic() - self.t0))   # the last is reached, not passed
             return self.finish('SUCCEEDED', '')
         if status == GoalStatus.STATUS_ABORTED and self.phase == 'driving':
@@ -257,7 +278,7 @@ class RouteRun:
         self.rescue['skipped'] += 1
         rest = remaining[1:]
         self.say(f'rescue: skipping waypoint {num} ({why}); {len(rest)} to go')
-        self.passed.append((num, time.monotonic() - self.t0))      # counted as passed: dealt with
+        self.skipped.append(num)                                   # dealt with, NOT reached
         if not rest:
             return self.finish('ABORTED', f'waypoint {num} unreachable and nothing after it')
         self.rescue['retraced'] = False                             # a fresh waypoint gets a fresh retrace
@@ -358,9 +379,17 @@ class RouteRun:
         self.locked_during = True
         if self.phase in ('checking', 'starting'):
             return self.finish('REFUSED', 'the safety gate stopped her before the start')
+        if self.phase.startswith('rescue'):               # nothing of Nav2's runs; the mux lock holds her
+            self.rescue_return, self.phase = self.phase, 'held'
+            self.say('rescue paused: the safety gate holds her')
+            return
         self._cancel_then('hold', self.remaining())
 
     def resume(self):
+        if self.phase == 'held' and self.rescue_return:
+            self.phase, self.rescue_return = self.rescue_return, None
+            self.say(f'rescue resumes ({self.phase})')
+            return
         if self.phase == 'held' and self.pending:
             self.done_before += len(self.stretch) - len(self.pending)
             self.send(self.pending)
@@ -408,7 +437,7 @@ class RouteRun:
         if now - self.t0 > self.timeout_s:
             self.say('timeout: cancelling the route')
             return self.abandon(f'timeout after {self.timeout_s:.0f} s')
-        if self.phase == 'driving' and self.fb['left'] <= 1 and self.k + 1 < len(self.stretches):
+        if self.phase == 'driving' and self.fb['left'] <= 1 and self._next_overlaps():
             self.done_before += len(self.stretch) - 1     # only this stretch's last is left: the next starts with it
             self.k += 1
             self.send(self.stretches[self.k])
@@ -419,7 +448,7 @@ class RouteRun:
         p = self.fb['pose'] or self.start_pose
         c = self.cmds[-1] if self.cmds else (0.0, 0.0)
         self.say(f'{now - self.t0:5.1f} s  at x {p[0]:+.2f} y {p[1]:+.2f} h {math.degrees(p[2]):+4.0f}  '
-                 f'{len(self.route) - len(self.passed)} to go, {self.fb["dist"]:.2f} m  '
+                 f'{len(self.route) - len(self.passed) - len(self.skipped)} to go, {self.fb["dist"]:.2f} m  '
                  f'driver: throttle {c[0]:+.2f} steer {c[1]:+.2f}' + ('  MOTION LOCK' if lock else ''))
         self._snap_poll()
         if self.phase != 'driving':
@@ -455,7 +484,7 @@ class RouteRun:
         """What the controller's status shows."""
         p = self.fb['pose']
         out = {'dist_m': round(self.fb['dist'], 2) if self.fb['dist'] == self.fb['dist'] else None,
-               'left': len(self.route) - len(self.passed), 'stretch': self.k + 1, 'stretches': len(self.stretches),
+               'left': len(self.route) - len(self.passed) - len(self.skipped), 'stretch': self.k + 1, 'stretches': len(self.stretches),
                'detours': self.detours}
         if p:
             out.update(x=round(p[0], 2), y=round(p[1], 2), h_deg=round(math.degrees(p[2])))
@@ -504,8 +533,8 @@ class RouteRun:
                      + (' (the motion check stopped her)' if self.locked_during else '')
                      + (f'; {note}' if note else '')
                      + f'; passed {len(self.passed)} of {len(self.route)} waypoints'
-                     + (f' ({self.rescue["skipped"]} skipped, {self.rescue["asks"]} ask(s) of Claude)'
-                        if self.rescue['asks'] or self.rescue['skipped'] else '')
+                     + (f' ({len(self.skipped)} skipped: {self.skipped}, {self.rescue["asks"]} ask(s) of Claude)'
+                        if self.rescue['asks'] or self.skipped else '')
                      + where
                      + f'; driver got {len(self.cmds)} commands, throttle {min(thr, default=0):.2f}-{max(thr, default=0):.2f}'
                      + f'; forward/reverse switches {switches}')

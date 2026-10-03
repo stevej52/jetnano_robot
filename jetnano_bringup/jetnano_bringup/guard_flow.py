@@ -80,9 +80,19 @@ class GuardFlow(Node):
         self.depth_at = 0.0
         self.create_subscription(CameraInfo, '/camera/depth/camera_info', self._on_depth_info, be)
         # the guard's own verdict: a STOP for an obstacle is her doing her job, not a fault
+        # the monitor publishes its state on CHANGE, not as a heartbeat (review 2026-10-03), so the
+        # last state is held until the next; the polygon name tells an obstacle stop (a named
+        # polygon) from a stop for an invalid source (no polygon)
         self.guard_action = 0
+        self.guard_polygon = ''
         self.guard_at = 0.0
         self.create_subscription(CollisionMonitorState, 'collision_guard/state', self._on_guard_state, 10)
+        # the camera's obstacles: stale or not is the C++ grid_to_points' verdict (camera_obstacles/
+        # health), since it replaces a stale cloud with an empty one stamped now - the cloud's own
+        # stamp no longer says anything about staleness
+        self.camera_health = ''
+        self.camera_health_at = 0.0
+        self.create_subscription(String, 'camera_obstacles/health', self._on_camera_health, 10)
         # (the speed cap while the camera's obstacles are stale is the safety gate's, since
         # 2026-10-02 08:00: one owner of /speed_limit; this node reports)
         self.status_pub = self.create_publisher(String, 'guard_flow/status', 10)
@@ -102,7 +112,12 @@ class GuardFlow(Node):
 
     def _on_guard_state(self, m):
         self.guard_action = int(m.action_type)
+        self.guard_polygon = str(getattr(m, 'polygon_name', '') or '')
         self.guard_at = time.monotonic()
+
+    def _on_camera_health(self, m):
+        self.camera_health = m.data
+        self.camera_health_at = time.monotonic()
 
     def depth_words(self) -> str:
         now = time.monotonic()
@@ -121,14 +136,16 @@ class GuardFlow(Node):
 
     def _tick(self):
         now = time.monotonic()
-        hold, stale = float(self.get_parameter('hold_s').value), float(self.get_parameter('stale_s').value)
+        hold = float(self.get_parameter('hold_s').value)
         why = ''
-        guard_stopping = now - self.guard_at < 1.0 and self.guard_action == CollisionMonitorState.STOP
-        if now - self.mux_at < 1.0 and now - self.out_at > hold and not guard_stopping:
-            why = 'commands go in, nothing comes out (and the guard reports no obstacle stop)'
-        camera_stale = now - self.pts_at < 2.0 and self.pts_age > stale
+        obstacle_stop = self.guard_action == CollisionMonitorState.STOP and bool(self.guard_polygon)
+        source_stop = self.guard_action == CollisionMonitorState.STOP and not self.guard_polygon
+        if now - self.mux_at < 1.0 and now - self.out_at > hold and not obstacle_stop:
+            why = ('commands go in, nothing comes out: the guard stopped for an invalid source' if source_stop
+                   else 'commands go in, nothing comes out (and the guard reports no obstacle stop)')
+        camera_stale = now - self.camera_health_at < 5.0 and self.camera_health.startswith('stale')
         if camera_stale:
-            why = (why + '; ' if why else '') + f'camera obstacles stale {self.pts_age:.0f} s - {self.depth_words()}'
+            why = (why + '; ' if why else '') + f'camera obstacles {self.camera_health} - {self.depth_words()}'
         if why:
             if self.bad_since is None:
                 self.bad_since = now

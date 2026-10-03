@@ -47,7 +47,7 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription, Shutdown
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
@@ -191,8 +191,11 @@ def generate_launch_description():
                 name='nav2_container',
                 package='rclcpp_components',
                 executable='component_container_isolated',
-                respawn=True,                 # the audit of 2026-10-02: the core had no respawn, its helpers did
-                respawn_delay=5.0,
+                # A respawn of the container alone restarts an EMPTY container: the component
+                # loads below are launch actions and do not run again (review 2026-10-03). So the
+                # container's death ends this launch, and the unit that runs it (jetnano-nav2.service)
+                # starts the whole thing again: container, components, lifecycle, helpers.
+                on_exit=[Shutdown(reason='the Nav2 container exited')],
                 parameters=[params_file, {'autostart': ParameterValue(
                     LaunchConfiguration('autostart'), value_type=bool)}],
                 output='screen',

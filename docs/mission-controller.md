@@ -41,6 +41,10 @@ It exits 0 on SUCCEEDED. `drive.sh` runs the lap through it.
 
 ## The gate
 
+A verdict counts only while it is fresh: a gate that has not spoken for 2 s permits nothing
+(`PERMIT_MAX_AGE_S`), so a dead or stalled gate refuses missions and holds a running one. On
+start the controller cancels any goal Nav2 still holds from a controller that died.
+
 - Not permitted when a command arrives: `REFUSED`, with the gate's reasons.
 - Gate stops her mid-mission: the controller cancels the Nav2 goal, waits for Nav2 to confirm,
   and holds the mission with the reason.

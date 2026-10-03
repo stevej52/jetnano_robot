@@ -18,7 +18,10 @@ What it does, in order:
 
 1. `voice off` (tests run with her voice and hearing unloaded).
 2. Warms the ros2 daemon (cold, it reported healthy streams as missing).
-3. Starts Nav2 if it is not running (`nav2_ctl.sh start`, one instance only).
+3. Starts Nav2 if it is not running (`nav2_ctl.sh start`). Since 2026-10-03 Nav2 is one
+   systemd unit, `jetnano-nav2.service`, started with the robot service: the launch owns the
+   container, its components, the lifecycle manager and the helpers, and a dead container
+   brings the whole subsystem back in about 30 s (proven on the bench with a SIGKILL).
 4. Starts the recorder in the background and runs `predrive`.
 5. Sends the route through the mission controller (`mission_cmd route`), then `nav_park`.
 6. Stops the recorder and writes the run's files into the bag.

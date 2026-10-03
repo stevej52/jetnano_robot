@@ -16,3 +16,25 @@ def test_remaining_route_from_nav2s_count():
     assert mission.remaining_route(wps, None) == wps          # no feedback yet: all of it again
     assert mission.remaining_route(wps, 0) == wps
     assert mission.remaining_route(wps, 9) == wps
+
+
+def test_permission_expires_with_the_gates_silence():
+    import time
+    from std_msgs.msg import String
+    pytest = __import__('pytest')
+    pytest.importorskip('rclpy')
+    import rclpy
+    rclpy.init()
+    try:
+        n = mission.Mission()
+        assert n.permitted() == (False, 'no verdict from the safety gate')
+        n._on_gate(String(data='{"permit": true, "state": "ok", "reasons": []}'))
+        assert n.permitted() == (True, '')
+        n.gate_at = time.monotonic() - mission.PERMIT_MAX_AGE_S - 1
+        ok, why = n.permitted()
+        assert not ok and 'has not spoken' in why
+        n._on_gate(String(data='{"permit": false, "state": "stopped", "reasons": ["STOP on the page"]}'))
+        assert n.permitted() == (False, 'STOP on the page')
+        n.destroy_node()
+    finally:
+        rclpy.shutdown()

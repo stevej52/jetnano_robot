@@ -50,6 +50,7 @@ Plain HTTP on the robot's own network, no login - like the driving page.
 
 import json
 import signal
+import select
 import subprocess
 import threading
 import time
@@ -172,6 +173,12 @@ class Camera:
                 continue
             buf = b''
             while True:
+                # a frame deadline on the pipe: a pipeline that stops producing without exiting
+                # used to block this read for ever (review 2026-10-03)
+                ready, _, _ = select.select([self.proc.stdout], [], [], 5.0)
+                if not ready:
+                    self.node.get_logger().warning(f'{self.name}: no frames for 5 s: restarting the pipeline')
+                    break
                 chunk = self.proc.stdout.read1(65536) if hasattr(self.proc.stdout, 'read1') else self.proc.stdout.read(65536)
                 if not chunk:
                     break

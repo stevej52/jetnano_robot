@@ -45,7 +45,6 @@ from nav2_msgs.msg import SpeedLimit
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-from rclpy.serialization import deserialize_message
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, String
 
@@ -93,8 +92,14 @@ def decide(now, inp):
         return 'stopped', stopped, 0.0
     # degraded
     cam = inp.get('camera') or ''
-    if cam.startswith('stale'):
+    cam_age = inp.get('camera_age')
+    if cam_age is not None and cam_age > 5.0:
+        degraded.append(f'camera obstacles: no health report for {cam_age:.0f} s: lidar only')
+    elif cam.startswith('stale'):
         degraded.append(f'camera obstacles {cam}: lidar only')
+    bat_age = inp.get('battery_age')
+    if bat_age is not None and bat_age > 20.0:
+        degraded.append(f'battery verdict {bat_age:.0f} s old (the monitor is silent)')
     if inp.get('vo_age') is not None and inp['vo_age'] > 2.0:
         degraded.append(f'visual odometry silent {inp["vo_age"]:.0f} s')
     if bat.get('level') == 'low':
@@ -127,18 +132,24 @@ class SafetyGate(Node):
         self.state, self.reasons, self.speed = 'inhibited', ['starting'], 0.0
         self.since = time.monotonic()
         self.last_lock_pub = 0.0
+        self.lag = {}                    # measurement stamp behind ROS time at arrival, per stream
         # raw subscriptions where the message is big or frequent: only the arrival matters
-        self.create_subscription(LaserScan, 'scan', lambda raw: self._seen('scan'), be, raw=True)
-        self.create_subscription(Odometry, 'odometry/filtered', lambda raw: self._seen('odom'), 10, raw=True)
-        self.create_subscription(Odometry, 'vo', lambda raw: self._seen('vo'), be, raw=True)
+        # raw: the header's stamp is bytes 4-12 of the CDR (sec int32, nanosec uint32), so a
+        # stream that keeps arriving with a frozen stamp is as stale as one that stopped
+        # (review 2026-10-03: arrival time alone said "fresh")
+        self.create_subscription(LaserScan, 'scan', lambda raw: self._seen('scan', raw), be, raw=True)
+        self.create_subscription(Odometry, 'odometry/filtered', lambda raw: self._seen('odom', raw), 10, raw=True)
+        self.create_subscription(Odometry, 'vo', lambda raw: self._seen('vo', raw), be, raw=True)
         for key, _ in LOCKS:
             self.create_subscription(Bool, key, lambda m, key=key: self.locks.__setitem__(key, bool(m.data)), 10)
+        self.battery_at = None
+        self.camera_at = None
         for qos in (10, latched):
             self.create_subscription(String, 'battery/level', self._on_battery, qos)
             self.create_subscription(String, 'where_am_i/state', self._on_where, qos)
         self.create_subscription(String, 'safety_monitor/tilt_status', lambda m: setattr(self, 'tilt', m.data), 10)
         self.create_subscription(String, 'guard_flow/status', lambda m: setattr(self, 'guard_flow', m.data), 10)
-        self.create_subscription(String, 'camera_obstacles/health', lambda m: setattr(self, 'camera', m.data), 10)
+        self.create_subscription(String, 'camera_obstacles/health', self._on_camera, 10)
         self.create_subscription(String, 'watchdog/status', self._on_watchdog, latched)
         self.state_pub = self.create_publisher(String, 'safety/state', latched)
         self.permit_pub = self.create_publisher(Bool, 'safety/permit', latched)
@@ -147,10 +158,23 @@ class SafetyGate(Node):
         self.create_timer(1.0 / float(self.get_parameter('rate_hz').value), self._tick)
         self.get_logger().info('safety gate: inhibited until the lidar, the odometry and a battery verdict are in')
 
-    def _seen(self, key):
-        self.t[key] = time.monotonic()
+    def _seen(self, key, raw=None):
+        now = time.monotonic()
+        self.t[key] = now
+        if raw is not None and len(raw) >= 12:
+            sec = int.from_bytes(raw[4:8], 'little', signed=True)
+            nsec = int.from_bytes(raw[8:12], 'little')
+            stamp = sec + nsec * 1e-9
+            ros_now = self.get_clock().now().nanoseconds * 1e-9
+            # a stamp within a minute of now is believed; else only the arrival counts
+            self.lag[key] = (ros_now - stamp) if 0 < stamp and abs(ros_now - stamp) < 60.0 else 0.0
+
+    def _on_camera(self, m):
+        self.camera = m.data
+        self.camera_at = time.monotonic()
 
     def _on_battery(self, m):
+        self.battery_at = time.monotonic()
         try:
             self.battery = json.loads(m.data)
         except ValueError:
@@ -169,8 +193,11 @@ class SafetyGate(Node):
             pass
 
     def _facts(self, now):
-        age = lambda k: None if self.t[k] is None else now - self.t[k]  # noqa: E731
+        # a stream's age = time since it arrived, plus how far its measurement stamp was behind then
+        age = lambda k: None if self.t[k] is None else now - self.t[k] + max(0.0, self.lag.get(k, 0.0))  # noqa: E731
         f = {'scan_age': age('scan'), 'odom_age': age('odom'), 'vo_age': age('vo'), 'battery': self.battery,
+             'battery_age': None if self.battery_at is None else now - self.battery_at,
+             'camera_age': None if self.camera_at is None else now - self.camera_at,
              'where': self.where, 'tilt': self.tilt, 'guard_flow': self.guard_flow, 'camera': self.camera,
              'watchdog': self.watchdog, 'allow_bench': bool(self.get_parameter('allow_bench').value)}
         for key, _ in LOCKS:
