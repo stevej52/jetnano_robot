@@ -422,6 +422,22 @@ The robot is called Rosie. Everything below starts with `robot.launch.py`;
 what she understands is in [docs/talking-to-rosie.md](docs/talking-to-rosie.md),
 and the full rebuild in robot-environment `REBUILD.md`.
 
+The pieces added in the first week of October 2026, each with its own page:
+
+- [docs/safety-gate.md](docs/safety-gate.md): one verdict on whether she may drive
+  (inhibited, stopped, degraded, ok), its lock and its speed limit.
+- [docs/mission-controller.md](docs/mission-controller.md): the one node that talks to
+  Nav2; goals, routes, cancel and resume; how a lap runs inside it.
+- [docs/driving-a-lap.md](docs/driving-a-lap.md): `drive.sh`, `predrive`'s GO/NO-GO, the
+  scorecard on the health page, where to look when a run goes wrong.
+- [docs/voice-switch.md](docs/voice-switch.md): her voice and hearing as a service that
+  is off by default (`voice on|off`).
+- [docs/guard-flow.md](docs/guard-flow.md): why the collision guard held everything on
+  drive 16 and what watches its plumbing now.
+- [docs/relay-watchdog.md](docs/relay-watchdog.md) and
+  [docs/xiao-relay-watchdog-wiring.html](docs/xiao-relay-watchdog-wiring.html): the
+  XIAO between header pin 7 and the servo relay.
+
 | Node | What it does |
 |---|---|
 | `ears` | owns the mic (the reSpeaker, card `L16K6Ch`, its echo-cancelled speech channel): the room's level on `sound/level`, the audio on `sound/audio`, "huh?" at a clap |

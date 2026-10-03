@@ -126,6 +126,15 @@ def generate_launch_description():
                     'align_depth.enable': True,
                     'enable_sync': True,
                     'pointcloud.enable': False,
+                    # High Accuracy (3): the stereo matcher keeps only confident
+                    # disparities. 2026-10-02 (drives 21-22): a stripe of sunlight on
+                    # the floor by the east curtain came out of the Default preset as
+                    # solid obstacle 0.2-0.5 m in front of the wall and closed the hall
+                    # to the planner. Fewer depth points, fewer false ones. The firmware
+                    # (5.12.10) refused the change at runtime ("set_xu failed"); here it
+                    # is applied before streaming starts. If the camera does not come up
+                    # after a boot with this line, this line is the first suspect.
+                    'depth_module.visual_preset': 3,
                     # The driver prefixes this with the camera name, so 'link'
                     # yields camera_link (the URDF frame); 'camera_link' would
                     # give camera_camera_link and cut the TF chain to the images.

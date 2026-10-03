@@ -66,6 +66,25 @@ def journal_lines(folder, since):
     return lines
 
 
+def process_respawns(lines):
+    """How many times each process was started again while its service kept running: a real
+    death (or a hung one the watchdog signalled), not a service start. Every service start
+    launches each process once; starts beyond that, per service run, are respawns."""
+    runs = [Counter()]             # one Counter of "process started" per service run
+    for ln in lines:
+        if re.search(r'systemd\[1\]: Starting jetnano-(robot|voice|localize)', ln):
+            runs.append(Counter())
+        m = re.search(r'\[INFO\] \[([a-z_0-9]+)-\d+\]: process started with pid', ln)
+        if m:
+            runs[-1][m.group(1)] += 1
+    out = Counter()
+    for run in runs:
+        for name, n in run.items():
+            if n > 1:
+                out[name] += n - 1
+    return out
+
+
 def count(lines, pattern):
     return sum(1 for ln in lines if re.search(pattern, ln))
 
@@ -196,6 +215,7 @@ def collect(base, now):
     stuck_sound = count(jl, r'still \d+ active urbs|USB sound stuck')
     crashes = count(jl, r'process has died|Check failed|kernel panic|segfault')
     restarts = count(jl, r'Started jetnano-robot.service|Starting jetnano-robot.service')
+    respawns = process_respawns(jl)
     bat_lines = [ln for ln in jl if 'battery level' in ln or 'powering off' in ln.lower()]
     bat_levels = Counter(re.search(r'battery level (\w+)', ln).group(1) for ln in bat_lines
                          if re.search(r'battery level (\w+)', ln))
@@ -233,6 +253,13 @@ def collect(base, now):
     if jl:
         system_lines.append(f'Wi-Fi drops: {wifi_drops}')
         system_lines.append(f'robot software starts: {restarts}')
+        # Steve, 2026-10-02: "find out why everything crashes all the time" - the count that
+        # answers it, per process, so the trend is visible instead of felt
+        if respawns:
+            system_lines.append('processes restarted while the software kept running: '
+                                + ', '.join(f'{k} x{v}' for k, v in respawns.most_common(12)))
+        else:
+            system_lines.append('processes restarted while the software kept running: none')
         if bat_levels:
             system_lines.append('battery levels seen: ' + ', '.join(f'{k} x{v}' for k, v in bat_levels.most_common()))
         if bat_lines:

@@ -166,6 +166,31 @@ NODE_LABELS = {'pca9685': 'motor driver', 'twist_mux': 'command mixer', 'collisi
                'ekf_filter_node': 'odometry', 'rplidar': 'lidar driver', 'bno055': 'I M U driver',
                'web_teleop': 'web page', 'robot_state_publisher': 'robot model',
                'safety_monitor': 'safety monitor', 'lidar_odom_relay': 'lidar odometry relay'}
+# The process behind a node name. A node that leaves the graph while its process lives on is
+# HUNG, and nothing else will bring it back: 2026-10-02 13:55 the EKF's DDS participant stopped
+# answering (its name left the graph, new readers got nothing, old ones still did), the process
+# sat in a futex, the launch's respawn never came because nothing had died, and "gone" had no
+# ladder - five minutes without odometry until a hand restart. Hung: signal it, like silent.
+NODE_PROCS = {
+    'ekf_filter_node': proc('robot_localization/ekf_node'),
+    'rplidar': proc('rplidar_ros/rplidar_composition'),
+    'scan_filter': proc('laser_filters/scan_to_scan_filter_chain'),
+    'bno055': proc('jetnano_watchdog/bno055_imu'),
+    'safety_monitor': proc('jetnano_watchdog/safety_monitor'),
+    'web_teleop': proc('jetnano_teleop/web_teleop'),
+    'pca9685': proc('ros2_pca9685/pca9685_node'),
+    'twist_mux': proc('twist_mux/twist_mux'),
+    'lidar_odom_relay': proc('jetnano_bringup/lidar_odom_relay'),
+    'motion_watch': proc('jetnano_bringup/housekeeping'),      # motion_watch, safety_gate and the
+    'safety_gate': proc('jetnano_bringup/housekeeping'),       # battery monitor share one process
+}
+
+
+def node_gone_verdict(gone_s: float, process_alive: bool):
+    """What to say and whether to act when a node has been off the graph for gone_s."""
+    if process_alive:
+        return f'gone from the graph for {gone_s:.0f} s while its process lives on: hung', True
+    return f'gone for {gone_s:.0f} s', False
 
 HTTP = {
     # 2026-10-01 19:40: web_teleop died while its install was being rebuilt, the launch's own
@@ -277,7 +302,9 @@ class Watchdog(Node):
             if not flag:
                 self.items[key].need = 'seen'
         self.http_items = {k: Item(k, k, v[1]) for k, v in HTTP.items()}
-        self.node_items = {n: Item(n, NODE_LABELS.get(n, n.replace('_', ' ')), []) for n in NODES}
+        self.node_items = {n: Item(n, NODE_LABELS.get(n, n.replace('_', ' ')),
+                                   [('signal', NODE_PROCS[n], 20.0), ('signal', NODE_PROCS[n], 40.0)] if n in NODE_PROCS else [])
+                           for n in NODES}
         self.node_seen = {}
         self.sys = {}
         self.english = False
@@ -413,7 +440,9 @@ class Watchdog(Node):
                 self.node_seen[n] = now
                 self._good(item, 'running')
             elif n in self.node_seen and now - self.node_seen[n] > self.node_missing_s:
-                self._bad(item, f'gone for {now - self.node_seen[n]:.0f} s', act=False)
+                alive = n in NODE_PROCS and bool(self._pids(NODE_PROCS[n]))
+                why, act = node_gone_verdict(now - self.node_seen[n], alive)
+                self._bad(item, why, act=act)      # dead: its respawn brings it back; hung: the ladder does
         threading.Thread(target=self._check_http, daemon=True).start()
         self._check_guard(names)
 

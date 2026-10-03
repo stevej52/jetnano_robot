@@ -59,6 +59,7 @@ setup(
             'watchdog = jetnano_bringup.watchdog:main',
             'throttle_calibration = jetnano_bringup.throttle_calibration:main',
             'rates = jetnano_bringup.rates:main',
+            'probe = jetnano_bringup.probe:main',
             'voices = jetnano_bringup.speaker:main',
         ],
     },
