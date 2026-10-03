@@ -30,12 +30,36 @@ relay = digitalio.DigitalInOut(RELAY_PIN)
 relay.direction = digitalio.Direction.OUTPUT
 relay.value = False
 
-try:                          # the board's green LED shows the relay state (active low)
-    led = digitalio.DigitalInOut(board.LED_GREEN)
-    led.direction = digitalio.Direction.OUTPUT
-    led.value = True
-except (AttributeError, ValueError):
-    led = None
+# The board's own LEDs (active low: False lights them), as a pulse (Steve, 2026-10-02):
+#   green  lub-dub, two short blips a second, while the heartbeat is alive and the relay is
+#          closed - a pulse you can see from across the room
+#   red    one short blink every two seconds while the board has power but no heartbeat
+#          (the Jetson booting, the servo node down, a wire off)
+#   dark   no power to the board, which also means no relay
+
+
+def _led(name):
+    try:
+        pin = digitalio.DigitalInOut(getattr(board, name))
+        pin.direction = digitalio.Direction.OUTPUT
+        pin.value = True
+        return pin
+    except (AttributeError, ValueError):
+        return None
+
+
+green = _led('LED_GREEN')
+red = _led('LED_RED')
+LUB_DUB = ((0, 70), (200, 70))        # (start ms, length ms) within a 1000 ms beat
+WAITING = ((0, 80),)                  # within a 2000 ms cycle
+
+
+def lit(ms, pattern, period):
+    t = ms % period
+    for start, length in pattern:
+        if start <= t < start + length:
+            return True
+    return False
 
 wd = microcontroller.watchdog
 wd.timeout = 1.0
@@ -57,6 +81,9 @@ while True:
     on = alive and edges >= EDGES_TO_ARM
     if relay.value != on:
         relay.value = on
-        if led is not None:
-            led.value = not on
+    ms = now // 1_000_000
+    if green is not None:
+        green.value = not (on and lit(ms, LUB_DUB, 1000))
+    if red is not None:
+        red.value = not ((not on) and lit(ms, WAITING, 2000))
     wd.feed()
