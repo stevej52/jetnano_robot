@@ -28,6 +28,17 @@ What it does, in order:
 
 Preflight is about 12 s with Nav2 already up, about 25 s when Nav2 has to start.
 
+## Several laps in a row
+
+```
+laps.sh N COUNT [drive.sh options and route]      e.g. laps.sh 28 3
+```
+
+Each lap is a complete `drive.sh` run (preflight, route, park, recorder stopped, files
+into the bag), then the next from the spot she parked on. A lap that does not park on the
+spot ends the series (`--keep-going` overrides). The summary table lands in
+`~/audit/<date>/laps-N-COUNT.txt`.
+
 ## predrive: GO or NO-GO
 
 `ros2 run jetnano_bringup predrive`, one process, a few seconds. Every line is `ok` or the
