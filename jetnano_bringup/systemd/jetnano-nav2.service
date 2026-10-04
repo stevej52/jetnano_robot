@@ -24,7 +24,10 @@ EnvironmentFile=-/etc/default/jetnano-nav2
 # the robot's own stack first (the lidar, the odometry, the collision guard, the camera map)
 ExecStartPre=/bin/sleep 20
 ExecStart=/bin/bash -lc 'source /opt/ros/jazzy/setup.bash && source /home/jeston/ros2_ws/install/setup.bash && exec ros2 launch jetnano_navigation navigation.launch.py $NAV2_ARGS'
-# ros2 launch shuts its nodes down on SIGINT; the helpers go with it (no orphans)
+# Nodes down in order first: the container segfaulted (exit -11) at every stop when SIGINT hit
+# it with its nodes still active (2026-10-03). The lifecycle manager's SHUTDOWN (command 4)
+# deactivates and cleans them up; then ros2 launch gets its SIGINT and the helpers go with it.
+ExecStop=/bin/bash -lc 'source /opt/ros/jazzy/setup.bash && source /home/jeston/ros2_ws/install/setup.bash && timeout 15 ros2 service call /lifecycle_manager_navigation/manage_nodes nav2_msgs/srv/ManageLifecycleNodes "{command: 4}" > /dev/null 2>&1; true'
 KillSignal=SIGINT
 KillMode=mixed
 TimeoutStopSec=25
