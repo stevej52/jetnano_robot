@@ -109,6 +109,7 @@ class RouteRun:
     def start(self):
         """Ask the planner for its live costmap; the rest follows on tick()."""
         now = time.monotonic()
+        self.n.tf_on()                    # the map pose is needed from here to the result line
         if self.n.costmap_cli.service_is_ready():
             self.costmap_fut = self.n.costmap_cli.call_async(GetCostmap.Request())
             self.deadline = now + 5.0
@@ -539,5 +540,6 @@ class RouteRun:
                      + f'; driver got {len(self.cmds)} commands, throttle {min(thr, default=0):.2f}-{max(thr, default=0):.2f}'
                      + f'; forward/reverse switches {switches}')
         self.say(self.line)
+        self.n.tf_off()
         if self.start_pose is not None:
             self.n.select_planner('GridBased')            # nav_goal and nav_park: exact headings

@@ -26,7 +26,7 @@ crashes just shows how often stuff crashes... fewer nodes."
 """
 
 import rclpy
-from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
+from rclpy.executors import ExternalShutdownException, SingleThreadedExecutor
 
 from jetnano_bringup.battery_monitor import BatteryMonitor
 from jetnano_bringup.guard_flow import GuardFlow
@@ -37,7 +37,10 @@ from jetnano_bringup.safety_gate import SafetyGate
 def main(args=None):
     rclpy.init(args=args)
     nodes = [MotionWatch(), GuardFlow(), BatteryMonitor(), SafetyGate()]
-    ex = MultiThreadedExecutor(num_threads=4)
+    # single-threaded: the multi-threaded executor spent 73 % of a core on dispatch alone
+    # (1,100 wake cycles a second for ~210 messages, 2026-10-03); nothing here blocks any
+    # more - guard_flow's restarts run in their own thread, the battery's poweroff is a Popen
+    ex = SingleThreadedExecutor()
     for n in nodes:
         ex.add_node(n)
     nodes[0].get_logger().info('housekeeping: motion_watch, guard_flow, battery_monitor and safety_gate in one process')

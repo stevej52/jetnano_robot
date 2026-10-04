@@ -57,7 +57,8 @@ from nav2_msgs.srv import ClearEntireCostmap, GetCostmap
 from rcl_interfaces.msg import Parameter, ParameterValue
 from rcl_interfaces.srv import SetParameters
 from rclpy.action import ActionClient
-from rclpy.node import Node
+
+from jetnano_bringup.quiet_node import QuietNode
 from rclpy.qos import DurabilityPolicy, QoSProfile
 from std_msgs.msg import Bool, String
 from std_srvs.srv import Trigger
@@ -85,7 +86,7 @@ def remaining_route(waypoints, left):
     return list(waypoints[len(waypoints) - left:])
 
 
-class Mission(Node):
+class Mission(QuietNode):
 
     def __init__(self):
         super().__init__('mission')
@@ -111,8 +112,8 @@ class Mission(Node):
         self.ask_cli = self.create_client(Trigger, '/nav_helper/ask')
         self.helper_params = self.create_client(SetParameters, '/nav_helper/set_parameters')
         self.speak_pub = self.create_publisher(String, 'speak', 10)
-        self.tf_buf = tf2_ros.Buffer()
-        self.tf_lis = tf2_ros.TransformListener(self.tf_buf, self)
+        self.tf_buf = None               # a TF listener only while a route runs: /tf at 110 Hz
+        self.tf_lis = None               # cost this idle controller 20 % of a core (2026-10-03)
         self.gate = None                 # the gate's latest verdict (dict)
         self.active = None               # the mission in hand (dict), or None
         self.held = None                 # {'since': monotonic, 'why': str, 'mission': dict} while stopped by the gate
@@ -131,8 +132,23 @@ class Mission(Node):
     # ------------------------------------------------------------- services --
     # what a route run (route_run.RouteRun) asks of the node
 
+    def tf_on(self):
+        if self.tf_buf is None:
+            self.tf_buf = tf2_ros.Buffer()
+            self.tf_lis = tf2_ros.TransformListener(self.tf_buf, self)
+
+    def tf_off(self):
+        if self.tf_lis is not None:
+            try:
+                self.tf_lis.unregister()
+            except Exception:  # noqa: BLE001
+                pass
+        self.tf_lis, self.tf_buf = None, None
+
     def map_pose(self):
         """Where she is on the map now, or None (no spinning: the listener fills the buffer)."""
+        if self.tf_buf is None:
+            return None
         try:
             if not self.tf_buf.can_transform('map', 'base_footprint', rclpy.time.Time()):
                 return None

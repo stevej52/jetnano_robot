@@ -63,13 +63,14 @@ import numpy as np
 import rclpy
 from geometry_msgs.msg import PointStamped, Twist
 from rcl_interfaces.msg import SetParametersResult
-from rclpy.node import Node
+
+from jetnano_bringup.quiet_node import QuietNode
 from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Float64, String
 
 
-class MotionWatch(Node):
+class MotionWatch(QuietNode):
 
     def __init__(self):
         super().__init__('motion_watch')

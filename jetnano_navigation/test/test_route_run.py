@@ -122,6 +122,12 @@ class Node:
     def clear_costmaps(self):
         self.cleared += 1
 
+    def tf_on(self):
+        pass
+
+    def tf_off(self):
+        pass
+
     def set_retrace(self, m):
         self.retrace_m.append(m)
 

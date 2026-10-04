@@ -35,11 +35,13 @@ if that does not clear it within 25 s, restart the launch inside the Isaac conta
 import os
 import signal
 import subprocess
+import threading
 import time
 
 import rclpy
 from geometry_msgs.msg import Twist
-from rclpy.node import Node
+
+from jetnano_bringup.quiet_node import QuietNode
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from nav2_msgs.msg import CollisionMonitorState
 from sensor_msgs.msg import CameraInfo, PointCloud2
@@ -49,7 +51,7 @@ CONTAINER, CONTAINER_LAUNCH = 'isaac_vo', r'cuvslam_.*\.launch\.py'     # cuvsla
 GRID_TO_POINTS = '/lib/jetnano_watchdog/grid_to_points'                    # the C++ one runs (drive.launch.py)
 
 
-class GuardFlow(Node):
+class GuardFlow(QuietNode):
 
     def __init__(self):
         super().__init__('guard_flow')
@@ -67,7 +69,7 @@ class GuardFlow(Node):
         be = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
         self.create_subscription(Twist, 'cmd_vel_mux', lambda m: self._cmd('mux_at', m), 10)
         self.create_subscription(Twist, 'cmd_vel', lambda m: self._cmd('out_at', m), 10)
-        self.create_subscription(PointCloud2, '/nvblox_node/obstacle_points', self._on_points, be)
+        self.create_subscription(PointCloud2, '/nvblox_node/obstacle_points', self._on_points, be, raw=True)
         # the depth stream behind nvblox, raw (the header's stamp is bytes 4-12 of the CDR; no
         # deserialising): when the grid goes stale this tells WHICH of three things happened -
         # no depth frames (the camera's stream died), frames with old stamps (the camera's clock
@@ -129,9 +131,12 @@ class GuardFlow(Node):
             return f'depth frames arrive but stamped {self.depth_lag:+.1f} s off ROS time (the camera clock)'
         return f'depth frames arrive, stamps fresh ({self.depth_lag * 1000:+.0f} ms): nvblox itself stalled'
 
-    def _on_points(self, m):
+    def _on_points(self, raw):
+        # raw: only the header's stamp is read (bytes 4-12 of the CDR), not a Python PointCloud2
         self.pts_at = time.monotonic()
-        stamp = m.header.stamp.sec + m.header.stamp.nanosec * 1e-9
+        if len(raw) < 12:
+            return
+        stamp = int.from_bytes(raw[4:8], 'little', signed=True) + int.from_bytes(raw[8:12], 'little') * 1e-9
         self.pts_age = self.get_clock().now().nanoseconds / 1e9 - stamp
 
     def _tick(self):
@@ -169,16 +174,23 @@ class GuardFlow(Node):
         down = now - self.bad_since
         if self.fix_step == 0 and down >= 2.0 and now - self.fix_at['grid_to_points'] > 60.0:
             self.fix_step, self.fix_at['grid_to_points'] = 1, now
-            self._signal(GRID_TO_POINTS, 'restarting grid_to_points (the launch respawns it)')
+            self._in_thread(lambda: self._signal(GRID_TO_POINTS, 'restarting grid_to_points (the launch respawns it)'))
         elif self.fix_step == 1 and down >= 27.0 and now - self.fix_at['container'] > 120.0:
             self.fix_step, self.fix_at['container'] = 2, now
             self.get_logger().warning('still holding: restarting the launch in the Isaac container')
-            try:
-                r = subprocess.run(['docker', 'exec', CONTAINER, 'pkill', '-INT', '-f', CONTAINER_LAUNCH], timeout=15)
-                if r.returncode != 0:
-                    self.get_logger().error(f'container restart: pkill matched nothing for {CONTAINER_LAUNCH} (rc {r.returncode})')
-            except (OSError, subprocess.TimeoutExpired) as exc:
-                self.get_logger().warning(f'container restart: {exc}')
+            self._in_thread(self._restart_container_launch)
+
+    def _in_thread(self, fn):
+        """A fix that waits on processes runs off the executor (housekeeping is single-threaded)."""
+        threading.Thread(target=fn, name='guard_flow-fix', daemon=True).start()
+
+    def _restart_container_launch(self):
+        try:
+            r = subprocess.run(['docker', 'exec', CONTAINER, 'pkill', '-INT', '-f', CONTAINER_LAUNCH], timeout=15)
+            if r.returncode != 0:
+                self.get_logger().error(f'container restart: pkill matched nothing for {CONTAINER_LAUNCH} (rc {r.returncode})')
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            self.get_logger().warning(f'container restart: {exc}')
 
     def _signal(self, pattern, what):
         pids = subprocess.run(['pgrep', '-f', pattern], capture_output=True, text=True).stdout.split()

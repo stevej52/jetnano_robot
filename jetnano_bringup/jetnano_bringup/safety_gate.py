@@ -43,7 +43,8 @@ import time
 
 from nav2_msgs.msg import SpeedLimit
 from nav_msgs.msg import Odometry
-from rclpy.node import Node
+
+from jetnano_bringup.quiet_node import QuietNode
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, String
@@ -113,7 +114,7 @@ def decide(now, inp):
     return 'ok', [], 100.0
 
 
-class SafetyGate(Node):
+class SafetyGate(QuietNode):
 
     def __init__(self):
         super().__init__('safety_gate')
