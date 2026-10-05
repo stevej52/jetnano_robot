@@ -8,13 +8,14 @@ Each goal is a dot where she was sent, coloured by how it went:
 Her track is drawn faint blue; bumps into walls (sim) are magenta.
 """
 import json
+import os
 import math
 
 import numpy as np
 import yaml
 from PIL import Image, ImageDraw, ImageFont
 
-D = '/home/steve/rosie-sim'
+D = os.path.dirname(os.path.realpath(__file__))
 S = 6   # pixels per map cell (5 cm)
 
 

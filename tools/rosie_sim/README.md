@@ -40,3 +40,13 @@ every failure). A plain replay already recovers ~half, so NO measurable gain - n
 What is left: long trips that time out mid-recovery (3 of 5 finish with 3x the time) and a few
 truly stuck corners (kitchen corner toward the island facing south; the bottom-right room), where
 every new path starts toward an obstacle 5-7 cm away and the collision monitor holds her.
+
+Round 6 (2026-10-05, after Steve's OK the round-3 settings went to nav2.yaml, bc9e37a). Several
+instances now run side by side: copy the folder, give its env.sh its own ROS_DOMAIN_ID; variant.sh
+stops only its own launch (process group in out/launch.pgid). Failed trips of 199, three goal sets:
+| settings (all with planner costmap_update_timeout 3 s, a sim-speed fix) | seed 7 | seed 8 | seed 9 | total of 597 |
+| her settings now | 13 | 22 | 14 | 49 |
+| + planner reverse_penalty 2.0 -> 1.3 | 10 | 11 | 17 | 38 |
+| + planner cost_penalty 2.0 -> 4.0 | 17 | - | - | dropped |
+reverse_penalty 1.3: a small gain, not consistent (worse on seed 9, more direction changes there);
+not adopted on Rosie without a floor check of how often she then reverses on a normal lap.

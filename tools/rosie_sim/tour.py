@@ -28,7 +28,7 @@ from rclpy.parameter import Parameter
 from scipy import ndimage
 from std_msgs.msg import String
 
-D = '/home/steve/rosie-sim'
+D = os.path.dirname(os.path.realpath(__file__))
 STEP = 0.6
 CLEAR = 0.30
 

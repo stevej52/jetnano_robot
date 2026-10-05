@@ -5,7 +5,7 @@ from launch import LaunchDescription
 from launch.actions import ExecuteProcess
 from launch_ros.actions import Node
 
-D = '/home/steve/rosie-sim'
+D = os.path.dirname(os.path.realpath(__file__))
 P = f'{D}/nav2_sim.yaml'
 SIM = {'use_sim_time': True}
 NAMES = ['map_server', 'controller_server', 'planner_server', 'behavior_server',
@@ -16,7 +16,7 @@ def generate_launch_description():
     def nav(pkg, exe):
         return Node(package=pkg, executable=exe, name=exe, parameters=[P, SIM], output='screen')
     return LaunchDescription([
-        ExecuteProcess(cmd=['python3', f'{D}/rosie_sim.py', '--ros-args', '-p', 'speed:=3.0'], output='screen'),
+        ExecuteProcess(cmd=['python3', f'{D}/rosie_sim.py', '--ros-args', '-p', 'speed:=3.0', '-p', f'map:={D}/map/home.yaml'], output='screen'),
     ] + ([ExecuteProcess(cmd=['python3', f'{D}/getout.py', '--ros-args', '-p', 'use_sim_time:=true'], output='screen')]
          if os.environ.get('GETOUT') == '1' else []) + [
         Node(package='nav2_map_server', executable='map_server', name='map_server', output='screen',
