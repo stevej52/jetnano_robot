@@ -88,6 +88,8 @@ controller_server:
     # MPPI with the Ackermann model, NOT IN USE (2026-10-04, drive 34): untuned it crept along
     # the hall at throttle 0.02 (2.8 m in 70 s) using half a core; the lap was stopped. Kept here
     # as FollowPathMPPI for a proper tuning session; to try it, swap its name with FollowPath.
+    # Second try the same evening, forward only (vx_min 0): still median throttle 0.02, 0.10 m/s
+    # over the first 8 s of a 4.6 m goal - the reverse samples were not the cause.
     FollowPathMPPI:
       plugin: "nav2_mppi_controller::MPPIController"
       time_steps: 56              # x model_dt = 2.8 s ahead
@@ -100,7 +102,8 @@ controller_server:
       vy_std: 0.0
       wz_std: 0.4
       vx_max: 0.36                # the same cruise as Pure Pursuit (desired_linear_vel)
-      vx_min: -0.25               # reverse allowed, for corrections near furniture
+      vx_min: 0.0                 # forward only: with -0.25 the forward and reverse samples averaged
+                                  # out to throttle 0.02 (drive 34); Nav2 plans her reversals, not MPPI
       vy_max: 0.0
       wz_max: 1.2
       ax_max: 1.0
