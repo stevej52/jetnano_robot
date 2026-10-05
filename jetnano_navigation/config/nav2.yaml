@@ -85,6 +85,89 @@ controller_server:
       # planned (the path ends pointing that way): 1-33 deg off on that drive.
       yaw_goal_tolerance: 3.14
 
+    # MPPI with the Ackermann model, NOT IN USE (2026-10-04, drive 34): untuned it crept along
+    # the hall at throttle 0.02 (2.8 m in 70 s) using half a core; the lap was stopped. Kept here
+    # as FollowPathMPPI for a proper tuning session; to try it, swap its name with FollowPath.
+    FollowPathMPPI:
+      plugin: "nav2_mppi_controller::MPPIController"
+      time_steps: 56              # x model_dt = 2.8 s ahead
+      model_dt: 0.05              # = 1 / controller_frequency (20 Hz)
+      batch_size: 1000            # 2000 is NVIDIA-desktop sized; the Orin's CPU runs this
+      iteration_count: 1
+      temperature: 0.3
+      gamma: 0.015
+      vx_std: 0.2
+      vy_std: 0.0
+      wz_std: 0.4
+      vx_max: 0.36                # the same cruise as Pure Pursuit (desired_linear_vel)
+      vx_min: -0.25               # reverse allowed, for corrections near furniture
+      vy_max: 0.0
+      wz_max: 1.2
+      ax_max: 1.0
+      ax_min: -1.5
+      az_max: 3.0
+      motion_model: "Ackermann"
+      AckermannConstraints:
+        min_turning_r: 0.40       # measured 2026-09-27 (0.33 right / 0.39 left); the planner uses 0.40
+      prune_distance: 1.7
+      transform_tolerance: 0.2
+      retry_attempt_limit: 1
+      enforce_path_inversion: true   # stop at a planned forward/reverse cusp instead of cutting it
+      visualize: false
+      critics: ["ConstraintCritic", "CostCritic", "GoalCritic", "GoalAngleCritic", "PathAlignCritic",
+                "PathFollowCritic", "PathAngleCritic", "PreferForwardCritic"]
+      ConstraintCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 4.0
+      CostCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 3.81
+        critical_cost: 300.0
+        consider_footprint: true
+        collision_cost: 1000000.0
+        near_goal_distance: 0.5
+        trajectory_point_step: 2
+      GoalCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0
+        threshold_to_consider: 1.4
+      GoalAngleCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 3.0
+        threshold_to_consider: 0.5
+      PathAlignCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 14.0
+        max_path_occupancy_ratio: 0.05
+        trajectory_point_step: 4
+        threshold_to_consider: 0.5
+        offset_from_furthest: 20
+        use_path_orientations: false
+      PathFollowCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0
+        offset_from_furthest: 5
+        threshold_to_consider: 1.4
+      PathAngleCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 2.0
+        offset_from_furthest: 4
+        threshold_to_consider: 0.5
+        max_angle_to_furthest: 1.0
+        mode: 0                   # forward preferred, reverse allowed
+      PreferForwardCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0
+        threshold_to_consider: 0.5
+
     FollowPath:
       plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
       desired_linear_vel: 0.36          # 0.30 from the first tests 2026-09-27; one notch up after the
