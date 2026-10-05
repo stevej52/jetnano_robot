@@ -434,8 +434,17 @@ class Watchdog(Node):
         if self._in_grace():
             return
         names = set(self.get_node_names())
+        voice_off = os.path.exists(VOICE_OFF_FLAG)
         for n, item in self.node_items.items():
             if n == 'topic_watch':
+                continue
+            if voice_off and n in VOICE_NODES:
+                # unloaded on purpose: not a fault. 2026-10-04 drive 37: a lap's rescue had loaded the
+                # voice, it was unloaded after, and these nodes stayed "gone" -> the safety gate held
+                # her at 50 % speed (0.21 m/s) for the whole lap. The streams were skipped, the nodes not.
+                self.node_seen.pop(n, None)
+                if item.state != 'ok':
+                    item.state, item.step, item.note = 'ok', 0, 'voice unloaded'
                 continue
             if n in names:
                 self.node_seen[n] = now
