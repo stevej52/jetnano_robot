@@ -28,3 +28,7 @@ rebuilds nav2_sim.yaml with edits and restarts the sim):
 | + collision monitor time_before_collision 0.8 | 137 | 44 | 18 | 0 |
 NOT applied to nav2.yaml: both loosen collision protection and need Steve's explicit go-ahead.
 The 18 left are time-outs after little progress, mostly among the dining chairs and hallway walls.
+| + PoseProgressChecker 0.25 m / 0.5 rad / 20 s, planner costmap_update_timeout 3 s | 130 | 46 | 23 | 0 |
+The last row is within run-to-run noise of the one before (a plain replay of the same failures
+already recovers about half by chance), so it is not shown to help. It did remove the planner's
+"Costmap timed out" failures, which look like a 3x sim-speed artefact (none on Rosie since 10-01).
