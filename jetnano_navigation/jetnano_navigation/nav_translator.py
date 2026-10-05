@@ -67,7 +67,9 @@ class NavTranslator(Node):
         self.gain_left = float(self.declare_parameter('curvature_per_steer_left', 1.05).value)
         self.gain_right = float(self.declare_parameter('curvature_per_steer_right', 1.30).value)
         self.max_steer = float(self.declare_parameter('max_steer', 2.4).value)
-        self.max_throttle = float(self.declare_parameter('max_throttle', 0.30).value)
+        # 0.30 until 2026-10-04: drive 35 (cruise 0.40 m/s) peaked at exactly 0.30 on the straights;
+        # 0.34 for the 0.42 cruise, a little headroom, still well short of the ESC's range
+        self.max_throttle = float(self.declare_parameter('max_throttle', 0.34).value)
         self.stop_below = float(self.declare_parameter('stop_below_mps', 0.03).value)
         self.ki = float(self.declare_parameter('speed_correction_gain', 0.15).value)   # throttle per (m/s * s)
         self.trim_limit = float(self.declare_parameter('speed_correction_limit', 0.08).value)

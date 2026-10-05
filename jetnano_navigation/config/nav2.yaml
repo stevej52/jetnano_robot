@@ -173,8 +173,9 @@ controller_server:
 
     FollowPath:
       plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
-      desired_linear_vel: 0.40          # 0.30 from the first tests 2026-09-27; 0.36 after drive 25;
-                                        # 0.40 (+10 %) 2026-10-04 after drives 31-33 (82 s laps), Steve
+      desired_linear_vel: 0.42          # 0.30 from the first tests 2026-09-27; 0.36 after drive 25;
+                                        # 0.40 (+10 %) after drives 31-33; 0.42 (+5 %) after drive 35
+                                        # (71.5 s to the parking, clean), Steve 2026-10-04
       lookahead_dist: 0.45
       min_lookahead_dist: 0.50   # 2026-09-27: 0.25 flicked the steering near goals
       max_lookahead_dist: 0.80
@@ -410,7 +411,7 @@ velocity_smoother:
     smoothing_frequency: 20.0
     scale_velocities: false
     feedback: "OPEN_LOOP"
-    max_velocity: [0.40, 0.0, 3.0]   # the controller's cruise (0.35 had capped the 0.36 of drives 25-33)
+    max_velocity: [0.42, 0.0, 3.0]   # = the controller's cruise (0.35 had capped the 0.36 of drives 25-33)
     min_velocity: [-0.25, 0.0, -3.0]
     max_accel: [1.0, 0.0, 3.0]
     max_decel: [-1.5, 0.0, -3.0]
