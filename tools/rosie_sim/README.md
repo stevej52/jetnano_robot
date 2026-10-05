@@ -65,3 +65,14 @@ approach box then holds every direction (verified: the sim alone backs her strai
 nav_helper's back-out moved in only ~1 of 10 tries. Narrowing the box's sides causes side swipes
 and does not free her. Next candidates: a direction-aware monitor (Nav2 VelocityPolygon: only the
 zone she is moving into), or a car-aware controller (step 4).
+
+Round 8 (2026-10-05): DIRECTION-AWARE COLLISION MONITOR (dirpoly.py, a variant edit; set ZS, ZF, ZW
+first): Nav2 velocity_polygon "stop" zones in front when driving forward, behind when reversing
+(from 0.12 m inside the body to ZS ahead below 0.25 m/s, ZF above; ZW half-width), replacing the
+all-round approach box that froze her in every direction. With steps 1-3 + planner padding 0.05:
+| zones (ZS / ZF / ZW) | failed seed 7 | seed 8 | bump spots |
+| 0.068 / 0.158 / 0.168 | 0 | 1 | 16 |
+| 0.12 / 0.22 / 0.17 | 2 | 1 | 3 + 2 |
+| 0.15 / 0.28 / 0.17 (set H) | 2 | 3 | 1 + 0 |
+Set H: stuck 13-22 -> 2-3 of 199; one front-corner touch in ~400 trips (corner swinging out on a
+turn). ~7 % more time in all than her current settings. Not on Rosie yet.
