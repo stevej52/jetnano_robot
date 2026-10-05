@@ -186,6 +186,13 @@ controller_server:
       # The whole point: this chassis steers, it does not pivot.
       use_rotate_to_heading: false
       allow_reversing: true          # the ESC has a reverse; use it
+      # RPP's own look-ahead collision check OFF (2026-10-05, Steve's explicit OK after the house-tour
+      # simulator, tools/rosie_sim): it projects her path as if she could turn on the spot, so near a
+      # wall it called "collision ahead" on moves the planner had checked for her real turning circle
+      # and she froze (drive 36 at the kitchen cabinets). Still guarding her: the collision monitor
+      # below (lidar + camera), collision_guard, and the planner's costmap.
+      # Sim, 199 goals: failed 31 -> 22, clean 110 -> 132, wall bumps 0 -> 0.
+      use_collision_detection: false
 
       use_regulated_linear_velocity_scaling: true
       regulated_linear_scaling_min_radius: 0.30
@@ -449,7 +456,7 @@ collision_monitor:
       type: "polygon"
       action_type: "approach"
       points: "[[0.26, 0.19], [0.26, -0.19], [-0.26, -0.19], [-0.26, 0.19]]"
-      time_before_collision: 1.5
+      time_before_collision: 0.8   # 1.5 until 2026-10-05 (Steve OK): near walls it slowed her to nothing (sim: failed 22 -> 18, 0 bumps); 0.8 s at 0.44 m/s = 35 cm
       simulation_time_step: 0.1
       min_points: 4
       visualize: false
