@@ -76,7 +76,10 @@ twist_mux:
       # the safety gate (safety_gate.py, 2026-10-02): held while she is inhibited (not enough
       # known: no lidar, no odometry, no battery verdict, the bench) or stopped; it explains
       # itself on /safety/state. The locks above stay as defence in depth.
+      # Priority 50, below the page (90) and the joystick (100), above Nav2 (10) and settle (5):
+      # the gate stops AUTONOMY; a person driving keeps control (Steve, 2026-10-04: "why can't I
+      # just drive it using the page?" - with the lidar out, 255 had locked him out too).
       e_stop_gate:
         topic: e_stop_gate
         timeout: 0.0
-        priority: 255
+        priority: 50
