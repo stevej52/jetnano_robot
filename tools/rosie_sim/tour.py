@@ -10,6 +10,7 @@ runs out of time is recorded with where she stood, and she is moved to the goal 
 """
 import json
 import math
+import os
 import random
 import sys
 import time
@@ -86,7 +87,7 @@ class Tour(Node):
     def go(self, x, y, hdeg):
         s0 = dict(self.stats)
         dist = math.hypot(x - s0['x'], y - s0['y'])
-        limit = 45.0 + 6.0 * dist
+        limit = (45.0 + 6.0 * dist) * float(os.environ.get('LIMIT_SCALE', '1'))
         g = NavigateToPose.Goal()
         g.pose = self.pose(x, y, hdeg)
         g.pose.header.stamp = self.get_clock().now().to_msg()

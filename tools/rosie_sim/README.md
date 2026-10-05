@@ -32,3 +32,11 @@ The 18 left are time-outs after little progress, mostly among the dining chairs 
 The last row is within run-to-run noise of the one before (a plain replay of the same failures
 already recovers about half by chance), so it is not shown to help. It did remove the planner's
 "Costmap timed out" failures, which look like a 3x sim-speed artefact (none on Rosie since 10-01).
+
+Round 5 (2026-10-05): getout.py, a multi-point "wiggle out" recovery (serves nav2 BackUp as
+server "getout"; trees call it with server_name="getout" server_timeout="3000"; GETOUT=1 starts
+it in sim.launch.py). Replays of round 3's 18 failures: 13/18 (in the round-robin), 11/18 (after
+every failure). A plain replay already recovers ~half, so NO measurable gain - not adopted.
+What is left: long trips that time out mid-recovery (3 of 5 finish with 3x the time) and a few
+truly stuck corners (kitchen corner toward the island facing south; the bottom-right room), where
+every new path starts toward an obstacle 5-7 cm away and the collision monitor holds her.

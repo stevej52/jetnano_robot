@@ -1,4 +1,6 @@
 """Rosie's Nav2 (her own nav2.yaml and behaviour trees) on the simulator, sim time."""
+import os
+
 from launch import LaunchDescription
 from launch.actions import ExecuteProcess
 from launch_ros.actions import Node
@@ -15,6 +17,8 @@ def generate_launch_description():
         return Node(package=pkg, executable=exe, name=exe, parameters=[P, SIM], output='screen')
     return LaunchDescription([
         ExecuteProcess(cmd=['python3', f'{D}/rosie_sim.py', '--ros-args', '-p', 'speed:=3.0'], output='screen'),
+    ] + ([ExecuteProcess(cmd=['python3', f'{D}/getout.py', '--ros-args', '-p', 'use_sim_time:=true'], output='screen')]
+         if os.environ.get('GETOUT') == '1' else []) + [
         Node(package='nav2_map_server', executable='map_server', name='map_server', output='screen',
              parameters=[SIM, {'yaml_filename': f'{D}/map/home.yaml'}]),
         nav('nav2_controller', 'controller_server'),
