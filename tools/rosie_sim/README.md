@@ -19,3 +19,12 @@ by teleport to that goal, which can drop her in an awkward pose (counted separat
 First tour 2026-10-04: 199 goals, 110 clean, 58 struggled, 31 failed; failures = starting
 off near walls/furniture (FollowPath patience exceeded: "collision ahead", the BackUp
 recovery blocked too) and final approaches with a fixed heading in tight spots (invalid path).
+
+Fix rounds 2026-10-05 (replay.py replays a tour's failures from their start poses; variant.sh
+rebuilds nav2_sim.yaml with edits and restarts the sim):
+| tour | clean | struggled | failed | bumps |
+| her settings | 110 | 58 | 31 | 0 |
+| RPP use_collision_detection false | 132 | 45 | 22 | 0 |
+| + collision monitor time_before_collision 0.8 | 137 | 44 | 18 | 0 |
+NOT applied to nav2.yaml: both loosen collision protection and need Steve's explicit go-ahead.
+The 18 left are time-outs after little progress, mostly among the dining chairs and hallway walls.
