@@ -1,0 +1,28 @@
+"""Rosie's Nav2 (her own nav2.yaml and behaviour trees) on the simulator, sim time."""
+from launch import LaunchDescription
+from launch.actions import ExecuteProcess
+from launch_ros.actions import Node
+
+D = '/home/steve/rosie-sim'
+P = f'{D}/nav2_sim.yaml'
+SIM = {'use_sim_time': True}
+NAMES = ['map_server', 'controller_server', 'planner_server', 'behavior_server',
+         'velocity_smoother', 'collision_monitor', 'bt_navigator']
+
+
+def generate_launch_description():
+    def nav(pkg, exe):
+        return Node(package=pkg, executable=exe, name=exe, parameters=[P, SIM], output='screen')
+    return LaunchDescription([
+        ExecuteProcess(cmd=['python3', f'{D}/rosie_sim.py', '--ros-args', '-p', 'speed:=3.0'], output='screen'),
+        Node(package='nav2_map_server', executable='map_server', name='map_server', output='screen',
+             parameters=[SIM, {'yaml_filename': f'{D}/map/home.yaml'}]),
+        nav('nav2_controller', 'controller_server'),
+        nav('nav2_planner', 'planner_server'),
+        nav('nav2_behaviors', 'behavior_server'),
+        nav('nav2_velocity_smoother', 'velocity_smoother'),
+        nav('nav2_collision_monitor', 'collision_monitor'),
+        nav('nav2_bt_navigator', 'bt_navigator'),
+        Node(package='nav2_lifecycle_manager', executable='lifecycle_manager', name='lifecycle_manager_navigation',
+             output='screen', parameters=[SIM, {'autostart': True, 'node_names': NAMES, 'bond_timeout': 0.0}]),
+    ])
