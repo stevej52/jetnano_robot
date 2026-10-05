@@ -16,7 +16,13 @@
               <ComputePathThroughPoses goals="{goals}" path="{path}" planner_id="{selected_planner}" error_code_id="{compute_path_error_code}"/>
             </ReactiveSequence>
             <Sequence>
-              <WouldAPlannerRecoveryHelp error_code="{compute_path_error_code}"/>
+              <Fallback>
+                <WouldAPlannerRecoveryHelp error_code="{compute_path_error_code}"/>
+                <!-- START_OCCUPIED (205 to pose, 305 through poses): the stock check leaves it out, so
+                     a stale mark on her own cell failed the goal at once with no clearing or back-up
+                     (drive 36, 2026-10-04: then 28 s asking Claude). Clearing is cheap: let it try. -->
+                <AreErrorCodesPresent error_code="{compute_path_error_code}" error_codes_to_check="205;305"/>
+              </Fallback>
               <ClearEntireCostmap name="ClearGlobalCostmap-Context" service_name="global_costmap/clear_entirely_global_costmap"/>
             </Sequence>
           </RecoveryNode>
@@ -33,6 +39,7 @@
         <Fallback>
           <WouldAControllerRecoveryHelp error_code="{follow_path_error_code}"/>
           <WouldAPlannerRecoveryHelp error_code="{compute_path_error_code}"/>
+          <AreErrorCodesPresent error_code="{compute_path_error_code}" error_codes_to_check="205;305"/>   <!-- START_OCCUPIED, see above -->
         </Fallback>
         <ReactiveFallback name="RecoveryFallback">
           <GoalUpdated/>
