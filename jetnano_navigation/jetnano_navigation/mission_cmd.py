@@ -17,7 +17,8 @@
 pictures) and the result line, exit 0 on SUCCEEDED.
 
     ros2 run jetnano_navigation mission_cmd goal X Y HEADING_DEG [TIMEOUT_S]
-    ros2 run jetnano_navigation mission_cmd route X Y H  X Y H ...  [--timeout S]
+    ros2 run jetnano_navigation mission_cmd route X Y H  X Y H ...  [--timeout S] [--park X Y H]
+        --park: the lap's end is handed to the parking server while she rolls (her spot: 0 0 0)
     ros2 run jetnano_navigation mission_cmd cancel | resume | status
 """
 
@@ -42,6 +43,11 @@ def main(argv=None):
         i = argv.index('--timeout')
         timeout = float(argv[i + 1])
         del argv[i:i + 2]
+    park = None
+    if '--park' in argv:
+        i = argv.index('--park')
+        park = {'x': float(argv[i + 1]), 'y': float(argv[i + 2]), 'heading_deg': float(argv[i + 3])}
+        del argv[i:i + 4]
     if do == 'goal':
         x, y, h = (float(v) for v in argv[1:4])
         cmd = {'do': 'goal', 'x': x, 'y': y, 'heading_deg': h}
@@ -53,6 +59,8 @@ def main(argv=None):
             print('a route is X Y HEADING_DEG triplets: ' + ' '.join(argv[1:]))
             return 2
         cmd = {'do': 'route', 'waypoints': [nums[i:i + 3] for i in range(0, len(nums), 3)]}
+        if park:
+            cmd['then_park'] = park
     elif do in ('cancel', 'resume', 'status'):
         cmd = {'do': do}
     else:

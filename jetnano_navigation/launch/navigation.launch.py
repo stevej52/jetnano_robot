@@ -150,6 +150,19 @@ def generate_launch_description():
             parameters=[{'use_sim_time': ParameterValue(LaunchConfiguration('use_sim_time'), value_type=bool)}],
         ),
 
+        # The parking, warm and waiting (nav_park --serve, 2026-10-04): the mission controller hands
+        # the lap's end to it while she still rolls - no stop, no start-up, at the arc's start.
+        Node(
+            package='jetnano_navigation',
+            executable='nav_park',
+            name='nav_park_server',
+            arguments=['--serve'],
+            output='screen',
+            respawn=True,
+            respawn_delay=2.0,
+            parameters=[{'use_sim_time': ParameterValue(LaunchConfiguration('use_sim_time'), value_type=bool)}],
+        ),
+
         # A low battery (battery/level "low", the countdown) cancels her goal and parks her
         # (Steve, 2026-09-30: "go home when the countdown plays").
         Node(

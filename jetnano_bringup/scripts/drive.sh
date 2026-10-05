@@ -103,18 +103,31 @@ echo "== route  $(date +%T)"
 # shellcheck disable=SC2086
 # the lap runs inside the mission controller (mission.py + route_run.py, 2026-10-02): the safety
 # gate can stop and resume it there; this client only prints its story into route.log
-timeout 700 ros2 run jetnano_navigation mission_cmd route $ROUTE --timeout 300 > "$D/route.log" 2>&1
+# with parking, the lap's end is handed to the parking server while she still rolls (2026-10-04:
+# she stood ~6 s at the arc's start while a separate nav_park started); its lines come back
+# in route.log as "park: ..."
+PARKARG=""
+[ "$PARK" = 1 ] && PARKARG="--park 0 0 0"
+timeout 700 ros2 run jetnano_navigation mission_cmd route $ROUTE --timeout 300 $PARKARG > "$D/route.log" 2>&1
 RC=$?
-grep -v "^\[WARN\]" "$D/route.log" | grep -E "^result|passed waypoint|stretches|moved|refus|clear|battery|timeout|nobody" | sed 's/^/   /'
+grep -v "^\[WARN\]" "$D/route.log" | grep -E "^result|passed waypoint|stretches|moved|refus|clear|battery|timeout|nobody|handing over" | sed 's/^/   /'
 T1=$(date +%s)
 echo "   route took $((T1 - T0)) s (exit $RC)"
 
 if [ "$PARK" = 1 ]; then
-    sleep 1
-    echo "== park  $(date +%T)"
-    timeout 600 ros2 run jetnano_navigation nav_park > "$D/park.log" 2>&1
-    grep -v "^\[WARN\]" "$D/park.log" | sed 's/^/   /'
-    echo "   park took $(( $(date +%s) - T1 )) s"
+    if grep -q "^park: \(parked\|the last leg\)" "$D/route.log"; then
+        echo "== park  (handed over rolling, inside the route)"
+        grep "^park: " "$D/route.log" | grep -v "^park: took" | sed 's/^park: //' > "$D/park.log"
+        sed 's/^/   /' "$D/park.log"
+        echo "   park took $(grep -o "^park: took [0-9.]*" "$D/route.log" | grep -o "[0-9.]*$" | cut -d. -f1) s"
+    else
+        # no handover (an older controller, no parking server, a route that ended elsewhere): as before
+        sleep 1
+        echo "== park  $(date +%T)"
+        timeout 600 ros2 run jetnano_navigation nav_park > "$D/park.log" 2>&1
+        grep -v "^\[WARN\]" "$D/park.log" | sed 's/^/   /'
+        echo "   park took $(( $(date +%s) - T1 )) s"
+    fi
 fi
 echo "== done  $(date +%T), $(( $(date +%s) - T0 )) s in all"
 sleep 3

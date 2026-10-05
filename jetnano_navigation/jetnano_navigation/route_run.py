@@ -53,6 +53,8 @@ from jetnano_navigation.nav_route import (DETOUR_TRIES, DETOUR_WAIT_S, chunks, i
 RESCUE_ASKS = 2         # asks of Claude per route (nav_goal --rescue: the same)
 RETRACE_M = 0.8         # back out this far along her own track before the first retry
 ASK_WAIT_S = 200.0      # the pictures, the brain, the answer
+HANDOFF_M = 0.40        # this far before the lap's end Nav2 hands over to the parking, still rolling
+PARK_WAIT_S = 120.0     # the parking reports within this, or the route ends without it
 STILL_M = 0.05          # not moved this far = standing still
 STILL_S = 3.0           # standing still this long with the route live -> pictures
 SNAPS_MAX = 6
@@ -66,7 +68,7 @@ class RouteRun:
     client), and calls start(), tick(now, lock, cmds), hold(), resume(), abandon(); it reads
     .phase, .done, .outcome, .line, .feedback()."""
 
-    def __init__(self, node, waypoints, timeout_s, say):
+    def __init__(self, node, waypoints, timeout_s, say, then_park=None):
         self.n = node
         self.route = [(float(x), float(y), math.radians(float(h))) for x, y, h in waypoints]
         self.timeout_s = float(timeout_s)
@@ -94,6 +96,11 @@ class RouteRun:
         self.last_line = 0.0
         self.cmds = []                    # (throttle, steer) the driver got, for the result line
         self.locked_during = False
+        # the parking after the lap (2026-10-04): handed over 0.4 m before the lap's end, rolling,
+        # to nav_park --serve - the lap no longer stops at the arc's start (drives 31-32: ~6 s)
+        self.then_park = then_park
+        self.park_t0 = None
+        self.park_outcome = None
         # the rescue (nav_goal --rescue, inside the lap since 2026-10-02 drive 23: an open
         # dishwasher aborted the lap, and the rescue run by hand went round the island on
         # Claude's advice): Nav2 gives up -> back out along her track and try again -> ask
@@ -188,6 +195,28 @@ class RouteRun:
         last = self.stretch[-1]
         return abs(nxt[0] - last[0]) < 1e-6 and abs(nxt[1] - last[1]) < 1e-6
 
+    def _hand_over_to_parking(self, now):
+        """The lap's end is the parking arc's start: the parking takes over while she rolls."""
+        self.passed.append((len(self.route), now - self.t0))           # reached, within HANDOFF_M
+        self.say(f'{now - self.t0:5.1f} s  handing over to the parking {self.fb["dist"]:.2f} m before the end, rolling')
+        self.n.park(dict(self.then_park, rolling=True))
+        self.park_t0 = now
+        self.after_cancel = 'park'
+        if self.handle is not None:
+            self.handle.cancel_goal_async()
+        self.phase = 'parking'
+
+    def on_park_log(self, line):
+        if self.phase == 'parking':
+            self.say('park: ' + line)
+
+    def on_park_result(self, r):
+        if self.phase != 'parking':
+            return
+        self.park_outcome = r.get('outcome')
+        self.say(f'park: took {r.get("seconds", "?")} s')
+        self.finish('SUCCEEDED', f'parking {r.get("outcome", "?")}: {r.get("line", "")}')
+
     def remaining(self):
         """The waypoints of the current stretch still to go."""
         left = self.fb['left']
@@ -219,6 +248,8 @@ class RouteRun:
             self.handle = None
             if why == 'hold':
                 self.phase = 'held'
+            elif why == 'park':
+                return                                    # handed over: the parking's result decides
             elif why == 'rescue':
                 self.phase = 'driving'                    # so _rescue counts the stretch as the one in hand
                 return self._rescue('the way stayed blocked')
@@ -433,11 +464,19 @@ class RouteRun:
         if self.phase.startswith('rescue'):
             self._rescue_tick(now)
             return
+        if self.phase == 'parking':
+            if now - self.park_t0 > PARK_WAIT_S:
+                self.say(f'park: no result in {PARK_WAIT_S:.0f} s')
+                return self.finish('SUCCEEDED', f'the parking did not report in {PARK_WAIT_S:.0f} s')
+            return
         if self.phase not in ('driving', 'sending', 'cancelling'):
             return
         if now - self.t0 > self.timeout_s:
             self.say('timeout: cancelling the route')
             return self.abandon(f'timeout after {self.timeout_s:.0f} s')
+        if (self.phase == 'driving' and self.then_park and self.k + 1 == len(self.stretches)
+                and self.fb['left'] == 1 and self.fb['dist'] == self.fb['dist'] and self.fb['dist'] <= HANDOFF_M):
+            return self._hand_over_to_parking(now)
         if self.phase == 'driving' and self.fb['left'] <= 1 and self._next_overlaps():
             self.done_before += len(self.stretch) - 1     # only this stretch's last is left: the next starts with it
             self.k += 1

@@ -16,6 +16,14 @@
 
     ros2 run jetnano_navigation nav_park                 (the parking spot: 0, 0, 0 deg)
     ros2 run jetnano_navigation nav_park X Y HEADING_DEG [--pre 1.2] [--tol 6]
+    ros2 run jetnano_navigation nav_park --serve         (started with Nav2: parks on /park/command)
+
+--serve (2026-10-04): the same parking, warm and waiting, so the lap hands over WITHOUT A STOP.
+As a separate program started after the lap, she stood ~6 s at the arc's start on every lap
+(drives 31-32: the lap's goal stop, the program's start-up, fresh position reads, the wheels
+turned while standing). Now the mission controller sends /park/command 0.4 m before the lap's
+end, cancels Nav2, and the arc starts while she is still rolling. Lines go to /park/log, the
+outcome to /park/result.
 
 Nav2 no longer insists on a final heading (nav2.yaml yaw_goal_tolerance, 2026-09-29): a
 steering robot that reaches its spot pointing the wrong way cannot turn on the spot and
@@ -32,12 +40,14 @@ shuffled there for 100 s. Parking needs the heading, so:
    given as a Nav2 goal, the reverse curved 37 deg - Nav2 chases the point, not the heading;
 4. straighten again there, with short legs (the wall is close), if it still needs it.
 
-Steps 2-4 drive on cmd_vel_nav, Nav2's own input to twist_mux, while Nav2 is idle - so the
-joystick outranks it and the e-stop lock, collision guard and motion check all apply. They
-stop at the first motion lock.
+Steps 2-4 drive on cmd_vel_park, their own input to twist_mux (priority 20: above Nav2, so a
+Nav2 still slowing down cannot fight the arc; below the page and the joystick; held by the
+safety gate's lock) - the e-stop locks, collision guard and motion check all apply. They stop
+at the first motion lock.
 """
 
 import fcntl
+import json
 import math
 import subprocess
 import sys
@@ -46,7 +56,8 @@ import time
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 import rclpy
-from std_msgs.msg import Bool
+from rclpy.executors import ExternalShutdownException
+from std_msgs.msg import Bool, String
 import tf2_ros
 
 # Steering: the translator's lock is 2.4 and the measured full-lock circles 0.33 m right /
@@ -73,7 +84,16 @@ MAX_CYCLES = 6
 REVERSE_GAIN, REVERSE_STEER_MAX = 4.0, 0.5 * STEER
 REVERSE_DONE_M = 0.05     # close enough to the spot
 REVERSE_SPEED_MPS = 0.1   # a crawl, for the timeout
-REVERSE_LOOKAHEAD_M = 0.3 # the tail aims at the point this far down the spot's line from her
+REVERSE_LOOKAHEAD_M = 0.3  # the tail aims at the point this far down the spot's line from her
+
+
+_LOG = {'pub': None, 'id': ''}     # server mode: every line also goes to /park/log
+
+
+def say(line):
+    print(line, flush=True)
+    if _LOG['pub'] is not None:
+        _LOG['pub'].publish(String(data=json.dumps({'id': _LOG['id'], 'line': line})))
 
 
 def wrap(a):
@@ -195,21 +215,22 @@ def nav_goal(x, y, h_deg, timeout=90, exact=False):
            '--home']                             # parking is the way home: allowed on a low battery
     if exact:
         cmd.append('--exact')
-    print(f'-- nav_goal {x:+.2f} {y:+.2f} {h_deg:+.0f}', flush=True)
+    say(f'-- nav_goal {x:+.2f} {y:+.2f} {h_deg:+.0f}')
     out = subprocess.run(cmd, capture_output=True, text=True)
     lines = [ln for ln in out.stdout.splitlines() if ln.startswith(('result', 'goal', 'start'))]
-    print('\n'.join('   ' + ln for ln in lines), flush=True)
+    say('\n'.join('   ' + ln for ln in lines))
     return any(ln.startswith('result SUCCEEDED') for ln in lines)
 
 
 class Straighten:
     """Shuffle at full lock until she faces `heading` (map frame)."""
 
-    def __init__(self, node, heading, tol, leg_max_m=LEG_MAX_M):
+    def __init__(self, node, heading, tol, leg_max_m=LEG_MAX_M, fresh_s=0.5):
         self.n, self.heading, self.tol = node, heading, tol
         self.leg_max = leg_max_m
+        self.fresh = fresh_s              # server mode spins all the time: its reads are fresh already
         self.plan = Shuffles(leg_max_m)
-        self.pub = node.create_publisher(Twist, 'cmd_vel_nav', 10)
+        self.pub = node.create_publisher(Twist, 'cmd_vel_park', 10)
         self.odom = None
         self.lock = False
         node.create_subscription(Odometry, 'odometry/filtered', self._on_odom, 10)
@@ -227,12 +248,12 @@ class Straighten:
         while time.time() < end:
             rclpy.spin_once(self.n, timeout_sec=0.02)
 
-    def map_pose(self, fresh_s=0.5):
+    def map_pose(self, fresh_s=None):
         """(x, y, heading) on the map, or None. Spins `fresh_s` first: the listener only hears
         transforms while this node is spun, and it is not spun while nav_goal runs - drive 8
         (2026-09-30) read the heading from BEFORE the reverse in, -5 deg, when she stood at +31,
         and the straightening on the spot did nothing."""
-        self.spin(fresh_s)
+        self.spin(self.fresh if fresh_s is None else fresh_s)
         for _ in range(50):
             if self.buf.can_transform('map', 'base_footprint', rclpy.time.Time()):
                 tr = self.buf.lookup_transform('map', 'base_footprint', rclpy.time.Time()).transform
@@ -254,13 +275,14 @@ class Straighten:
             self.pub.publish(m)
             self.spin(0.05)
 
-    def leg(self, throttle, steer, turn, leg_max=None):
+    def leg(self, throttle, steer, turn, leg_max=None, rolling=False):
         """Steer first, standing, then drive until her heading has turned `turn` radians (by
         odometry, whose heading is the IMU's since 2026-09-29), or `leg_max` metres.
         -> how far she turned in all, coasting included, or None if the motion lock stopped her."""
         leg_max = self.leg_max if leg_max is None else leg_max
-        self.send(0.0, steer, 0.4)                    # the wheels over before moving
-        self.spin(0.1)
+        if not rolling:                               # rolling: the wheels turn as she goes
+            self.send(0.0, steer, 0.4)                # the wheels over before moving
+            self.spin(0.1)
         if self.odom is None or self.lock:
             return None
         x0, y0, h0 = self.odom
@@ -276,21 +298,22 @@ class Straighten:
         self.send(0.0, steer, 0.5)                    # stop, wheels still turned; let her settle
         return None if self.lock else abs(wrap(self.odom[2] - h0))
 
-    def arc(self):
+    def arc(self, rolling=False):
         """One forward arc at ARC_STEER to the heading, stopped by the IMU (step 1 of the plan).
         -> True if she drove it; False if the motion lock stopped her (the caller shuffles)."""
         h = self.map_heading()
         if h is None:
             return False
         err = wrap(self.heading - h)
-        print(f'   heading {math.degrees(h):+.0f} deg, one arc {math.degrees(err):+.0f}', flush=True)
+        say(f'   heading {math.degrees(h):+.0f} deg, one arc {math.degrees(err):+.0f}')
         if abs(err) <= self.tol:
             return True
         r = ARC_RADIUS_LEFT_M if err > 0 else ARC_RADIUS_RIGHT_M
         stop_at = max(0.0, abs(err) - self.plan.coast)
-        turned = self.leg(THROTTLE_FWD, ARC_STEER if err > 0 else -ARC_STEER, stop_at, leg_max=r * abs(err) + 0.3)
+        turned = self.leg(THROTTLE_FWD, ARC_STEER if err > 0 else -ARC_STEER, stop_at, leg_max=r * abs(err) + 0.3,
+                          rolling=rolling)
         if turned is None:
-            print('   the motion lock stopped the arc', flush=True)
+            say('   the motion lock stopped the arc')
             return False
         self.plan.observe(stop_at, turned)
         return True
@@ -321,7 +344,7 @@ class Straighten:
                 break
             least = min(least, along)
             if along > least + 0.15:                  # going away from it: something is wrong
-                print(f'   drifting away from the spot ({dist:.2f} m): stopping the reverse', flush=True)
+                say(f'   drifting away from the spot ({dist:.2f} m): stopping the reverse')
                 break
             m.linear.x, m.angular.z = -THROTTLE_REV, steer
             self.pub.publish(m)
@@ -337,10 +360,10 @@ class Straighten:
         for cycle in range(MAX_CYCLES + 1):
             h = self.map_heading()
             if h is None:
-                print('no map -> base_footprint: not straightening', flush=True)
+                say('no map -> base_footprint: not straightening')
                 return False
             err = wrap(self.heading - h)
-            print(f'   heading {math.degrees(h):+.0f} deg, {math.degrees(err):+.0f} to go', flush=True)
+            say(f'   heading {math.degrees(h):+.0f} deg, {math.degrees(err):+.0f} to go')
             if abs(err) <= self.tol:
                 return True
             if cycle == MAX_CYCLES:
@@ -348,15 +371,69 @@ class Straighten:
             for sign, steer, stop_at in self.plan.next_legs(err):
                 turned = self.leg(THROTTLE_FWD if sign > 0 else -THROTTLE_REV, steer, stop_at)
                 if turned is None:
-                    print('   the motion lock stopped her: not straightening further', flush=True)
+                    say('   the motion lock stopped her: not straightening further')
                     return False
                 self.plan.observe(stop_at, turned)
-        print(f'   still off after {MAX_CYCLES} shuffles', flush=True)
+        say(f'   still off after {MAX_CYCLES} shuffles')
         return False
+
+
+def park(straighten, x, y, h, pre, tol, rolling=False):
+    """The four steps (see the module docstring). -> (ok, line): ok when she ended within 25 cm."""
+    h_deg = math.degrees(h)
+    px, py = x + pre * math.cos(h), y + pre * math.sin(h)   # in front of the spot: she reverses in
+    say(f'parking at ({x:+.2f}, {y:+.2f}) facing {h_deg:+.0f} deg, from ({px:+.2f}, {py:+.2f})'
+        + (' - handed over rolling' if rolling else ''))
+    straighten.heading, straighten.tol = h, tol
+    straighten.leg_max = LEG_MAX_OPEN_M
+    coast = straighten.plan.coast
+    straighten.plan = Shuffles(LEG_MAX_OPEN_M)
+    straighten.plan.coast = coast
+    here = straighten.map_pose()
+    there, qx, qy, delta = at_arc_start(here, px, py, h)
+    if there:
+        say(f'-- already at the start of an arc of {math.degrees(delta):+.0f} deg that ends in front of '
+            f'the spot facing {h_deg:+.0f} ({math.hypot(qx - here[0], qy - here[1]) * 100:.0f} cm off it)')
+    else:
+        rolling = False                               # a nav_goal first: she stops there anyway
+        qx, qy, approach, delta = plan_approach(here, px, py, h)
+        if delta:
+            say(f'-- turning early: an arc of {math.degrees(delta):+.0f} deg from ({qx:+.2f}, {qy:+.2f}) '
+                f'ends in front of the spot facing {h_deg:+.0f}')
+        if not nav_goal(qx, qy, math.degrees(approach)):
+            return False, 'could not reach the point in front of the spot'
+    say("-- turning to face the spot's heading")
+    if delta:
+        straighten.arc(rolling=rolling)
+    straighten.run()                                   # the shuffles, if the arc left any
+    say('-- reversing in')
+    end = straighten.reverse_in(x, y)
+    if end is None:
+        return False, 'the motion lock stopped the reverse in'
+    line = f'ended {end[0] * 100:.0f} cm from the spot, heading off by {math.degrees(-end[1]):+.0f} deg'
+    say('   ' + line)
+    ok = end[0] <= 0.25
+    if ok:
+        # 2026-09-29 drive 6: straight at the point in front (+4 deg), then the reverse in
+        # curved - the shuffles had moved her sideways off the line - and ended -21 deg.
+        # Short legs here, forward and back in turn: the wall is 0.58 m behind the spot.
+        say('-- straightening on the spot')
+        coast = straighten.plan.coast                  # what it learned out there still holds
+        straighten.leg_max = LEG_MAX_M
+        straighten.plan = Shuffles(LEG_MAX_M)
+        straighten.plan.coast = coast
+        straighten.run()
+        pose = straighten.map_pose(0.3)
+        if pose is not None:
+            line = (f'ended {math.hypot(pose[0] - x, pose[1] - y) * 100:.0f} cm from the spot, '
+                    f'heading off by {math.degrees(wrap(pose[2] - h)):+.0f} deg')
+    return ok, line
 
 
 def main():
     argv = sys.argv[1:]
+    if '--serve' in argv:
+        return serve()
 
     def opt(name, default):
         if name in argv:
@@ -369,60 +446,79 @@ def main():
     pre = opt('--pre', 1.2)
     tol = math.radians(opt('--tol', 6.0))
     x, y, h_deg = (float(a) for a in argv[:3]) if len(argv) >= 3 else (0.0, 0.0, 0.0)
-    h = math.radians(h_deg)
-    px, py = x + pre * math.cos(h), y + pre * math.sin(h)   # in front of the spot: she reverses in
 
     # one parking at a time: battery_home may start one while a drive script is about to
     lock = open(LOCK_FILE, 'w')
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
-        raise SystemExit('another nav_park is running (battery_home, or a drive script): not starting a second')
-    print(f'parking at ({x:+.2f}, {y:+.2f}) facing {h_deg:+.0f} deg, from ({px:+.2f}, {py:+.2f})', flush=True)
+        raise SystemExit('another nav_park is running (battery_home, a drive script, or the server): not starting a second')
     rclpy.init()
     node = rclpy.create_node('nav_park')
     ok = False
     try:
-        straighten = Straighten(node, h, tol, LEG_MAX_OPEN_M)
-        here = straighten.map_pose()
-        there, qx, qy, delta = at_arc_start(here, px, py, h)
-        if there:
-            print(f'-- already at the start of an arc of {math.degrees(delta):+.0f} deg that ends in front of '
-                  f'the spot facing {h_deg:+.0f} ({math.hypot(qx - here[0], qy - here[1]) * 100:.0f} cm off it)', flush=True)
-        else:
-            qx, qy, approach, delta = plan_approach(here, px, py, h)
-            if delta:
-                print(f'-- turning early: an arc of {math.degrees(delta):+.0f} deg from ({qx:+.2f}, {qy:+.2f}) '
-                      f'ends in front of the spot facing {h_deg:+.0f}', flush=True)
-            if not nav_goal(qx, qy, math.degrees(approach)):
-                raise SystemExit('could not reach the point in front of the spot')
-        print('-- turning to face the spot\'s heading', flush=True)
-        if delta:
-            straighten.arc()
-        straighten.run()                               # the shuffles, if the arc left any
-        print('-- reversing in', flush=True)
-        end = straighten.reverse_in(x, y)
-        if end is None:
-            raise SystemExit('the motion lock stopped the reverse in')
-        print(f'   ended {end[0] * 100:.0f} cm from the spot, heading off by {math.degrees(-end[1]):+.0f} deg', flush=True)
-        ok = end[0] <= 0.25
-        if ok:
-            # 2026-09-29 drive 6: straight at the point in front (+4 deg), then the reverse in
-            # curved - the shuffles had moved her sideways off the line - and ended -21 deg.
-            # Short legs here, forward and back in turn: the wall is 0.58 m behind the spot.
-            print('-- straightening on the spot', flush=True)
-            coast = straighten.plan.coast                  # what it learned out there still holds
-            straighten.leg_max = LEG_MAX_M
-            straighten.plan = Shuffles(LEG_MAX_M)
-            straighten.plan.coast = coast
-            straighten.run()
+        straighten = Straighten(node, math.radians(h_deg), tol, LEG_MAX_OPEN_M)
+        ok, _ = park(straighten, x, y, math.radians(h_deg), pre, tol)
     finally:
         try:
             node.destroy_node()
         except (Exception, KeyboardInterrupt):  # noqa: BLE001 - the context is gone, or a second SIGINT, after an external shutdown
             pass
         rclpy.shutdown()
-    print('parked' if ok else 'the last leg did not succeed', flush=True)
+    say('parked' if ok else 'the last leg did not succeed')
+
+
+def serve():
+    """Warm and waiting: /park/command {"id", "x", "y", "heading_deg", "pre", "tol_deg", "rolling"}.
+    The node is spun all the time, so the position and heading are fresh when a command comes."""
+    rclpy.init()
+    node = rclpy.create_node('nav_park_server')
+    _LOG['pub'] = node.create_publisher(String, 'park/log', 50)
+    result_pub = node.create_publisher(String, 'park/result', 10)
+    todo = []
+    node.create_subscription(String, 'park/command', lambda m: todo.append(m.data), 10)
+    straighten = Straighten(node, 0.0, math.radians(6.0), LEG_MAX_OPEN_M, fresh_s=0.05)
+    node.get_logger().info('nav_park server: waiting on /park/command')
+    try:
+        while rclpy.ok():
+            rclpy.spin_once(node, timeout_sec=0.05)
+            if not todo:
+                continue
+            try:
+                cmd = json.loads(todo.pop(0))
+            except ValueError:
+                continue
+            todo.clear()                              # one at a time; a stale queue is not wanted
+            _LOG['id'] = str(cmd.get('id', ''))
+            lock = open(LOCK_FILE, 'w')
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                result_pub.publish(String(data=json.dumps({'id': _LOG['id'], 'outcome': 'REFUSED',
+                                                           'line': 'another nav_park is running'})))
+                continue
+            t0 = time.monotonic()
+            try:
+                ok, line = park(straighten, float(cmd.get('x', 0.0)), float(cmd.get('y', 0.0)),
+                                math.radians(float(cmd.get('heading_deg', 0.0))), float(cmd.get('pre', 1.2)),
+                                math.radians(float(cmd.get('tol_deg', 6.0))), bool(cmd.get('rolling', False)))
+            except Exception as exc:  # noqa: BLE001 - a failed parking must not take the server down
+                ok, line = False, f'parking failed: {type(exc).__name__}: {exc}'
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+                lock.close()
+            say('parked' if ok else 'the last leg did not succeed')
+            result_pub.publish(String(data=json.dumps({'id': _LOG['id'], 'outcome': 'PARKED' if ok else 'FAILED',
+                                                       'line': line, 'seconds': round(time.monotonic() - t0, 1)})))
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
+    finally:
+        try:
+            node.destroy_node()
+        except (Exception, KeyboardInterrupt):  # noqa: BLE001
+            pass
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

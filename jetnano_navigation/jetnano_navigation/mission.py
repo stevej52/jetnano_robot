@@ -112,6 +112,10 @@ class Mission(QuietNode):
         self.ask_cli = self.create_client(Trigger, '/nav_helper/ask')
         self.helper_params = self.create_client(SetParameters, '/nav_helper/set_parameters')
         self.speak_pub = self.create_publisher(String, 'speak', 10)
+        # the parking server (nav_park --serve): a lap's end is handed to it, rolling
+        self.park_pub = self.create_publisher(String, 'park/command', 10)
+        self.create_subscription(String, 'park/log', lambda m: self._park_msg('on_park_log', m), 50)
+        self.create_subscription(String, 'park/result', lambda m: self._park_msg('on_park_result', m), 10)
         self.tf_buf = None               # a TF listener only while a route runs: /tf at 110 Hz
         self.tf_lis = None               # cost this idle controller 20 % of a core (2026-10-03)
         self.gate = None                 # the gate's latest verdict (dict)
@@ -176,6 +180,23 @@ class Mission(QuietNode):
         req = SetParameters.Request()
         req.parameters = [Parameter(name='retrace_m', value=ParameterValue(type=3, double_value=float(metres)))]
         self.helper_params.call_async(req)
+
+    def park(self, cmd):
+        """Ask the parking server to park (cmd: x, y, heading_deg, rolling); its id is the mission's."""
+        m = self.active or {}
+        self.park_pub.publish(String(data=json.dumps(dict(cmd, id=m.get('id', '')))))
+
+    def _park_msg(self, method, m):
+        run = (self.active or {}).get('run')
+        if run is None:
+            return
+        try:
+            d = json.loads(m.data)
+        except ValueError:
+            return
+        if d.get('id') != self.active['id']:
+            return
+        getattr(run, method)(d.get('line', '') if method == 'on_park_log' else d)
 
     def speak(self, text):
         """Her voice, if the voice stack is loaded (load_voice() asks for it; ~15 s to come up)."""
@@ -279,7 +300,8 @@ class Mission(QuietNode):
             if not self.through.server_is_ready():
                 self._finish(mission, 'REFUSED', 'Nav2 is not there (no action server)')
                 return
-            mission['run'] = RouteRun(self, cmd['waypoints'], mission['timeout_s'], lambda line: self.say(mission, line))
+            mission['run'] = RouteRun(self, cmd['waypoints'], mission['timeout_s'], lambda line: self.say(mission, line),
+                                      then_park=cmd.get('then_park'))
             mission['phase'] = 'checking'
             self.active = mission
             mission['run'].start()

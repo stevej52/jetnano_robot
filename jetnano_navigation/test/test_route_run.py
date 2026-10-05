@@ -125,6 +125,9 @@ class Node:
     def tf_on(self):
         pass
 
+    def park(self, cmd):
+        self.parked = getattr(self, 'parked', []) + [cmd]
+
     def tf_off(self):
         pass
 
@@ -376,3 +379,25 @@ def test_gate_hold_during_the_rescue_pauses_it_and_resumes_in_place():
     assert run.phase == 'held', 'nothing moves while held'
     run.resume()
     assert run.phase == 'rescue retrace'
+
+
+def test_the_lap_hands_over_to_the_parking_while_rolling():
+    from action_msgs.msg import GoalStatus
+    route = [[3, 0, 0], [3, 3, 90]]                      # one stretch, ends far from the start
+    n, run, said = make(route=route)
+    run.then_park = {'x': 0.0, 'y': 0.0, 'heading_deg': 0.0}
+    run.tick(time.monotonic(), False, [])
+    goal, h1, fb_cb = n.through.sent[0]
+    fb_cb(feedback(h1, 3.0, 2.0, 1.2, 1))               # last waypoint, 1.2 m to go: keep driving
+    run.tick(time.monotonic() + 1.5, False, [])
+    assert run.phase == 'driving' and not getattr(n, 'parked', [])
+    fb_cb(feedback(h1, 3.0, 2.7, 0.3, 1))               # 0.3 m before the end: hand over
+    run.tick(time.monotonic() + 3.0, False, [])
+    assert run.phase == 'parking' and n.parked[0]['rolling'] is True and h1.cancelled
+    h1.result_fut.finish(result(GoalStatus.STATUS_CANCELED))   # our own cancel: not an outcome
+    assert not run.done
+    run.on_park_log('-- reversing in')
+    run.on_park_result({'outcome': 'PARKED', 'line': 'ended 3 cm from the spot', 'seconds': 14.2})
+    assert run.done and run.outcome == 'SUCCEEDED' and 'parking PARKED' in run.line
+    assert any(x.startswith('park: -- reversing in') for x in said) and any('park: took 14.2 s' in x for x in said)
+    assert [num for num, _ in run.passed] == [1, 2]

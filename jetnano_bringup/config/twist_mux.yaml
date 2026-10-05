@@ -35,6 +35,13 @@ twist_mux:
         topic: cmd_vel_nav
         timeout: 0.5
         priority: 10
+      # nav_park (2026-10-04): the parking moves, on their own input above Nav2 so a Nav2 still
+      # slowing down after the lap cannot fight the arc that starts while she rolls; below the
+      # safety gate's lock (50), the page (90) and the joystick (100).
+      park:
+        topic: cmd_vel_park
+        timeout: 0.5
+        priority: 20
       # The settle node's steering wiggle after a stop (a buzzing servo):
       # bottom of the pile, so anyone actually driving, and every lock, wins.
       settle:
