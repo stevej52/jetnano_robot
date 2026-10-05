@@ -50,3 +50,18 @@ stops only its own launch (process group in out/launch.pgid). Failed trips of 19
 | + planner cost_penalty 2.0 -> 4.0 | 17 | - | - | dropped |
 reverse_penalty 1.3: a small gain, not consistent (worse on seed 9, more direction changes there);
 not adopted on Rosie without a floor check of how often she then reverses on a normal lap.
+
+Round 7 (2026-10-05, Steve's steps 1-3): tour.py env ANYHEADING=1 (goals on the "Through"
+planner, any arrival heading), STALL=1 (fail only after 60 s without getting 0.25 m closer, cap
+240 s), RESCUE=1 (her real nav_helper runs in the sim, cmd_topic cmd_vel: on a failure it backs out
+0.8 m along her track, then one retry). Failed of 199 (seed 7 / seed 8):
+| current settings, old rules | 13 | 22 |
+| steps 1-3 | 15 | 16 |
+| steps 1-3 + monitor box 2 cm all round | 13 | 11 | 5 wall bumps - rejected
+| steps 1-3 + planner footprint_padding 0.05, inflation 0.34 | 12 | 8 | 0 bumps - best
+| + monitor box sides 0.7 / 1.7 cm | 10 / 16 | 15 / 8 | 4-10 bumps - rejected
+Finding: in the stuck poses she is 3-8 cm from something beside or ahead; the collision monitor's
+approach box then holds every direction (verified: the sim alone backs her straight out 0.5 m), so
+nav_helper's back-out moved in only ~1 of 10 tries. Narrowing the box's sides causes side swipes
+and does not free her. Next candidates: a direction-aware monitor (Nav2 VelocityPolygon: only the
+zone she is moving into), or a car-aware controller (step 4).

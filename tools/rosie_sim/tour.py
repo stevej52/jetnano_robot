@@ -21,6 +21,8 @@ import yaml
 from geometry_msgs.msg import PoseStamped
 from nav2_msgs.action import NavigateToPose
 from nav2_msgs.srv import ClearEntireCostmap
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from std_srvs.srv import Trigger
 from PIL import Image
 from rclpy.action import ActionClient
 from rclpy.node import Node
@@ -29,6 +31,9 @@ from scipy import ndimage
 from std_msgs.msg import String
 
 D = os.path.dirname(os.path.realpath(__file__))
+ANYHEADING = os.environ.get('ANYHEADING') == '1'   # goals with the any-direction planner (Through)
+STALL = os.environ.get('STALL') == '1'             # fail on no progress, not on a fixed clock
+RESCUE = os.environ.get('RESCUE') == '1'           # her rescue: back out along her track, try again
 STEP = 0.6
 CLEAR = 0.30
 
@@ -67,6 +72,11 @@ class Tour(Node):
         self.stats = None
         self.create_subscription(String, '/sim/stats', self.on_stats, 10)
         self.track = open(f'{D}/out/track.jsonl', 'w')
+        self.retrace_cli = self.create_client(Trigger, '/nav_helper/retrace')
+        latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL, reliability=ReliabilityPolicy.RELIABLE)
+        self.planner_pub = self.create_publisher(String, '/planner_selector', latched)
+        if ANYHEADING:
+            self.planner_pub.publish(String(data='Through'))
 
     def on_stats(self, m):
         self.stats = json.loads(m.data)
@@ -84,39 +94,66 @@ class Tour(Node):
         while time.monotonic() < end:
             rclpy.spin_once(self, timeout_sec=0.05)
 
+    def attempt(self, g, x, y, rec, s0, limit):
+        """One NavigateToPose try. -> outcome. STALL=1: no fixed clock - it fails only when the
+        distance to the goal has not shrunk by 0.25 m for 60 s (cap 240 s); else the old limit."""
+        def fb(f):
+            rec['recoveries'] = max(rec['recoveries'], f.feedback.number_of_recoveries)
+        g.pose.header.stamp = self.get_clock().now().to_msg()
+        fut = self.nav.send_goal_async(g, feedback_callback=fb)
+        while not fut.done():
+            rclpy.spin_once(self, timeout_sec=0.05)
+        h = fut.result()
+        if not h.accepted:
+            return 'REJECTED'
+        rf = h.get_result_async()
+        t0 = self.stats['t']
+        best, best_t = 1e9, t0
+        while not rf.done():
+            rclpy.spin_once(self, timeout_sec=0.05)
+            st = self.stats
+            d = math.hypot(st['x'] - x, st['y'] - y)
+            if d < best - 0.25:
+                best, best_t = d, st['t']
+            if STALL:
+                over = st['t'] - best_t > 60.0 or st['t'] - t0 > 240.0
+            else:
+                over = st['t'] - s0['t'] > limit
+            if over:
+                cf = h.cancel_goal_async()
+                while not cf.done():
+                    rclpy.spin_once(self, timeout_sec=0.05)
+                self.spin_for(1.0)
+                return 'TIMEOUT'
+        r = rf.result()
+        rec['error_code'] = getattr(r.result, 'error_code', None)
+        rec['error_msg'] = getattr(r.result, 'error_msg', '')
+        return {4: 'SUCCEEDED', 5: 'CANCELED', 6: 'ABORTED'}.get(r.status, str(r.status))
+
+    def retrace(self):
+        """Her real rescue's first step: nav_helper backs out along her own track (0.8 m)."""
+        if not self.retrace_cli.wait_for_service(timeout_sec=2.0):
+            return 'no nav_helper'
+        fut = self.retrace_cli.call_async(Trigger.Request())
+        end = time.monotonic() + 40.0
+        while not fut.done() and time.monotonic() < end:
+            rclpy.spin_once(self, timeout_sec=0.05)
+        return fut.result().message if fut.done() else 'no answer'
+
     def go(self, x, y, hdeg):
         s0 = dict(self.stats)
         dist = math.hypot(x - s0['x'], y - s0['y'])
         limit = (45.0 + 6.0 * dist) * float(os.environ.get('LIMIT_SCALE', '1'))
         g = NavigateToPose.Goal()
         g.pose = self.pose(x, y, hdeg)
-        g.pose.header.stamp = self.get_clock().now().to_msg()
         rec = {'goal': [x, y, hdeg], 'from': [s0['x'], s0['y']], 'straight_m': round(dist, 2), 'recoveries': 0}
-
-        def fb(f):
-            rec['recoveries'] = max(rec['recoveries'], f.feedback.number_of_recoveries)
-        fut = self.nav.send_goal_async(g, feedback_callback=fb)
-        while not fut.done():
-            rclpy.spin_once(self, timeout_sec=0.05)
-        h = fut.result()
-        if not h.accepted:
-            rec['outcome'] = 'REJECTED'
-            return rec, s0
-        rf = h.get_result_async()
-        while not rf.done():
-            rclpy.spin_once(self, timeout_sec=0.05)
-            if self.stats['t'] - s0['t'] > limit:
-                cf = h.cancel_goal_async()
-                while not cf.done():
-                    rclpy.spin_once(self, timeout_sec=0.05)
-                self.spin_for(1.0)
-                rec['outcome'] = 'TIMEOUT'
-                break
-        else:
-            r = rf.result()
-            rec['outcome'] = {4: 'SUCCEEDED', 5: 'CANCELED', 6: 'ABORTED'}.get(r.status, str(r.status))
-            rec['error_code'] = getattr(r.result, 'error_code', None)
-            rec['error_msg'] = getattr(r.result, 'error_msg', '')
+        out = self.attempt(g, x, y, rec, s0, limit)
+        rec['first'] = out
+        if out != 'SUCCEEDED' and RESCUE:
+            rec['retrace'] = self.retrace()
+            self.spin_for(1.0)
+            out = self.attempt(g, x, y, rec, dict(self.stats), limit)
+        rec['outcome'] = out
         s1 = dict(self.stats)
         rec.update({'seconds': round(s1['t'] - s0['t'], 1), 'driven_m': round(s1['odo'] - s0['odo'], 2),
                     'reversals': s1['reversals'] - s0['reversals'], 'bumps': s1['bumps'] - s0['bumps'],

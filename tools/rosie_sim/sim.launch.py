@@ -18,7 +18,12 @@ def generate_launch_description():
     return LaunchDescription([
         ExecuteProcess(cmd=['python3', f'{D}/rosie_sim.py', '--ros-args', '-p', 'speed:=3.0', '-p', f'map:={D}/map/home.yaml'], output='screen'),
     ] + ([ExecuteProcess(cmd=['python3', f'{D}/getout.py', '--ros-args', '-p', 'use_sim_time:=true'], output='screen')]
-         if os.environ.get('GETOUT') == '1' else []) + [
+         if os.environ.get('GETOUT') == '1' else []) + (
+        [ExecuteProcess(cmd=['python3', '-c', 'from jetnano_navigation.nav_helper import main; main()',
+                             '--ros-args', '-p', 'cmd_topic:=cmd_vel', '-p', 'sweep:=false'],
+                        additional_env={'PYTHONPATH': f'{D}/pylib:' + os.environ.get('PYTHONPATH', '')},
+                        output='screen')]
+        if os.environ.get('RESCUE') == '1' else []) + [
         Node(package='nav2_map_server', executable='map_server', name='map_server', output='screen',
              parameters=[SIM, {'yaml_filename': f'{D}/map/home.yaml'}]),
         nav('nav2_controller', 'controller_server'),
