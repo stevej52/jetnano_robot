@@ -86,6 +86,7 @@ from std_msgs.msg import Bool, String
 CONTAINER = 'isaac_vo'
 CONTAINER_LAUNCH = r'cuvslam_.*\.launch\.py'
 LIDAR_USB = '10c4:ea60'
+LIDAR_HUB = '0bda:5489'      # the 4-port USB 2.0 hub the lidar, the mic and Bluetooth hang off
 
 
 def proc(path: str) -> str:
@@ -909,7 +910,41 @@ class Watchdog(Node):
                 time.sleep(2.0)
                 self._restart_process(proc('rplidar_ros/rplidar_composition'))
                 return
-        self.get_logger().warning(f'USB {vid_pid} not found: is it unplugged?')
+        # Not on the bus at all: after a sudden power loss its USB-serial chip comes back wedged
+        # and never takes an address (2026-10-04, error -71 through three warm reboots, the
+        # motor still spinning). A reset of the hub it hangs off frees it - but the microphone
+        # shares that hub, and a torn-down audio stream is the known kernel-panic trigger, so
+        # only while the voice is unloaded.
+        if os.path.exists(VOICE_OFF_FLAG) and self._hub_reset(LIDAR_HUB):
+            time.sleep(4.0)
+            self._restart_process(proc('rplidar_ros/rplidar_composition'))
+            return
+        self.get_logger().warning(f'USB {vid_pid} not found: is it unplugged?'
+                                  + ('' if os.path.exists(VOICE_OFF_FLAG) else ' (hub reset skipped: the voice is loaded)'))
+
+    def _hub_reset(self, vid_pid: str) -> bool:
+        """USBDEVFS_RESET on the hub with this id: its whole subtree re-enumerates."""
+        vid, pid = vid_pid.split(':')
+        base = '/sys/bus/usb/devices'
+        for dev in os.listdir(base):
+            try:
+                with open(f'{base}/{dev}/idVendor') as f:
+                    v = f.read().strip()
+                with open(f'{base}/{dev}/idProduct') as f:
+                    p = f.read().strip()
+                with open(f'{base}/{dev}/busnum') as f:
+                    bus = int(f.read())
+                with open(f'{base}/{dev}/devnum') as f:
+                    num = int(f.read())
+            except (OSError, ValueError):
+                continue
+            if (v, p) == (vid, pid):
+                code = ('import fcntl,os;fd=os.open("/dev/bus/usb/%03d/%03d",os.O_WRONLY);'
+                        'fcntl.ioctl(fd,%d,0);os.close(fd)' % (bus, num, ord('U') << 8 | 20))
+                r = subprocess.run(['sudo', '-n', 'python3', '-c', code], capture_output=True, text=True, timeout=15)
+                self.get_logger().warning(f'USB hub {vid_pid} at {dev} reset (rc {r.returncode}) to free the lidar')
+                return r.returncode == 0
+        return False
 
     # ------------------------------------------------------------ reporting --
 
