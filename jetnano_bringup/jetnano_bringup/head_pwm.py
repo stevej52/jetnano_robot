@@ -60,10 +60,15 @@ class Servo:
             if os.access(os.path.join(self.dir, 'enable'), os.W_OK) and os.access(os.path.join(self.dir, 'duty_cycle'), os.W_OK):
                 break
             time.sleep(0.1)
-        self._write('enable', 0)
-        self._write('duty_cycle', 0)
+        # the tegra PWM driver's rules (2026-10-06, tried by hand): nothing can be written before
+        # the period; it will not enable with a duty of 0. So: period now, and the first command
+        # sets the pulse and enables; limp = disabled (the pin's pull-down holds it low).
         self._write('period', PERIOD_NS)
-        self._write('enable', 1)            # duty 0: the pin stays low, no pulse, servo limp
+        self.enabled = False
+        try:
+            self._write('enable', 0)
+        except OSError:
+            pass
 
     def _write(self, name, value):
         with open(os.path.join(self.dir, name), 'w') as f:
@@ -71,10 +76,14 @@ class Servo:
 
     def set_us(self, us):
         self._write('duty_cycle', us * 1000)
+        if not self.enabled:
+            self._write('enable', 1)
+            self.enabled = True
 
     def limp(self):
         try:
-            self._write('duty_cycle', 0)
+            self._write('enable', 0)
+            self.enabled = False
         except OSError:
             pass
 
