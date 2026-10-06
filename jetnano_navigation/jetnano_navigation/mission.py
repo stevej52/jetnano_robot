@@ -25,6 +25,9 @@
 
 Commands (JSON on /mission/command):
     {"do": "goal", "x", "y", "heading_deg", "timeout_s": 45, "planner": "GridBased", "id": "abcd1234"}
+        since 2026-10-05 a goal is run as a ONE-WAYPOINT ROUTE (any arrival heading on the "Through"
+        planner, the route's rescue, the stall rule, 300 s) unless "exact": true or "planner":
+        "GridBased" asks for the old exact-heading goal (house-tour sim: stuck 13-22 -> 2-3 of 199)
     {"do": "route", "waypoints": [[x, y, heading_deg], ...], "timeout_s": 300}     (route_run.RouteRun)
     {"do": "cancel"}      {"do": "resume"}      {"do": "status"}
 
@@ -291,6 +294,9 @@ class Mission(QuietNode):
                 'feedback': {}, 'handle': None, 'goal_uuid': None, 'result_future': None, 'phase': 'sending', 'run': None}
 
     def _start(self, cmd):
+        if cmd.get('do') == 'goal' and not cmd.get('exact') and cmd.get('planner', 'Through') != 'GridBased':
+            cmd = dict(cmd, do='route', waypoints=[[float(cmd['x']), float(cmd['y']), float(cmd.get('heading_deg', 0.0))]],
+                       timeout_s=float(cmd.get('timeout_s', 300.0)), as_goal=True)
         mission = self._new(cmd)
         permit, why = self.permitted()
         if not permit:

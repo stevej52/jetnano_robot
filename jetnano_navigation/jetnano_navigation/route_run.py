@@ -55,6 +55,8 @@ RETRACE_M = 0.8         # back out this far along her own track before the first
 ASK_WAIT_S = 200.0      # the pictures, the brain, the answer
 HANDOFF_M = 0.40        # this far before the lap's end Nav2 hands over to the parking, still rolling
 PARK_WAIT_S = 120.0     # the parking reports within this, or the route ends without it
+STALL_S = 60.0          # no 0.25 m closer to the stretch's end in this long = stuck: the rescue starts
+STALL_GAIN_M = 0.25     # (house-tour sim 2026-10-05: Nav2 can loop on recoveries without ever giving up)
 STILL_M = 0.05          # not moved this far = standing still
 STILL_S = 3.0           # standing still this long with the route live -> pictures
 SNAPS_MAX = 6
@@ -87,6 +89,7 @@ class RouteRun:
         self.done_before = 0              # waypoints of earlier stretches (their last is the next one's first)
         self.passed = []                  # (waypoint number, seconds) as the tree drops each one
         self.fb = {'dist': float('nan'), 'pose': None, 'left': 0, 'goal': None}
+        self.best_dist, self.best_t = float('inf'), time.monotonic()   # the stall rule
         self.handle = None
         self.detours = 0
         self.pending = None               # the waypoints to send again after a detour wait or a hold
@@ -164,6 +167,7 @@ class RouteRun:
         """A stretch (or what is left of one) to Nav2; a goal already running is preempted."""
         self.stretch = list(stretch)
         self.fb.update(left=len(self.stretch), goal=None, dist=float('nan'))   # no stale distance (drive 15)
+        self.best_dist, self.best_t = float('inf'), time.monotonic()           # a fresh stretch: a fresh stall clock
         self.phase = 'sending'
         self.handle = None
         goal = NavigateThroughPoses.Goal()
@@ -474,6 +478,14 @@ class RouteRun:
         if now - self.t0 > self.timeout_s:
             self.say('timeout: cancelling the route')
             return self.abandon(f'timeout after {self.timeout_s:.0f} s')
+        if self.phase == 'driving' and self.fb['dist'] == self.fb['dist']:
+            # the stall rule: stuck means not getting closer, not a clock running out
+            if self.fb['dist'] < self.best_dist - STALL_GAIN_M:
+                self.best_dist, self.best_t = self.fb['dist'], now
+            elif now - self.best_t > STALL_S:
+                self.say(f'{now - self.t0:5.1f} s  no progress for {STALL_S:.0f} s ({self.fb["dist"]:.2f} m to go)')
+                self.best_dist, self.best_t = self.fb['dist'], now
+                return self._cancel_then('rescue', self.remaining())
         if (self.phase == 'driving' and self.then_park and self.k + 1 == len(self.stretches)
                 and self.fb['left'] == 1 and self.fb['dist'] == self.fb['dist'] and self.fb['dist'] <= HANDOFF_M):
             return self._hand_over_to_parking(now)
