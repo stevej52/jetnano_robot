@@ -19,7 +19,9 @@ Environment=ROS_DOMAIN_ID=7
 Environment=HOME=/home/jeston
 Environment=FASTRTPS_DEFAULT_PROFILES_FILE=/etc/jetnano/fastdds_udp_only.xml
 # Override in /etc/default/jetnano-nav2, e.g. NAV2_ARGS="mode:=external nvblox:=false"
-Environment=NAV2_ARGS=mode:=external nvblox:=true
+# QUOTED (2026-10-05): unquoted, systemd split the value at the space and Nav2 ran with only
+# mode:=external since 2026-10-03 - no camera layers in the costmaps or the collision monitor.
+Environment="NAV2_ARGS=mode:=external nvblox:=true"
 EnvironmentFile=-/etc/default/jetnano-nav2
 # the robot's own stack first (the lidar, the odometry, the collision guard, the camera map)
 ExecStartPre=/bin/sleep 20
