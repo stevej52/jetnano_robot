@@ -5,8 +5,7 @@ the pin-7 safety relay, whose coil (and the XIAO watchdog) are on the servo rail
 bench with no pack - so the head could not look round on the bench. The servos are now powered
 by their own Castle BEC and their signals come from header pins:
 
-    pin 32  pwm7  32e0000.pwm  PAN      pin 33  pwm5  32c0000.pwm  TILT      pin 34  GND
-    (as Steve wired them on 2026-10-06 - planned the other way round; the camera test told)
+    pin 33  pwm5  32c0000.pwm  PAN      pin 32  pwm7  32e0000.pwm  TILT      pin 34  GND
 
 (robot-environment rosie-hdr40-pin7-output.dts muxes the two pins.) The relay still cuts the
 ESC and steering; the head is no longer behind it, which is the point.
@@ -97,8 +96,8 @@ class HeadPwm(Node):
     def __init__(self):
         super().__init__('head_pwm')
         self.servos, self.cfg = {}, {}
-        for joint, device, mn, mx, lo, hi in (('pan', '32e0000.pwm', 700.0, 2450.0, 5.0, 180.0),
-                                              ('tilt', '32c0000.pwm', 750.0, 2250.0, 12.0, 168.0)):
+        for joint, device, mn, mx, lo, hi in (('pan', '32c0000.pwm', 700.0, 2450.0, 5.0, 180.0),
+                                              ('tilt', '32e0000.pwm', 750.0, 2250.0, 12.0, 168.0)):
             p = lambda k, d, j=joint: self.declare_parameter(f'{j}.{k}', d).value  # noqa: E731
             cfg = {'device': p('device', device), 'min_pulse_us': float(p('min_pulse_us', mn)),
                    'max_pulse_us': float(p('max_pulse_us', mx)), 'min_limit': float(p('min_limit', lo)),
