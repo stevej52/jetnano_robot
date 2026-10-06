@@ -221,7 +221,7 @@ local_costmap:
       # tyre to tyre, tape-measured 2026-09-27 (Steve): 0.444 long x 0.295 wide - no bumpers
       # on a crawler, the tyres are the edges (was 0.44 x 0.22: 7.5 cm too narrow)
       footprint: "[ [0.222, 0.148], [0.222, -0.148], [-0.222, -0.148], [-0.222, 0.148] ]"
-      footprint_padding: 0.03
+      footprint_padding: 0.05   # 0.03 until 2026-10-05 (house-tour sim, Steve: apply it): the planner keeps her 5 cm off, the stop zones need it
       # Layers combine by maximum: the camera's layer can add obstacles, never erase the
       # lidar's. Nav2 reads use_maximum (and lethal_cost_threshold, track_unknown_space)
       # per costmap, not per layer, so until 2026-09-28 the nvblox layer's own lines were
@@ -266,7 +266,7 @@ local_costmap:
         # 6 -> 4 direction changes. The 3 cm footprint_padding stays (tyres swing out at full
         # lock: the TV cabinet, 2026-09-28); the collision guard and monitor are unchanged.
         cost_scaling_factor: 10.0   # 6.0 until 2026-10-01: the cost falls off twice as fast, so the "expensive" band round furniture is half as wide
-        inflation_radius: 0.31   # must stay >= the padded footprint's circumscribed radius (0.308): below it (0.22 and 0.28 tried 2026-10-01) Smac drops its optimised footprint check, plans 10x slower and timed out at the table corner (drive 19). The "danger zone" is cut by cost_scaling_factor instead.
+        inflation_radius: 0.34   # 0.31 until 2026-10-05 (padding 0.03 -> 0.05). Must stay >= the padded footprint's circumscribed radius (0.336 now; was 0.308): below it (0.22 and 0.28 tried 2026-10-01) Smac drops its optimised footprint check, plans 10x slower and timed out at the table corner (drive 19). The "danger zone" is cut by cost_scaling_factor instead.
 
 global_costmap:
   global_costmap:
@@ -280,7 +280,7 @@ global_costmap:
       # tyre to tyre, tape-measured 2026-09-27 (Steve): 0.444 long x 0.295 wide - no bumpers
       # on a crawler, the tyres are the edges (was 0.44 x 0.22: 7.5 cm too narrow)
       footprint: "[ [0.222, 0.148], [0.222, -0.148], [-0.222, -0.148], [-0.222, 0.148] ]"
-      footprint_padding: 0.03
+      footprint_padding: 0.05   # 0.03 until 2026-10-05 (house-tour sim, Steve: apply it): the planner keeps her 5 cm off, the stop zones need it
       # by maximum, as the local costmap: the camera layer only adds (see there)
       use_maximum: true
       # Drives 21-22 (2026-10-02): sunlight on the floor came out of the depth camera as
@@ -341,7 +341,7 @@ global_costmap:
         # 6 -> 4 direction changes. The 3 cm footprint_padding stays (tyres swing out at full
         # lock: the TV cabinet, 2026-09-28); the collision guard and monitor are unchanged.
         cost_scaling_factor: 10.0   # 6.0 until 2026-10-01: the cost falls off twice as fast, so the "expensive" band round furniture is half as wide
-        inflation_radius: 0.31   # must stay >= the padded footprint's circumscribed radius (0.308): below it (0.22 and 0.28 tried 2026-10-01) Smac drops its optimised footprint check, plans 10x slower and timed out at the table corner (drive 19). The "danger zone" is cut by cost_scaling_factor instead.
+        inflation_radius: 0.34   # 0.31 until 2026-10-05 (padding 0.03 -> 0.05). Must stay >= the padded footprint's circumscribed radius (0.336 now; was 0.308): below it (0.22 and 0.28 tried 2026-10-01) Smac drops its optimised footprint check, plans 10x slower and timed out at the table corner (drive 19). The "danger zone" is cut by cost_scaling_factor instead.
 
 planner_server:
   ros__parameters:
@@ -442,7 +442,47 @@ collision_monitor:
     source_timeout: 1.0
     base_shift_correction: true
     stop_pub_timeout: 2.0
-    polygons: ["FootprintApproach"]
+    # 2026-10-05 (house-tour simulator tools/rosie_sim, Steve: "allow it and apply it"): DIRECTION-AWARE
+    # stop zones replace the all-round FootprintApproach box (kept below, unused). The box held her in
+    # EVERY direction once anything was within 4 cm beside her - the cause of nearly all the sim's stuck
+    # trips (a straight back-out into open floor refused). Now only the zone she is driving into is
+    # checked: ahead going forward, behind reversing, 15 cm below 0.25 m/s and 28 cm above, 2.2 cm
+    # wider than her each side. Sim, with the 5 cm planner padding and goals as routes: stuck
+    # 13-22 -> 2-3 of 199 trips, one front-corner touch in ~400 (7 / 16 cm zones: 16 touches a tour).
+    polygons: ["DirectionalStop"]
+    DirectionalStop:
+      type: "velocity_polygon"
+      action_type: "stop"
+      min_points: 4
+      visualize: false
+      enabled: true
+      holonomic: false
+      polygon_pub_topic: "directional_stop"
+      velocity_polygons: ["fwd_slow", "fwd_fast", "rev_slow", "rev_fast"]
+      fwd_slow:
+        points: "[[0.372, 0.17], [0.372, -0.17], [0.12, -0.17], [0.12, 0.17]]"
+        linear_min: 0.0
+        linear_max: 0.25
+        theta_min: -3.0
+        theta_max: 3.0
+      fwd_fast:
+        points: "[[0.502, 0.17], [0.502, -0.17], [0.12, -0.17], [0.12, 0.17]]"
+        linear_min: 0.25
+        linear_max: 1.0
+        theta_min: -3.0
+        theta_max: 3.0
+      rev_slow:
+        points: "[[-0.12, 0.17], [-0.12, -0.17], [-0.372, -0.17], [-0.372, 0.17]]"
+        linear_min: -0.25
+        linear_max: 0.0
+        theta_min: -3.0
+        theta_max: 3.0
+      rev_fast:
+        points: "[[-0.12, 0.17], [-0.12, -0.17], [-0.502, -0.17], [-0.502, 0.17]]"
+        linear_min: -1.0
+        linear_max: -0.25
+        theta_min: -3.0
+        theta_max: 3.0
     # Simulates her outline along the commanded motion and slows her so nothing is hit
     # within time_before_collision. Until 2026-09-28 it used the costmap footprint
     # (0.444 x 0.295, tyre to tyre with the wheels straight), looked 1.2 s ahead and saw
