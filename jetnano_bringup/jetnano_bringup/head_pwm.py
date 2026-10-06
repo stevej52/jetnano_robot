@@ -22,6 +22,7 @@ stop (servos limp), as "on shutdown off" did on the PCA9685.
 """
 
 import os
+import time
 
 import rclpy
 from rclpy.executors import ExternalShutdownException
@@ -53,6 +54,12 @@ class Servo:
         if not os.path.isdir(self.dir):
             with open(os.path.join(chip, 'export'), 'w') as f:
                 f.write('0')
+        # a fresh export: udev hands pwm0's files to the gpio group a moment later (2026-10-06,
+        # first boot: "Permission denied" on enable)
+        for _ in range(50):
+            if os.access(os.path.join(self.dir, 'enable'), os.W_OK) and os.access(os.path.join(self.dir, 'duty_cycle'), os.W_OK):
+                break
+            time.sleep(0.1)
         self._write('enable', 0)
         self._write('duty_cycle', 0)
         self._write('period', PERIOD_NS)
