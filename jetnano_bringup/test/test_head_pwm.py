@@ -12,5 +12,5 @@ def test_dead_ahead_and_level_match_the_measured_pulses():
 
 def test_angles_are_clamped_to_the_clean_range():
     assert abs(pulse_us(0.0, PAN) - pulse_us(5.0, PAN)) < 1e-9          # never into the 600 us hunt
-    assert abs(pulse_us(200.0, TILT) - 2148.0) < 0.5                    # 168 deg, camera well down
+    assert abs(pulse_us(200.0, TILT) - 2150.0) < 0.5                    # 168 deg = 2150 us, camera well down
     assert abs(pulse_us(-10.0, TILT) - 850.0) < 0.5                     # 12 deg, camera well up
