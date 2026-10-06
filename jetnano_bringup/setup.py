@@ -46,6 +46,7 @@ setup(
             'xvf_tune = jetnano_bringup.xvf:main',
             'people = jetnano_bringup.people:main',
             'rail_check = jetnano_bringup.rail_check:main',
+            'head_pwm = jetnano_bringup.head_pwm:main',
             'predrive = jetnano_bringup.predrive:main',
             'guard_flow = jetnano_bringup.guard_flow:main',
             'voice = jetnano_bringup.voice_switch:main',

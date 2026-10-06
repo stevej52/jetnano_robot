@@ -69,7 +69,19 @@ def shift_px(a, b):
 
 
 def rail_live(node, log=print):
-    """True if the head moves, False if it does not, None if there was no picture to judge by."""
+    """True if the head moves, False if it does not, None if there was no picture to judge by.
+
+    Since 2026-10-06 the head is on the Jetson's PWM and its own BEC (head_pwm), not the servo
+    rail: it moves whether the rail is live or not, so it can no longer tell - None, said so."""
+    names = []
+    for _ in range(30):                  # discovery: a fresh node sees the others only after a moment
+        names = node.get_node_names()
+        if 'head_pwm' in names or len(names) > 10:
+            break
+        time.sleep(0.1)
+    if 'head_pwm' in names:
+        log('rail_check: the head is on the Jetson PWM now (head_pwm), not the servo rail: cannot tell')
+        return None
     pub = node.create_publisher(Float64, '/pca9685/pan/angle', 10)
     t0 = time.monotonic()
     before = frame()
@@ -103,7 +115,7 @@ def main(args=None):
         except (Exception, KeyboardInterrupt):  # noqa: BLE001 - the context is gone, or a second SIGINT, after an external shutdown
             pass
         rclpy.shutdown()
-    print('servo rail ' + ('LIVE' if live else 'DEAD' if live is False else 'UNKNOWN (no picture)'))
+    print('servo rail ' + ('LIVE' if live else 'DEAD' if live is False else 'UNKNOWN (no picture, or the head is off the rail)'))
     return 0 if live else 1
 
 

@@ -112,6 +112,18 @@ def generate_launch_description():
             }],
         ),
 
+        # The camera pan-tilt on the Jetson's own PWM, header pins 33 (pan) and 32 (tilt),
+        # since 2026-10-06: off the PCA9685, whose outputs the pin-7 relay gates (head_pwm.py).
+        Node(
+            condition=UnlessCondition(simulate),
+            package='jetnano_bringup',
+            executable='head_pwm',
+            name='head_pwm',
+            respawn=True,
+            respawn_delay=3.0,
+            output='screen',
+        ),
+
         # The fast safety watchers in one C++ process (2026-09-27: the three
         # Python nodes cost ~19 % of a core): tilt guard (cmd_vel_tilt), motion
         # check (told to drive but the odometry does not see her move: lock
