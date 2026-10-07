@@ -42,8 +42,10 @@ done
 # waypoints 1, 8 and 9 where the planner's costmap moved them on every run (drives 21-25: 15, 5 and 7-10 cm off the furniture margins)
 # 2026-10-07 (drive 48 passed Steve's chair at 4.7 cm both ways and parked badly beside it): up the
 # MIDDLE of the corridor between his chair (east edge x 2.45-2.65) and the wall (x 3.55), turning north
-# of the chair both ways - (3.10, -2.45) out and back, waypoint 1 at x 3.05; sim 2/2 laps, chair 15-18 cm
-LAP="3.10 -2.45 -90  3.05 -3.40 -90  1.2 -4.4 180  -0.45 -5.6 -90  1.5 -7.3 0  4.5 -7.5 0  6.5 -7.7 20  7.05 -6.5 90  5.54 -5.49 180  3.14 -4.33 110  3.10 -2.45 90  0.85 -0.81 134"
+# of the chair both ways - (3.10, -2.45) out and back, waypoint 1 at x 3.05; sim 2/2 laps, chair 15-18 cm.
+# Drive 49: back up the middle (x 2.97-3.0) but OUT she overshot the turn east to x 3.2, 5 cm from the
+# curtain (it hangs at x ~3.45, 10 cm inside the mapped wall): the outgoing turn point moved 15 cm west
+LAP="2.95 -2.40 -90  3.00 -3.40 -90  1.2 -4.4 180  -0.45 -5.6 -90  1.5 -7.3 0  4.5 -7.5 0  6.5 -7.7 20  7.05 -6.5 90  5.54 -5.49 180  3.14 -4.33 110  3.10 -2.45 90  0.85 -0.81 134"
 ROUTE="${*:-$LAP}"
 
 D="$HOME/audit/$(date +%F)/drive$N"

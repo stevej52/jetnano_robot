@@ -64,8 +64,8 @@ def read(bag):
                 elif tr.child_frame_id == 'base_footprint':
                     ob = v
                     D['ob'].append((ts,) + v)
-                elif 'laser' in tr.child_frame_id:
-                    laser = v
+                elif tr.child_frame_id in ('lidar_link', 'laser', 'laser_frame'):
+                    laser = v                     # lidar_link: mounted turned 180 deg (yaw pi)
         elif t == '/odometry/filtered':
             m = deserialize_message(d, Odometry)
             D['odo'].append((ts, m.twist.twist.linear.x, m.twist.twist.angular.z))
