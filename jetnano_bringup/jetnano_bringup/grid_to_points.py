@@ -251,8 +251,8 @@ class GridToPoints(Node):
             grid = grid.copy().reshape(info.height, info.width)
             res, ox, oy = info.resolution, info.origin.position.x, info.origin.position.y
             for x0, y0, x1, y1 in boxes:
-                u0, u1 = max(0, int((min(x0, x1) - ox) / res)), min(info.width, int(math.ceil((max(x0, x1) - ox) / res)))
-                v0, v1 = max(0, int((min(y0, y1) - oy) / res)), min(info.height, int(math.ceil((max(y0, y1) - oy) / res)))
+                u0, u1 = max(0, round((min(x0, x1) - ox) / res)), min(info.width, round((max(x0, x1) - ox) / res))
+                v0, v1 = max(0, round((min(y0, y1) - oy) / res)), min(info.height, round((max(y0, y1) - oy) / res))
                 if u0 < u1 and v0 < v1:
                     grid[v0:v1, u0:u1] = 100
             grid = grid.reshape(-1)

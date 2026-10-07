@@ -421,7 +421,7 @@ def test_a_bump_marks_the_spot_and_carries_on_when_the_motion_check_lets_go():
     run.tick(time.monotonic(), False, [(0.15, 0.0)])          # pushing forward
     n.pose = (3.0, 1.0, math.radians(90))
     n.lock = True                                              # the motion check: pushed, did not move
-    h1.result_fut.finish(result(6))                            # CANCELED, not by us
+    h1.result_fut.finish(result(5))                            # CANCELED, not by us
     assert not run.done and run.phase == 'bump wait'
     assert n.bumps == [(3.0, 1.4)]                             # 0.4 m ahead of her, the way she pushed
     assert any('BUMP 1' in s for s in said)
@@ -440,7 +440,7 @@ def test_a_bump_while_reversing_is_marked_behind_and_too_many_end_the_route(monk
         goal, h, fb_cb = n.through.sent[-1]
         fb_cb(feedback(h, 1.0, 0.0, 4.0, 3))
         n.lock = True
-        h.result_fut.finish(result(6))
+        h.result_fut.finish(result(5))
         n.lock = False
         if run.done:
             break
