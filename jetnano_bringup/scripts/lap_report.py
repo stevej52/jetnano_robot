@@ -25,6 +25,7 @@ from sensor_msgs.msg import LaserScan
 from tf2_msgs.msg import TFMessage
 
 HL, HW = 0.222, 0.148                      # her body outline (base_link)
+TYRE_W = 0.17                              # her tyres at full lock (lidar returns this close to her side are hers)
 TURNS = {'t1 chair': (2.9, -3.2, 0.9), 't2 island N': (1.0, -4.6, 0.9), 't3 island S': (0.2, -6.6, 1.0),
          't4 vacuum': (6.8, -7.3, 0.9), 't5 dining N': (6.0, -5.6, 0.9), 't6 chair': (2.6, -2.6, 0.9)}
 BASELINE = os.path.expanduser('~/audit/ground_zero.json')
@@ -85,7 +86,9 @@ def read(bag):
             px = laser[0] + rr[ok] * np.cos(a[ok] + laser[2])
             py = laser[1] + rr[ok] * np.sin(a[ok] + laser[2])
             ox, oy = np.maximum(np.abs(px) - HL, 0), np.maximum(np.abs(py) - HW, 0)
-            inside = (np.abs(px) <= HL) & (np.abs(py) <= HW)          # her own parts: not obstacles
+            # her own parts are not obstacles: the body, and her tyres, which reach ~0.16 m out at full
+            # lock (drive 49: a "0.1 cm" gap in open floor was her own front-right tyre in a hard turn)
+            inside = (np.abs(px) <= HL) & (np.abs(py) <= TYRE_W)
             gap = np.hypot(ox, oy)[~inside]
             pose = compose(mo, ob)
             D['scan_min'].append((ts, float(gap.min()) if len(gap) else 9.0, pose[0], pose[1]))
