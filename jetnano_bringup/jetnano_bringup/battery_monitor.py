@@ -38,8 +38,11 @@ Wiring notes that cost a board if ignored:
   electronics feed. A motor-rail current reading needs an external 10 mohm
   shunt and ``shunt_ohms`` to match.
 
-A pack that is not there (the robot on its wall supply) reads under 6 V and
-is reported as "no battery"; nothing is raised for that.
+A pack that is not there (the robot on its wall supply) reads under 8 V and
+is reported as "no battery"; nothing is raised for that. On the bench the BEC
+backfeeds the ESC's input capacitors, so the tap reads a drifting 5-9 V with no
+pack in; a real 3S pack would have powered her off at 9.9 V long before 8
+(2026-10-06: three bench power-offs on that reading).
 
 ``simulate: true`` publishes a slowly draining pack for testing the rest of
 the system without the board.
@@ -145,7 +148,7 @@ class BatteryMonitor(QuietNode):
         self.declare_parameter('poweroff_after_s', 60.0)
         self.declare_parameter('poweroff_cmd', 'sudo -n systemctl poweroff')
         self.declare_parameter('simulate_start_v', 12.4)
-        self.declare_parameter('present_above_v', 6.0)
+        self.declare_parameter('present_above_v', 8.0)
         self.declare_parameter('rate', 2.0)
         self.declare_parameter('slow_s', 5.0)            # the thresholds judge this long an average
         self.declare_parameter('level_window_s', 60.0)   # judge_level: a minute of readings
