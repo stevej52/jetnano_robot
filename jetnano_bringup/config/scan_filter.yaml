@@ -17,10 +17,14 @@ scan_filter:
       type: laser_filters/LaserScanBoxFilter
       params:
         box_frame: base_link
-        min_x: -0.25
-        max_x: 0.25
-        min_y: -0.20
-        max_y: 0.20
+        # 2026-10-06 (drive 43): +-0.25 x +-0.20 hid a 5 cm strip all down her sides (her outline is
+        # +-0.222 x +-0.148): a chair corner came in there unseen by the costmaps, the stop zones and
+        # the guard, and her wheel shoved the chair (with Steve in it). The antenna no longer shows
+        # (raw scan, 45 turns: nothing under 0.51 m), so the box now stays INSIDE her outline.
+        min_x: -0.21
+        max_x: 0.21
+        min_y: -0.14
+        max_y: 0.14
         min_z: -0.10
         max_z: 0.50
         invert: false
