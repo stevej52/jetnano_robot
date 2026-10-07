@@ -13,6 +13,7 @@
 //
 // Why one grid for the planner, and why the warp, is in the Python file's docstring.
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <memory>
@@ -22,6 +23,7 @@
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 
+#include "geometry_msgs/msg/point_stamped.hpp"
 #include "nav_msgs/msg/occupancy_grid.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/point_cloud2.hpp"
@@ -68,6 +70,17 @@ public:
     // collision guard, which see the camera live, keep the last word near it. The lidar's map
     // stays the only thing that forbids. 0 = the camera's cells left out of the planner map.
     camera_value_ = static_cast<int8_t>(declare_parameter<int>("planner_camera_value", 60));
+    // Places she must plan round although no sensor sees them reliably, as map boxes
+    // [x0, y0, x1, y1, ...], set to 100 on the planner's map. 2026-10-06: the robot vacuum and its
+    // dock in the dining-room corner (Steve's turn 4, "where it has always been") - ~10 cm tall,
+    // under the lidar's plane and the camera slice's 10 cm floor, and against the wall, so the
+    // camera cells it does make fall inside planner_wall_margin_m and are left out; drive 46's
+    // parking pushed into it 3-4 times. The camera put it at x 7.45-7.9, y -7.55..-7.9.
+    keep_out_ = declare_parameter<std::vector<double>>("keep_out", std::vector<double>{7.25, -8.0, 8.0, -7.35});
+    // bumps (jetnano_navigation route_run, via the mission on /bump): a spot she pushed at without
+    // moving, a box of +-bump_half_m for bump_keep_s on the planner's map
+    bump_half_ = declare_parameter<double>("bump_half_m", 0.10);
+    bump_keep_s_ = declare_parameter<double>("bump_keep_s", 600.0);
     health_pub_ =create_publisher<std_msgs::msg::String>("camera_obstacles/health", rclcpp::QoS(1).reliable());
 
     const auto reliable1 = rclcpp::QoS(1).reliable();
@@ -87,6 +100,13 @@ public:
       // /tf comes 140 times a second; only SLAM's map -> odom matters (cheap to skip in C++)
       sub_tf_ = create_subscription<tf2_msgs::msg::TFMessage>(
         "/tf", rclcpp::QoS(20).reliable(), [this](tf2_msgs::msg::TFMessage::ConstSharedPtr msg) {on_tf(*msg);});
+      sub_bump_ = create_subscription<geometry_msgs::msg::PointStamped>(
+        "bump", rclcpp::QoS(10).reliable(), [this](geometry_msgs::msg::PointStamped::ConstSharedPtr p) {
+          const double x = p->point.x, y = p->point.y;
+          bumps_.push_back({x - bump_half_, y - bump_half_, x + bump_half_, y + bump_half_, now().seconds() + bump_keep_s_});
+          RCLCPP_INFO(get_logger(), "bump at (%+.2f, %+.2f): a box on the planner's map for %.0f s", x, y, bump_keep_s_);
+          publish_map_grid();
+        });
       timer_ = create_wall_timer(
         std::chrono::duration<double>(1.0 / map_grid_hz), [this]() {publish_map_grid();});
     }
@@ -228,6 +248,26 @@ private:
           "%zu camera cell(s) within %.2f m of a mapped wall left out of the planner's map", left_out, wall_margin_m_);
       }
     }
+    // the keep-out boxes and the bumps still in force: walls for the planner
+    const double t_now = now().seconds();
+    bumps_.erase(std::remove_if(bumps_.begin(), bumps_.end(), [t_now](const Box & b) {return b.until <= t_now;}), bumps_.end());
+    std::vector<Box> boxes = bumps_;
+    for (size_t k = 0; k + 3 < keep_out_.size(); k += 4) {
+      boxes.push_back({keep_out_[k], keep_out_[k + 1], keep_out_[k + 2], keep_out_[k + 3], 0.0});
+    }
+    const double res = info.resolution, mox = info.origin.position.x, moy = info.origin.position.y;
+    for (const auto & b : boxes) {
+      if (res <= 0.0) {break;}
+      const long u0 = std::max(0L, std::lround((std::min(b.x0, b.x1) - mox) / res));
+      const long u1 = std::min(static_cast<long>(info.width), std::lround((std::max(b.x0, b.x1) - mox) / res));
+      const long v0 = std::max(0L, std::lround((std::min(b.y0, b.y1) - moy) / res));
+      const long v1 = std::min(static_cast<long>(info.height), std::lround((std::max(b.y0, b.y1) - moy) / res));
+      for (long v = v0; v < v1; ++v) {
+        for (long u = u0; u < u1; ++u) {
+          data[static_cast<size_t>(v) * info.width + u] = 100;
+        }
+      }
+    }
     const Geometry geometry{info.width, info.height, info.resolution, info.origin.position.x, info.origin.position.y};
     if (have_last_ && geometry == last_geometry_ && data == last_data_) {
       return;                                       // nothing new: no re-inflating the whole house
@@ -270,6 +310,14 @@ private:
     bool operator==(const Geometry & o) const {return w == o.w && h == o.h && res == o.res && x == o.x && y == o.y;}
   };
 
+  struct Box
+  {
+    double x0, y0, x1, y1, until;
+  };
+  std::vector<double> keep_out_;
+  std::vector<Box> bumps_;
+  double bump_half_ = 0.10, bump_keep_s_ = 600.0;
+  rclcpp::Subscription<geometry_msgs::msg::PointStamped>::SharedPtr sub_bump_;
   int threshold_;
   double height_, max_age_, stale_s_, wall_margin_m_;
   int8_t camera_value_ = 60;

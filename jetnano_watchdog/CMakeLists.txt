@@ -35,7 +35,7 @@ ament_target_dependencies(bno055_imu rclcpp geometry_msgs sensor_msgs std_msgs)
 # nvblox's grid as points for the guard, and onto the map for the planner (2026-09-30; was 4.5-8 % in Python)
 add_executable(grid_to_points src/grid_to_points.cpp)
 target_compile_features(grid_to_points PUBLIC cxx_std_17)
-ament_target_dependencies(grid_to_points rclcpp nav_msgs sensor_msgs tf2_msgs)
+ament_target_dependencies(grid_to_points rclcpp geometry_msgs nav_msgs sensor_msgs std_msgs tf2_msgs)
 target_link_libraries(grid_to_points ${OpenCV_LIBS})
 target_include_directories(grid_to_points PRIVATE ${OpenCV_INCLUDE_DIRS})
 
