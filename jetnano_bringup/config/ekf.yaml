@@ -63,10 +63,19 @@ ekf_filter_node:
     # short (an hour of floor driving against SLAM, tools/drive_analysis/
     # heading_drift.py) and dragged the heading down with it; heading is the
     # BNO055's alone now (imu0 below).
+    # FORWARD SPEED ONLY from the camera and the lidar (2026-10-06, Steve: "steady the
+    # localization"). She is a car - opposite-phase four-wheel steering, she cannot crab - so
+    # nothing slides her sideways, but cuVSLAM reported a steady 1.3 cm/s to the RIGHT even
+    # driving dead straight (a 2-3 deg yaw in its mounting), the filter followed it, and SLAM
+    # pulled her back LEFT ~1.8 times a second: 13 cm of corrections per metre driven, 74 % of
+    # them leftward (drive 47) - her plans and her real path drifted 5-15 cm apart (Steve's
+    # chair, the vacuum). Replayed drive 47 through both settings (~/audit/2026-10-06/replay):
+    # odometry error over 3 m stretches against the map, median 25 -> 14 cm, worst 41 -> 29 cm,
+    # sideways bias -17 -> -10 cm. With no input the filter's sideways speed stays at zero.
     odom0: vo
     odom0_config: [false, false, false,
                    false, false, false,
-                   true,  true,  false,
+                   true,  false,  false,
                    false, false, false,
                    false, false, false]
     odom0_differential: false
@@ -106,7 +115,7 @@ ekf_filter_node:
     # lidar adds is speed when the camera is gone.
     odom2_config: [false, false, false,
                    false, false, false,
-                   true,  true,  false,
+                   true,  false,  false,
                    false, false, false,
                    false, false, false]
     odom2_differential: false
