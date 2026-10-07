@@ -120,6 +120,9 @@ class NavHelper(Node):
         self._odom_sub = None
         self._fresh = False
         self._odom_lock = threading.Lock()
+        # one pan-tilt sweep at a time: drive 41 (2026-10-06) ran two snapshots' sweeps at once, the
+        # second took the first's 85 deg left as "where it was" and left the head there
+        self._sweep_lock = threading.Lock()
         self._active_t = -1e9                    # when Nav2 last had a goal (monotonic)
         self._busy = 0                           # retrace / packet in progress: keep the odometry
         self.cmd = self.create_publisher(Twist, str(self.gp('cmd_topic')), 10)
@@ -316,6 +319,10 @@ class NavHelper(Node):
 
     def _sweep(self):
         """The pan-tilt camera round the sweep, then back where it was; plus the fixed cameras."""
+        with self._sweep_lock:
+            return self._sweep_locked()
+
+    def _sweep_locked(self):
         web = str(self.gp('web_url'))
         views = []
         try:
