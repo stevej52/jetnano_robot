@@ -48,19 +48,21 @@
 # collision arc 20 a second while driving) are out - /plan and the lookahead point stay.
 
 BAGS=${DRIVE_BAGS:-$HOME/bags}
-TOPICS="/cmd_vel /cmd_vel_mux /cmd_vel_web /vo /lidar_odom /odometry/filtered /odom_hold /imu/data /collision_guard/state /scan /tf /tf_static"
+# + what the planner saw (drive 41, 2026-10-06: a gap closed at turn three and nothing recorded why;
+# ~150 KB/s, mostly the camera grid)
+TOPICS="/cmd_vel /cmd_vel_mux /cmd_vel_web /vo /lidar_odom /odometry/filtered /odom_hold /imu/data /collision_guard/state /scan /tf /tf_static
+    /global_costmap/costmap /global_costmap/costmap_updates /nvblox_node/map_grid /plan"
 FULL_TOPICS="$TOPICS
     /cmd_vel_teleop /cmd_vel_settle /cmd_vel_tilt /cmd_vel_nav /cmd_vel_nav_raw /cmd_vel_nav_smoothed
     /cmd_vel_nav_mps /joint_states /motion/mode
     /e_stop /e_stop_joy /e_stop_web /e_stop_motion /cliff/drop /safety_monitor/tilt_status
     /motion_check/state /motion_check/pause /collision_monitor_state
     /lidar_odometry/pose /lidar_odometry/pose_quality /mola_diagnostics/lidar_odom/status
-    /scan_raw /nvblox_node/map_grid /battery /visual_slam/status
+    /scan_raw /battery /visual_slam/status
     /map /map_metadata /pose /initialpose /where_am_i/state
-    /goal_pose /plan /plan_smoothed /local_plan /lookahead_point /speed_limit /behavior_tree_log
+    /goal_pose /plan_smoothed /local_plan /lookahead_point /speed_limit /behavior_tree_log
     /navigate_to_pose/_action/status /navigate_to_pose/_action/feedback
     /local_costmap/costmap /local_costmap/costmap_updates
-    /global_costmap/costmap /global_costmap/costmap_updates
     /watchdog/status /watchdog/events /watchdog/topics /diagnostics /rosout /parameter_events
     /say /speak /robot_description"
 STOP_AFTER=7200     # s; drive_log's backstop
