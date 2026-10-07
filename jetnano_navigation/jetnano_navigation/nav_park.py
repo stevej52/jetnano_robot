@@ -217,8 +217,9 @@ def nav_goal(x, y, h_deg, timeout=90, exact=False):
         cmd.append('--exact')
     say(f'-- nav_goal {x:+.2f} {y:+.2f} {h_deg:+.0f}')
     out = subprocess.run(cmd, capture_output=True, text=True)
-    lines = [ln for ln in out.stdout.splitlines() if ln.startswith(('result', 'goal', 'start'))]
+    lines = [ln for ln in out.stdout.splitlines() if ln.startswith(('result', 'goal', 'start', 'a person'))]
     say('\n'.join('   ' + ln for ln in lines))
+    _LOG['person'] = any(ln.startswith('a person') for ln in lines)   # nav_goal saw a person take over
     return any(ln.startswith('result SUCCEEDED') for ln in lines)
 
 
@@ -232,11 +233,24 @@ class Straighten:
         self.plan = Shuffles(leg_max_m)
         self.pub = node.create_publisher(Twist, 'cmd_vel_park', 10)
         self.odom = None
-        self.lock = False
+        self.motion_lock = False
+        self.person = False               # a person drove her: every move stops, for good (drive 46)
         node.create_subscription(Odometry, 'odometry/filtered', self._on_odom, 10)
-        node.create_subscription(Bool, 'e_stop_motion', lambda m: setattr(self, 'lock', m.data), 10)
+        node.create_subscription(Bool, 'e_stop_motion', lambda m: setattr(self, 'motion_lock', m.data), 10)
+        for topic in ('cmd_vel_web', 'cmd_vel_teleop'):
+            node.create_subscription(Twist, topic, self._on_person, 10)
         self.buf = tf2_ros.Buffer()
         self.tf = tf2_ros.TransformListener(self.buf, node)
+
+    @property
+    def lock(self):
+        """Stop moving: the motion check's lock, or a person has taken the wheel."""
+        return bool(self.motion_lock) or self.person
+
+    def _on_person(self, m):
+        if not self.person and (abs(m.linear.x) >= 0.02 or abs(m.angular.z) >= 0.05):
+            self.person = True
+            say('a person took the wheel: parking stopped')
 
     def _on_odom(self, m):
         q = m.pose.pose.orientation
@@ -400,8 +414,18 @@ def park(straighten, x, y, h, pre, tol, rolling=False):
         if delta:
             say(f'-- turning early: an arc of {math.degrees(delta):+.0f} deg from ({qx:+.2f}, {qy:+.2f}) '
                 f'ends in front of the spot facing {h_deg:+.0f}')
+        if straighten.person:
+            return False, 'a person took the wheel'
         if not nav_goal(qx, qy, math.degrees(approach)):
+            straighten.spin(0.3)                      # hear the person who stopped it, if one did
+            if _LOG.get('person'):
+                straighten.person = True
+            if straighten.person:
+                return False, 'a person took the wheel'
             return False, 'could not reach the point in front of the spot'
+    straighten.spin(0.1)
+    if straighten.person:
+        return False, 'a person took the wheel'
     say("-- turning to face the spot's heading")
     if delta:
         straighten.arc(rolling=rolling)
@@ -498,6 +522,7 @@ def serve():
                                                            'line': 'another nav_park is running'})))
                 continue
             t0 = time.monotonic()
+            straighten.person = False             # a new parking: whoever drove her last time is done
             try:
                 ok, line = park(straighten, float(cmd.get('x', 0.0)), float(cmd.get('y', 0.0)),
                                 math.radians(float(cmd.get('heading_deg', 0.0))), float(cmd.get('pre', 1.2)),

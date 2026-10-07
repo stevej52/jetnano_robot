@@ -163,6 +163,12 @@ def main():
     st = {'cmd': [], 'lock': None, 'grid': None, 'where': None}
     n.create_subscription(Twist, '/cmd_vel_nav', lambda m: st['cmd'].append((m.linear.x, m.angular.z)), 20)
     n.create_subscription(Bool, '/e_stop_motion', lambda m: st.__setitem__('lock', m.data), 10)
+    # a person driving her (page knob, joystick) ends the goal for good: drive 46 (2026-10-06) the
+    # parking's nav_goal kept going after Steve backed her off the robot vacuum
+    st['person'] = False
+    for topic in ('/cmd_vel_web', '/cmd_vel_teleop'):
+        n.create_subscription(Twist, topic, lambda m: st.__setitem__('person', st['person'] or abs(m.linear.x) >= 0.02
+                                                                           or abs(m.angular.z) >= 0.05), 10)
     latched = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                          durability=DurabilityPolicy.TRANSIENT_LOCAL)
     # where_am_i's verdict (latched): on the bench, nothing drives (2026-09-30)
@@ -311,6 +317,12 @@ def main():
                 print(f'{time.time() - t0:5.1f} s  at x {p[0]:+.2f} y {p[1]:+.2f} h {math.degrees(p[2]):+4.0f}  '
                       f'remaining {fb["dist"]:.2f} m  driver: throttle {c[0]:+.2f} steer {c[1]:+.2f}'
                       + ('  MOTION LOCK' if st['lock'] else ''), flush=True)
+            if st['person']:
+                print('a person took the wheel: cancelling the goal', flush=True)
+                cancel = handle.cancel_goal_async()
+                while not cancel.done():
+                    rclpy.spin_once(n, timeout_sec=0.1)
+                break
             if time.time() - t0 > timeout:
                 print('timeout: cancelling the goal', flush=True)
                 cancel = handle.cancel_goal_async()

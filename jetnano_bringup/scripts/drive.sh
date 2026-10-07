@@ -118,6 +118,10 @@ if [ "$PARK" = 1 ]; then
     if grep -q "took the wheel" "$D/route.log"; then
         # a person drove her mid-route (mission.py): she is theirs now, no parking drive (drive 41)
         echo "== park  skipped: a person took the wheel"
+    elif ! grep -q "^result SUCCEEDED" "$D/route.log"; then
+        # the route failed or was cancelled: no drive home across the house on its own
+        # (drive 46, 2026-10-06: a cancelled route, then this parking ran into the robot vacuum)
+        echo "== park  skipped: the route did not succeed - she stays where she is"
     elif grep -q "^park: \(parked\|the last leg\)" "$D/route.log"; then
         echo "== park  (handed over rolling, inside the route)"
         grep "^park: " "$D/route.log" | grep -v "^park: took" | sed 's/^park: //' > "$D/park.log"
