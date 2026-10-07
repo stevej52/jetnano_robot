@@ -52,6 +52,7 @@ from jetnano_navigation import stuck_help as sh
 from nav_msgs.msg import OccupancyGrid, Odometry, Path
 import numpy as np
 import rclpy
+from rclpy._rclpy_pybind11 import InvalidHandle
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
 from rclpy.executors import ExternalShutdownException, MultiThreadedExecutor
 from rclpy.node import Node
@@ -460,7 +461,16 @@ def main(args=None):
     executor = MultiThreadedExecutor(num_threads=4)
     executor.add_node(node)
     try:
-        executor.spin()
+        while rclpy.ok():
+            try:
+                executor.spin()
+                break
+            except InvalidHandle as exc:
+                # a short-lived subscription (_latest, _map_to_odom, odometry idle) was destroyed by a
+                # worker thread while this thread built the wait set: rclpy's race. Drive 41
+                # (2026-10-06) lost the whole node - and Claude's answer - to it mid-ask. The
+                # entity is gone now; spin on and the worker's reply still goes out.
+                node.get_logger().warning(f'executor: {exc} (a temporary subscription closed mid-wait): spinning on')
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:

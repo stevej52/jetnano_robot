@@ -38,3 +38,32 @@ def test_permission_expires_with_the_gates_silence():
         n.destroy_node()
     finally:
         rclpy.shutdown()
+
+
+def test_a_person_driving_ends_the_mission_for_good():
+    """Drive 41 (2026-10-06): Steve drove her back mid-rescue and the route carried on later."""
+    from types import SimpleNamespace
+    from geometry_msgs.msg import Twist
+    said, abandoned, cancelled = [], [], []
+    run = SimpleNamespace(abandon=abandoned.append)
+    m = {'run': run}
+    fake = SimpleNamespace(active=m, held={'mission': m}, say=lambda mi, line: said.append(line),
+                           _cancel=cancelled.append)
+    idle = Twist()                                      # the page's idle zeros: not a takeover
+    mission.Mission._on_person(fake, 'cmd_vel_web', idle)
+    assert not abandoned and fake.held is not None
+    knob = Twist()
+    knob.linear.x = 0.2
+    mission.Mission._on_person(fake, 'cmd_vel_web', knob)
+    assert abandoned == ['a person took the wheel (cmd_vel_web)']
+    assert fake.held is None                            # nothing resumes on its own
+    assert 'took the wheel' in said[0]
+    mission.Mission._on_person(fake, 'cmd_vel_web', knob)   # more knob: said once
+    assert len(abandoned) == 1
+    plain = {'run': None}                               # a plain Nav2 goal: cancelled through Nav2
+    fake2 = SimpleNamespace(active=plain, held=None, say=lambda mi, line: None, _cancel=cancelled.append)
+    turn = Twist()
+    turn.angular.z = 0.5
+    mission.Mission._on_person(fake2, 'cmd_vel_teleop', turn)
+    assert cancelled == ['a person took the wheel (cmd_vel_teleop)']
+    mission.Mission._on_person(SimpleNamespace(active=None, held=None), 'cmd_vel_web', knob)   # idle: nothing

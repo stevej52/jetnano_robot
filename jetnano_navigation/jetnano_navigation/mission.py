@@ -75,6 +75,8 @@ STATUS_NAMES = {GoalStatus.STATUS_SUCCEEDED: 'SUCCEEDED', GoalStatus.STATUS_ABOR
 DRIVING = ('sending', 'driving', 'cancelling', 'rescue retrace', 'rescue ask', 'rescue wait')   # phases the gate can hold
 PERMIT_MAX_AGE_S = 2.0     # a gate verdict older than this is no permission (the gate died, or stalled)
 CMD_HISTORY_MAX = 4000     # driver commands kept for a route's result line (~40 s at 100 Hz)
+PERSON_MIN_LIN = 0.02      # m/s: a page/joystick command at least this big is a person driving her
+PERSON_MIN_ANG = 0.05      # rad/s
 
 
 def resume_policy(held_s, resume_within_s=30.0):
@@ -106,6 +108,11 @@ class Mission(QuietNode):
         self.create_subscription(String, 'safety/state', self._on_gate, latched)
         self.create_subscription(Twist, 'cmd_vel_nav', self._on_cmd, 20)
         self.create_subscription(Bool, 'e_stop_motion', lambda m: setattr(self, 'lock', m.data), 10)
+        # a person driving her (the page's knob, the joystick) ends the mission: drive 41 (2026-10-06)
+        # Steve drove her back to the start while the rescue waited on Claude, and when that wait
+        # ran out the route carried on from there with nobody having said go
+        for topic in ('cmd_vel_web', 'cmd_vel_teleop'):
+            self.create_subscription(Twist, topic, lambda m, t=topic: self._on_person(t, m), 10)
         self.costmap_cli = self.create_client(GetCostmap, '/global_costmap/get_costmap')
         self.clear_clis = [self.create_client(ClearEntireCostmap, name) for name in
                            ('/global_costmap/clear_entirely_global_costmap', '/local_costmap/clear_entirely_local_costmap')]
@@ -261,6 +268,22 @@ class Mission(QuietNode):
             return                                   # only a route keeps the driver's commands (review 2026-10-03: this grew without bound)
         if len(self.cmds) < CMD_HISTORY_MAX:
             self.cmds.append((m.linear.x, m.angular.z))
+
+    def _on_person(self, topic, m):
+        """A real drive command from a person while a mission runs (or is held): cancel it."""
+        if abs(m.linear.x) < PERSON_MIN_LIN and abs(m.angular.z) < PERSON_MIN_ANG:
+            return                                   # the page's idle zeros are not a takeover
+        mission = self.active
+        if mission is None or mission.get('person'):
+            return
+        mission['person'] = True
+        why = f'a person took the wheel ({topic})'
+        self.say(mission, f'{why}: mission cancelled, nothing resumes')
+        self.held = None                             # held by the gate or not: it must not resume on its own
+        if mission['run'] is not None:
+            mission['run'].abandon(why)              # finished; the next tick reports it
+        else:
+            self._cancel(why)
 
     def _on_command(self, m):
         try:

@@ -115,7 +115,10 @@ T1=$(date +%s)
 echo "   route took $((T1 - T0)) s (exit $RC)"
 
 if [ "$PARK" = 1 ]; then
-    if grep -q "^park: \(parked\|the last leg\)" "$D/route.log"; then
+    if grep -q "took the wheel" "$D/route.log"; then
+        # a person drove her mid-route (mission.py): she is theirs now, no parking drive (drive 41)
+        echo "== park  skipped: a person took the wheel"
+    elif grep -q "^park: \(parked\|the last leg\)" "$D/route.log"; then
         echo "== park  (handed over rolling, inside the route)"
         grep "^park: " "$D/route.log" | grep -v "^park: took" | sed 's/^park: //' > "$D/park.log"
         sed 's/^/   /' "$D/park.log"
