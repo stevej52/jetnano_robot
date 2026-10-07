@@ -23,7 +23,7 @@
     # relay: docs/relay-watchdog.md). Fitted and tested 2026-10-02 19:07 (stop from ROS and a
     # frozen node both drop the relay). Without the XIAO this line makes the relay chatter.
     output_enable_heartbeat_hz: 20.0
-    channels: [throttle, steering, rear_steering, pan, tilt]
+    channels: [throttle, steering, rear_steering]   # pan, tilt: head_pwm since 2026-10-06
 
     # Publish servo positions as joint_states. Left off for now: the driver
     # reports servo-horn degrees (85 deg = straight), which is not the same
