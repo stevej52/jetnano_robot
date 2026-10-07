@@ -53,7 +53,7 @@ import uuid
 import rclpy
 import tf2_ros
 from action_msgs.msg import GoalStatus
-from geometry_msgs.msg import PoseStamped, Twist
+from geometry_msgs.msg import PointStamped, PoseStamped, Twist
 from nav2_msgs.action import NavigateThroughPoses, NavigateToPose
 from action_msgs.srv import CancelGoal
 from nav2_msgs.srv import ClearEntireCostmap, GetCostmap
@@ -122,6 +122,8 @@ class Mission(QuietNode):
         self.ask_cli = self.create_client(Trigger, '/nav_helper/ask')
         self.helper_params = self.create_client(SetParameters, '/nav_helper/set_parameters')
         self.speak_pub = self.create_publisher(String, 'speak', 10)
+        # where she bumped into something (route_run): grid_to_points keeps it on the planner's map
+        self.bump_pub = self.create_publisher(PointStamped, 'bump', 10)
         # the parking server (nav_park --serve): a lap's end is handed to it, rolling
         self.park_pub = self.create_publisher(String, 'park/command', 10)
         self.create_subscription(String, 'park/log', lambda m: self._park_msg('on_park_log', m), 50)
@@ -207,6 +209,14 @@ class Mission(QuietNode):
         if d.get('id') != self.active['id']:
             return
         getattr(run, method)(d.get('line', '') if method == 'on_park_log' else d)
+
+    def mark_bump(self, x, y):
+        """A spot on the map she bumped into: grid_to_points puts a box there for the planner."""
+        m = PointStamped()
+        m.header.frame_id = 'map'
+        m.header.stamp = self.get_clock().now().to_msg()
+        m.point.x, m.point.y = float(x), float(y)
+        self.bump_pub.publish(m)
 
     def speak(self, text):
         """Her voice, if the voice stack is loaded (load_voice() asks for it; ~15 s to come up)."""

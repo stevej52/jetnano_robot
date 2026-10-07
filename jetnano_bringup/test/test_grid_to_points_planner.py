@@ -104,3 +104,26 @@ def test_camera_turned_through_map_to_odom(node):
     node.on_grid(grid(10, 10, 0.05, 0.0, 0.0, 'odom', {(0, 0): 100}))
     node.publish_map_grid()
     assert node.sent[-1][0, 5] == 100 and node.sent[-1][0, 0] == 0
+
+
+def test_keep_out_boxes_are_walls_on_the_planners_map(node):
+    """The robot vacuum's corner (2026-10-06): a box she must plan round, sensors or not."""
+    node.keep_out = [(0.20, 0.30, 0.40, 0.50)]
+    node.on_map(grid(20, 20, 0.05, 0.0, 0.0, 'map', {}))
+    m = node.sent[-1]
+    assert m[6:10, 4:8].min() == 100                  # rows y 0.30-0.50, columns x 0.20-0.40
+    assert m[:6, :].max() == 0 and m[:, 8:].max() == 0  # nothing outside it
+
+
+def test_a_bump_is_a_box_for_a_while(node):
+    """route_run's bumps: a small box where she pushed without moving, gone after bump_keep_s."""
+    from geometry_msgs.msg import PointStamped
+    node.keep_out = []
+    node.on_map(grid(20, 20, 0.05, 0.0, 0.0, 'map', {}))
+    p = PointStamped()
+    p.point.x, p.point.y = 0.5, 0.5
+    node.on_bump(p)
+    assert node.sent[-1][8:12, 8:12].min() == 100             # +-0.10 m round (0.5, 0.5)
+    node.bumps = [b[:4] + (0.0,) for b in node.bumps]         # its time is up
+    node.publish_map_grid()
+    assert node.sent[-1].max() == 0

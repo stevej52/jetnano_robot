@@ -106,6 +106,15 @@ class Node:
         self.planners = []
         self.watched = []
         self.cleared = 0
+        self.lock = None
+        self.gate_ok = True
+        self.bumps = []
+
+    def permitted(self):
+        return (self.gate_ok and not self.lock), ('' if self.gate_ok else 'motion check')
+
+    def mark_bump(self, x, y):
+        self.bumps.append((round(x, 2), round(y, 2)))
 
     def get_clock(self):
         return Clock()
@@ -401,3 +410,40 @@ def test_the_lap_hands_over_to_the_parking_while_rolling():
     assert run.done and run.outcome == 'SUCCEEDED' and 'parking PARKED' in run.line
     assert any(x.startswith('park: -- reversing in') for x in said) and any('park: took 14.2 s' in x for x in said)
     assert [num for num, _ in run.passed] == [1, 2]
+
+
+def test_a_bump_marks_the_spot_and_carries_on_when_the_motion_check_lets_go():
+    """Drive 46 (2026-10-06): the motion check cancelled the goal itself and the route ended."""
+    n, run, said = make()
+    run.tick(time.monotonic(), False, [])
+    goal, h1, fb_cb = n.through.sent[0]
+    fb_cb(feedback(h1, 3.0, 1.0, 4.0, 2))
+    run.tick(time.monotonic(), False, [(0.15, 0.0)])          # pushing forward
+    n.pose = (3.0, 1.0, math.radians(90))
+    n.lock = True                                              # the motion check: pushed, did not move
+    h1.result_fut.finish(result(6))                            # CANCELED, not by us
+    assert not run.done and run.phase == 'bump wait'
+    assert n.bumps == [(3.0, 1.4)]                             # 0.4 m ahead of her, the way she pushed
+    assert any('BUMP 1' in s for s in said)
+    run.tick(time.monotonic(), True, [])
+    assert len(n.through.sent) == 1                            # still held
+    n.lock = False
+    run.tick(time.monotonic(), False, [])
+    assert run.phase == 'driving' and len(n.through.sent) == 2
+    assert [p.pose.position.y for p in n.through.sent[1][0].poses] == [3.0, 3.0]
+
+
+def test_a_bump_while_reversing_is_marked_behind_and_too_many_end_the_route(monkeypatch):
+    n, run, said = make()
+    for k in range(route_run.BUMPS_MAX + 1):
+        run.tick(time.monotonic(), False, [(-0.15, 0.0)])     # backing
+        goal, h, fb_cb = n.through.sent[-1]
+        fb_cb(feedback(h, 1.0, 0.0, 4.0, 3))
+        n.lock = True
+        h.result_fut.finish(result(6))
+        n.lock = False
+        if run.done:
+            break
+        run.tick(time.monotonic(), False, [])
+    assert n.bumps[0] == (-0.4, 0.0)                           # behind her: she faced +x
+    assert run.done and run.outcome == 'ABORTED' and 'bumped' in run.line

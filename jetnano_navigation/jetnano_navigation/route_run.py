@@ -60,6 +60,12 @@ STALL_GAIN_M = 0.25     # (house-tour sim 2026-10-05: Nav2 can loop on recoverie
 STILL_M = 0.05          # not moved this far = standing still
 STILL_S = 3.0           # standing still this long with the route live -> pictures
 SNAPS_MAX = 6
+# a bump (2026-10-06, drives 43-46: the chair, the robot vacuum - pushed 3-4 times in a row): the
+# motion check stops her when she pushes without moving; the spot she pushed at goes on the
+# planner's map as a small box (grid_to_points, 10 min) and the route carries on round it
+BUMP_AHEAD_M = 0.40      # the box's centre from hers, the way she was pushing (her nose is 0.22)
+BUMPS_MAX = 3            # more than this in one route: give up
+BUMP_WAIT_S = 60.0       # the motion check must let go within this
 
 
 class RouteRun:
@@ -113,6 +119,7 @@ class RouteRun:
         self.via_first = False            # the stretch in hand starts with a via point, not a waypoint
         self.skipped = []                 # waypoint numbers the rescue gave up on
         self.rescue_return = None         # the rescue phase to go back to after a gate hold
+        self.bumps = 0
 
     # ---------------------------------------------------------------- start --
 
@@ -252,6 +259,8 @@ class RouteRun:
             self.handle = None
             if why == 'hold':
                 self.phase = 'held'
+                if self.n.lock:                           # the gate's hold is the motion check: a bump
+                    self._mark_bump()
             elif why == 'park':
                 return                                    # handed over: the parking's result decides
             elif why == 'rescue':
@@ -276,8 +285,48 @@ class RouteRun:
         if status == GoalStatus.STATUS_ABORTED and self.phase == 'driving':
             self.handle = None
             return self._rescue('Nav2 gave up')
+        if status == GoalStatus.STATUS_CANCELED and self.n.lock:
+            # the motion check cancelled Nav2's goal itself (safety_monitor) before the gate's
+            # hold reached the controller: drive 46 ended the route here
+            self.handle = None
+            self.pending = self.remaining()
+            if not self._mark_bump():
+                return
+            self.phase = 'bump wait'
+            self.deadline = time.monotonic() + BUMP_WAIT_S
+            return
         names = {GoalStatus.STATUS_ABORTED: 'ABORTED', GoalStatus.STATUS_CANCELED: 'CANCELED'}
         self.finish(names.get(status, str(status)), '')
+
+    # ---------------------------------------------------------------- bumps --
+
+    def _mark_bump(self):
+        """She pushed and did not move: put the spot she pushed at on the planner's map.
+        -> False when that was one bump too many (the route is finished)."""
+        self.bumps += 1
+        if self.bumps > BUMPS_MAX:
+            self.finish('ABORTED', f'bumped into something {self.bumps} times')
+            return False
+        p = self.n.map_pose() or self.fb['pose']
+        pushing = next((c[0] for c in reversed(self.cmds) if abs(c[0]) > 0.01), 1.0)
+        sign = 1.0 if pushing > 0 else -1.0
+        if p is None:
+            self.say('BUMP: she pushed without moving (the motion check); no pose to mark it')
+            return True
+        bx, by = p[0] + sign * BUMP_AHEAD_M * math.cos(p[2]), p[1] + sign * BUMP_AHEAD_M * math.sin(p[2])
+        self.n.mark_bump(bx, by)
+        self.say(f'{time.monotonic() - self.t0:5.1f} s  BUMP {self.bumps}: pushed {"forward" if sign > 0 else "back"} '
+                 f'at ({p[0]:+.2f}, {p[1]:+.2f}) without moving; ({bx:+.2f}, {by:+.2f}) marked for the planner, '
+                 'going round once the motion check lets go')
+        return True
+
+    def _bump_tick(self, now):
+        if not self.n.lock and self.n.permitted()[0]:
+            pending, self.pending = self.pending, None
+            self.done_before += len(self.stretch) - len(pending)
+            self.send(pending)
+        elif now >= self.deadline:
+            self.finish('ABORTED', f'the motion check held her {BUMP_WAIT_S:.0f} s after a bump')
 
     # --------------------------------------------------------------- rescue --
 
@@ -467,6 +516,9 @@ class RouteRun:
             return
         if self.phase.startswith('rescue'):
             self._rescue_tick(now)
+            return
+        if self.phase == 'bump wait':
+            self._bump_tick(now)
             return
         if self.phase == 'parking':
             if now - self.park_t0 > PARK_WAIT_S:

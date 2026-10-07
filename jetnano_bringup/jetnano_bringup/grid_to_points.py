@@ -46,6 +46,7 @@ import math
 
 import numpy as np
 import rclpy
+from geometry_msgs.msg import PointStamped
 from nav_msgs.msg import OccupancyGrid
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
@@ -83,6 +84,18 @@ class GridToPoints(Node):
         self.declare_parameter('planner_map_topic', '/planner_map')
         # a camera grid older than this is not laid on the planner's map
         self.declare_parameter('grid_max_age_s', 2.0)
+        # Places she must plan round although neither sensor sees them reliably, as map boxes
+        # [x0, y0, x1, y1, ...], stamped on the planner's map. 2026-10-06: the robot vacuum and its
+        # dock in the dining-room corner (Steve's turn 4; "where it has always been") - ~10 cm
+        # tall, under the lidar's plane and the camera slice's 10 cm floor; the camera put it at
+        # x 7.45-7.9, y -7.55..-7.9 (drive 46), she hit it nose-first at x ~7.2.
+        self.declare_parameter('keep_out', [7.25, -8.0, 8.0, -7.35])
+        k = [float(v) for v in self.get_parameter('keep_out').value]
+        self.keep_out = [tuple(k[i:i + 4]) for i in range(0, len(k) - 3, 4)]
+        # bumps (mission route_run): a spot she pushed at without moving, kept as a box this long
+        self.declare_parameter('bump_half_m', 0.10)
+        self.declare_parameter('bump_keep_s', 600.0)
+        self.bumps = []                   # (x0, y0, x1, y1, until)
 
         self.threshold = int(self.get_parameter('occupied_threshold').value)
         self.height = float(self.get_parameter('height').value)
@@ -115,10 +128,20 @@ class GridToPoints(Node):
                                      QoSProfile(depth=20, reliability=ReliabilityPolicy.RELIABLE),
                                      raw=True)
             self.create_timer(1.0 / float(self.get_parameter('map_grid_hz').value), self.publish_map_grid)
+            self.create_subscription(PointStamped, 'bump', self.on_bump, 10)
         self.get_logger().info(
             f"{self.get_parameter('grid_topic').value} cells >= {self.threshold} -> "
             f"{self.get_parameter('points_topic').value} at z = {self.height:.2f}"
             + (f', and onto the map as {topic}' if topic and cv2 is not None else ''))
+
+    def on_bump(self, msg: PointStamped) -> None:
+        h = float(self.get_parameter('bump_half_m').value)
+        until = self.get_clock().now().nanoseconds * 1e-9 + float(self.get_parameter('bump_keep_s').value)
+        x, y = msg.point.x, msg.point.y
+        self.bumps.append((x - h, y - h, x + h, y + h, until))
+        self.get_logger().info(f'bump at ({x:+.2f}, {y:+.2f}): a box on the planner map for '
+                               f'{self.get_parameter("bump_keep_s").value:.0f} s')
+        self.publish_map_grid()
 
     def on_map(self, msg: OccupancyGrid) -> None:
         self.map_msg = msg
@@ -221,6 +244,18 @@ class GridToPoints(Node):
         if camera is not None and camera.shape == (info.height, info.width):
             grid = grid.copy()
             grid[camera.reshape(-1) >= self.threshold] = 100
+        now = self.get_clock().now().nanoseconds * 1e-9
+        self.bumps = [b for b in self.bumps if b[4] > now]
+        boxes = list(self.keep_out) + [b[:4] for b in self.bumps]
+        if boxes:
+            grid = grid.copy().reshape(info.height, info.width)
+            res, ox, oy = info.resolution, info.origin.position.x, info.origin.position.y
+            for x0, y0, x1, y1 in boxes:
+                u0, u1 = max(0, int((min(x0, x1) - ox) / res)), min(info.width, int(math.ceil((max(x0, x1) - ox) / res)))
+                v0, v1 = max(0, int((min(y0, y1) - oy) / res)), min(info.height, int(math.ceil((max(y0, y1) - oy) / res)))
+                if u0 < u1 and v0 < v1:
+                    grid[v0:v1, u0:u1] = 100
+            grid = grid.reshape(-1)
         geometry = (info.width, info.height, info.resolution, info.origin.position.x, info.origin.position.y)
         data = grid.tobytes()
         if self.last_planner == (geometry, data):
