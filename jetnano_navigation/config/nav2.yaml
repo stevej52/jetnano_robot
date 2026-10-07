@@ -177,7 +177,7 @@ controller_server:
                                         # 0.40 (+10 %) after drives 31-33; 0.42 (+5 %) after drive 35
                                         # (71.5 s to the parking, clean), Steve 2026-10-04
       lookahead_dist: 0.45
-      min_lookahead_dist: 0.50   # 2026-09-27: 0.25 flicked the steering near goals
+      min_lookahead_dist: 0.65   # 0.50 until 2026-10-07 (ground zero): at her ~0.25 m/s the 1.5 s time gives 0.375, so the minimum IS the look-ahead; lap sim 0.50 -> 0.65 weave -37 %, same chair margin, 3/3 laps (0.80 cut the chair to 7 cm). 2026-09-27: 0.25 flicked the steering near goals
       max_lookahead_dist: 0.80
       use_velocity_scaled_lookahead_dist: true
       lookahead_time: 1.5   # 2026-09-27: 1.2 s weaved +-12 deg on a long diagonal; 1.5 s tracked straight
