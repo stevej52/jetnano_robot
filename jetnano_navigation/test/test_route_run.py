@@ -412,6 +412,22 @@ def test_the_lap_hands_over_to_the_parking_while_rolling():
     assert [num for num, _ in run.passed] == [1, 2]
 
 
+def test_no_handover_when_nav2_says_zero_but_she_is_far_from_the_end():
+    """Drive 48 (2026-10-07): beside Steve's chair the planner said "start occupied", Nav2's
+    distance_remaining read 0 with no path, and the parking took over 3.4 m from the end."""
+    route = [[3, 0, 0], [3, 3, 90]]
+    n, run, said = make(route=route)
+    run.then_park = {'x': 0.0, 'y': 0.0, 'heading_deg': 0.0}
+    run.tick(time.monotonic(), False, [])
+    goal, h1, fb_cb = n.through.sent[0]
+    fb_cb(feedback(h1, 3.0, -0.4, 0.0, 1))              # "0 m to go", but 3.4 m from (3, 3)
+    run.tick(time.monotonic() + 1.0, False, [])
+    assert run.phase == 'driving' and not getattr(n, 'parked', [])
+    fb_cb(feedback(h1, 3.0, 2.7, 0.3, 1))               # really there: hand over
+    run.tick(time.monotonic() + 2.0, False, [])
+    assert run.phase == 'parking'
+
+
 def test_a_bump_marks_the_spot_and_carries_on_when_the_motion_check_lets_go():
     """Drive 46 (2026-10-06): the motion check cancelled the goal itself and the route ended."""
     n, run, said = make()

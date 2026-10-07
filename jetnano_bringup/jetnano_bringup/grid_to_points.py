@@ -89,7 +89,7 @@ class GridToPoints(Node):
         # dock in the dining-room corner (Steve's turn 4; "where it has always been") - ~10 cm
         # tall, under the lidar's plane and the camera slice's 10 cm floor; the camera put it at
         # x 7.45-7.9, y -7.55..-7.9 (drive 46), she hit it nose-first at x ~7.2.
-        self.declare_parameter('keep_out', [7.25, -8.0, 8.0, -7.35])
+        self.declare_parameter('keep_out', [7.00, -8.15, 8.0, -7.30])   # 7.25/-8.0/-7.35 until drive 48 hit it (2026-10-07)
         k = [float(v) for v in self.get_parameter('keep_out').value]
         self.keep_out = [tuple(k[i:i + 4]) for i in range(0, len(k) - 3, 4)]
         # bumps (mission route_run): a spot she pushed at without moving, kept as a box this long

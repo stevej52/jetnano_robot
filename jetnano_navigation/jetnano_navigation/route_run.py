@@ -54,6 +54,7 @@ RESCUE_ASKS = 2         # asks of Claude per route (nav_goal --rescue: the same)
 RETRACE_M = 0.8         # back out this far along her own track before the first retry
 ASK_WAIT_S = 200.0      # the pictures, the brain, the answer
 HANDOFF_M = 0.40        # this far before the lap's end Nav2 hands over to the parking, still rolling
+HANDOFF_SLACK_M = 0.35  # ... and her pose within HANDOFF_M + this of the end (straight line; the path curves)
 PARK_WAIT_S = 120.0     # the parking reports within this, or the route ends without it
 STALL_S = 60.0          # no 0.25 m closer to the stretch's end in this long = stuck: the rescue starts
 STALL_GAIN_M = 0.25     # (house-tour sim 2026-10-05: Nav2 can loop on recoveries without ever giving up)
@@ -205,6 +206,16 @@ class RouteRun:
         nxt = self.stretches[self.k + 1][0]
         last = self.stretch[-1]
         return abs(nxt[0] - last[0]) < 1e-6 and abs(nxt[1] - last[1]) < 1e-6
+
+    def _near_end(self):
+        """Nav2's distance_remaining reads 0 while it has no path (drive 48, 2026-10-07: the planner
+        said "start occupied" beside Steve's chair and the parking took over 3.4 m early, where it
+        could not plan either): hand over only when her own pose is near the route's end too."""
+        pose = self.fb.get('pose')
+        if pose is None or not self.route:
+            return False
+        end = self.route[-1]
+        return math.hypot(pose[0] - end[0], pose[1] - end[1]) <= HANDOFF_M + HANDOFF_SLACK_M
 
     def _hand_over_to_parking(self, now):
         """The lap's end is the parking arc's start: the parking takes over while she rolls."""
@@ -539,7 +550,8 @@ class RouteRun:
                 self.best_dist, self.best_t = self.fb['dist'], now
                 return self._cancel_then('rescue', self.remaining())
         if (self.phase == 'driving' and self.then_park and self.k + 1 == len(self.stretches)
-                and self.fb['left'] == 1 and self.fb['dist'] == self.fb['dist'] and self.fb['dist'] <= HANDOFF_M):
+                and self.fb['left'] == 1 and self.fb['dist'] == self.fb['dist'] and self.fb['dist'] <= HANDOFF_M
+                and self._near_end()):
             return self._hand_over_to_parking(now)
         if self.phase == 'driving' and self.fb['left'] <= 1 and self._next_overlaps():
             self.done_before += len(self.stretch) - 1     # only this stretch's last is left: the next starts with it

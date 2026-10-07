@@ -76,7 +76,10 @@ public:
     // under the lidar's plane and the camera slice's 10 cm floor, and against the wall, so the
     // camera cells it does make fall inside planner_wall_margin_m and are left out; drive 46's
     // parking pushed into it 3-4 times. The camera put it at x 7.45-7.9, y -7.55..-7.9.
-    keep_out_ = declare_parameter<std::vector<double>>("keep_out", std::vector<double>{7.25, -8.0, 8.0, -7.35});
+    // 2026-10-07 drive 48: she ran straight into it with her nose at x 7.11 (y -7.60), outside the old
+    // box (x from 7.25); the camera's blob that lap reached x 7.30, y -7.55..-8.10, and the D435 is
+    // blind below ~0.3 m, so the box now starts at x 7.00 and runs to the wall at y -8.15.
+    keep_out_ = declare_parameter<std::vector<double>>("keep_out", std::vector<double>{7.00, -8.15, 8.0, -7.30});
     // bumps (jetnano_navigation route_run, via the mission on /bump): a spot she pushed at without
     // moving, a box of +-bump_half_m for bump_keep_s on the planner's map
     bump_half_ = declare_parameter<double>("bump_half_m", 0.10);

@@ -16,7 +16,7 @@ def generate_launch_description():
     def nav(pkg, exe):
         return Node(package=pkg, executable=exe, name=exe, parameters=[P, SIM], output='screen')
     return LaunchDescription([
-        ExecuteProcess(cmd=['python3', f'{D}/rosie_sim.py', '--ros-args', '-p', 'speed:=3.0', '-p', f'map:={D}/map/home.yaml'], output='screen'),
+        ExecuteProcess(cmd=['python3', f'{D}/rosie_sim.py', '--ros-args', '-p', 'speed:=3.0', '-p', 'map:=' + os.environ.get('PHYS_MAP', f'{D}/map/home.yaml')], output='screen'),
     ] + ([ExecuteProcess(cmd=['python3', f'{D}/getout.py', '--ros-args', '-p', 'use_sim_time:=true'], output='screen')]
          if os.environ.get('GETOUT') == '1' else []) + (
         [ExecuteProcess(cmd=['python3', '-c', 'from jetnano_navigation.nav_helper import main; main()',
@@ -25,7 +25,7 @@ def generate_launch_description():
                         output='screen')]
         if os.environ.get('RESCUE') == '1' else []) + [
         Node(package='nav2_map_server', executable='map_server', name='map_server', output='screen',
-             parameters=[SIM, {'yaml_filename': f'{D}/map/home.yaml'}]),
+             parameters=[SIM, {'yaml_filename': os.environ.get('PLAN_MAP', f'{D}/map/home.yaml')}]),
         nav('nav2_controller', 'controller_server'),
         nav('nav2_planner', 'planner_server'),
         nav('nav2_behaviors', 'behavior_server'),
