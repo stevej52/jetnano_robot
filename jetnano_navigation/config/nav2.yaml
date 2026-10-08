@@ -195,7 +195,11 @@ controller_server:
       use_collision_detection: false
 
       use_regulated_linear_velocity_scaling: true
-      regulated_linear_scaling_min_radius: 0.30
+      # 0.30 until 2026-10-07: below her tightest turn (0.33 right / 0.39 left), so it NEVER slowed her for a
+      # turn - drive 51 took the corridor's north end at 0.44 m/s on a 0.34 m arc and the fast (0.50 m) stop
+      # zone, a straight box, clipped the curtain she was steering away from (2.9 s stop). Real-time sim
+      # (world from drive 51's lidar): 0.90 finished 6/6 laps 75-107 s, 0.30 3/5 (both fails at the vacuum box).
+      regulated_linear_scaling_min_radius: 0.90
       regulated_linear_scaling_min_speed: 0.18   # her crawl
       use_cost_regulated_linear_velocity_scaling: true
       max_angular_accel: 2.0
@@ -435,7 +439,7 @@ collision_monitor:
   ros__parameters:
     base_frame_id: "base_footprint"
     odom_frame_id: "odom"
-    cmd_vel_in_topic: "cmd_vel_smoothed"
+    cmd_vel_in_topic: "cmd_vel_nav_capped"   # near_cap (2026-10-07); was cmd_vel_smoothed (remapped to cmd_vel_nav_smoothed)
     cmd_vel_out_topic: "cmd_vel_nav_mps"   # -> nav_translator -> cmd_vel_nav (throttle, steering)
     state_topic: "collision_monitor_state"
     transform_tolerance: 0.2

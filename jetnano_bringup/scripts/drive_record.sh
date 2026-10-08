@@ -52,7 +52,7 @@ BAGS=${DRIVE_BAGS:-$HOME/bags}
 # ~150 KB/s, mostly the camera grid)
 TOPICS="/cmd_vel /cmd_vel_mux /cmd_vel_web /vo /lidar_odom /odometry/filtered /odom_hold /imu/data /collision_guard/state /scan /tf /tf_static
     /global_costmap/costmap /global_costmap/costmap_updates /nvblox_node/map_grid /plan
-    /collision_monitor_state /cmd_vel_nav_smoothed /cmd_vel_nav_mps /safety/state"
+    /collision_monitor_state /cmd_vel_nav_smoothed /cmd_vel_nav_capped /cmd_vel_nav_mps /safety/state"
 # (the last line since 2026-10-07: who stopped her - Nav2's monitor (state on change, and its in/out
 # commands) or the gate - so every lap's report can name the cause of each stop)
 FULL_TOPICS="$TOPICS

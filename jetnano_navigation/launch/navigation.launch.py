@@ -32,7 +32,11 @@ feature.
 So Nav2's outputs are remapped away from /cmd_vel, and the chain inside Nav2 is
 
     controller  --cmd_vel_nav_raw-->  velocity_smoother  --cmd_vel_nav_smoothed-->
-    collision_monitor  --cmd_vel_nav-->  twist_mux
+    near_cap  --cmd_vel_nav_capped-->  collision_monitor  --cmd_vel_nav_mps-->  nav_translator
+    --cmd_vel_nav-->  twist_mux
+
+(near_cap since 2026-10-07: holds her under the monitor's fast-zone speed while something is
+near ahead, so the fast zone does not stop her while Nav2 keeps asking for cruise.)
 
 The collision monitor (Jazzy's bringup always starts one) is last, so what
 twist_mux sees has already been slowed or stopped for anything in the lidar
@@ -172,6 +176,19 @@ def generate_launch_description():
             output='screen',
             respawn=True,
             respawn_delay=2.0,
+            parameters=[{'use_sim_time': ParameterValue(LaunchConfiguration('use_sim_time'), value_type=bool)}],
+        ),
+
+        # Between the smoother and the collision monitor: speed held under the monitor's fast-zone
+        # threshold while the lidar sees something near ahead (near_cap.py). If it dies the monitor
+        # hears nothing and she stops.
+        Node(
+            package='jetnano_navigation',
+            executable='near_cap',
+            name='near_cap',
+            output='screen',
+            respawn=True,
+            respawn_delay=1.0,
             parameters=[{'use_sim_time': ParameterValue(LaunchConfiguration('use_sim_time'), value_type=bool)}],
         ),
 
