@@ -25,8 +25,11 @@ from sensor_msgs.msg import LaserScan
 from std_msgs.msg import String
 from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
 
-R_MIN = 0.40            # m, her turning circle (planner's minimum_turning_radius)
+R_MIN = 0.40            # m, the planner's minimum_turning_radius (the sim used it for the car too until 2026-10-07)
 K_MAX = 1.0 / R_MIN
+# her REAL full lock, tape-measured 2026-09-27: 0.33 m turning right, 0.39 m turning left. A car that turns
+# exactly the planner's 0.40 has no spare steering to get back on a line, and backed and filled 16-46 times a lap.
+R_LEFT, R_RIGHT = 0.39, 0.33
 TAU_V = 0.25            # s, speed lag
 K_RATE = 8.0            # 1/m per s: the steering servos' slew
 HALF_L, HALF_W = 0.222, 0.148   # her body (footprint without padding)
@@ -48,6 +51,18 @@ class Sim(Node):
         self.ox, self.oy = float(m['origin'][0]), float(m['origin'][1])
         self.h, self.w = img.shape
         self.blocked = img != 254            # walls and unknown both stop her
+        # 2026-10-07: LOW things (the robot vacuum, ~9 cm) stop her body but are under the lidar (0.20 m):
+        # her real lidar never saw the vacuum (drive 48 drove into it), so the sim's must not either
+        low = self.declare_parameter('low_map', '').value
+        self.body_blocked = self.blocked.copy()
+        if low and low != 'none':
+            lm = yaml.safe_load(open(low))
+            limg = np.array(Image.open(low.rsplit('/', 1)[0] + '/' + lm['image']))
+            assert limg.shape == img.shape, 'low_map must share the map grid'
+            self.body_blocked |= limg == 0
+        # lidar range noise (m, 1 sigma); the A1M8 is about 1 % at the ranges that matter
+        self.range_noise = float(self.declare_parameter('range_noise', 0.0).value)
+        self.rng = np.random.default_rng(7)
         self.v = self.k = 0.0
         self.cmd = (0.0, 0.0, -1e9)
         self.t = 0.0
@@ -112,7 +127,7 @@ class Sim(Node):
         px = x + self.perim[:, 0] * ct - self.perim[:, 1] * s
         py = y + self.perim[:, 0] * s + self.perim[:, 1] * ct
         r, c, inside = self.cells(px, py)
-        return bool(np.any(~inside | self.blocked[r, c]))
+        return bool(np.any(~inside | self.body_blocked[r, c]))
 
     def step(self, dt):
         vc, wc, at = self.cmd
@@ -124,10 +139,10 @@ class Sim(Node):
         if abs(vc) > 0.01:
             kc = wc / vc
         elif abs(wc) > 1e-3:
-            kc = math.copysign(K_MAX, wc)     # wheels turn while standing, she does not
+            kc = 1.0 / R_LEFT if wc > 0 else -1.0 / R_RIGHT   # wheels turn while standing, she does not
         else:
             kc = self.k
-        kc = max(-K_MAX, min(K_MAX, kc))
+        kc = max(-1.0 / R_RIGHT, min(1.0 / R_LEFT, kc))
         dk = max(-K_RATE * dt, min(K_RATE * dt, kc - self.k))
         self.k += dk
         dth = self.v * self.k * dt
@@ -160,7 +175,10 @@ class Sim(Node):
         hit = inside & self.blocked[r, c]
         first = np.argmax(hit, axis=0)
         any_hit = hit[first, np.arange(len(self.ang))]
-        ranges = np.where(any_hit, self.rr[first], np.inf).astype(np.float32)
+        ranges = np.where(any_hit, self.rr[first], np.inf)
+        if self.range_noise > 0:
+            ranges = ranges + self.rng.normal(0.0, self.range_noise, ranges.shape)
+        ranges = ranges.astype(np.float32)
         m = LaserScan()
         m.header.stamp, m.header.frame_id = stamp, 'sim_laser'
         m.angle_min, m.angle_max = float(self.ang[0]), float(self.ang[-1])

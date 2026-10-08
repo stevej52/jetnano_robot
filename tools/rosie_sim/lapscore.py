@@ -75,6 +75,14 @@ def score(path, pts):
         m = np.hypot(oo[:, 1] - tx, oo[:, 2] - ty) < r
         per[name] = round(100 * cl[m].min(), 1) if m.any() else None
     sd = np.array(sd)
+    # collision-monitor stops (action 1), counted and timed
+    mon = sorted((r['t'], r['a']) for r in recs if r['k'] == 'm')
+    n_stop, s_stop, since = 0, 0.0, None
+    for t, a in mon:
+        if a == 1 and since is None:
+            since, n_stop = t, n_stop + 1
+        elif a != 1 and since is not None:
+            s_stop, since = s_stop + t - since, None
     # how far each new plan's next metre sits from the plan before it
     shift = []
     for (_, a), (_, b) in zip(plans, plans[1:]):
@@ -87,7 +95,7 @@ def score(path, pts):
     return {'weave_med': round(float(np.median(sd)), 3), 'weave_p90': round(float(np.percentile(sd, 90)), 3),
             'xte_med_cm': round(100 * float(np.median(xte)), 1), 'xte_p95_cm': round(100 * float(np.percentile(xte, 95)), 1),
             'clear_min_cm': round(100 * float(cl.min()), 1), 'plans': len(plans),
-            'shift_med_cm': round(100 * float(np.median(shift)), 1) if shift else None, 'turns': per}
+            'shift_med_cm': round(100 * float(np.median(shift)), 1) if shift else None, 'mon_stops': n_stop, 'mon_stop_s': round(s_stop, 1), 'turns': per}
 
 
 if __name__ == '__main__':

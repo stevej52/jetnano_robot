@@ -16,6 +16,8 @@ from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 from geometry_msgs.msg import PoseStamped, Twist
 from nav_msgs.msg import Odometry, Path
 from nav2_msgs.action import NavigateThroughPoses
+from nav2_msgs.msg import CollisionMonitorState
+from sensor_msgs.msg import LaserScan
 from std_msgs.msg import String
 
 D = os.path.dirname(os.path.abspath(__file__))
@@ -42,6 +44,12 @@ class Lap(Node):
         self.create_subscription(Odometry, '/odometry/filtered', self.on_odom, 20)
         self.create_subscription(Twist, '/cmd_vel_nav_mps', self.on_cmd, 20)
         self.create_subscription(Path, '/plan', self.on_plan, 5)
+        self.create_subscription(CollisionMonitorState, '/collision_monitor_state', self.on_mon, 10)   # its stops
+        # what Nav2 ASKED (before the monitor) and the last scan, so a stop says what was in the zone
+        self.create_subscription(Twist, '/cmd_vel_smoothed',
+                                 lambda m: self.w({'k': 'a', 't': self.t(), 'v': round(m.linear.x, 3), 'wz': round(m.angular.z, 3)}), 20)
+        self.scan = None
+        self.create_subscription(LaserScan, '/scan', lambda m: setattr(self, 'scan', m), 5)
         self.create_subscription(String, '/sim/stats', lambda m: self.stats.update(json.loads(m.data)), 10)
 
     def t(self):
@@ -56,6 +64,20 @@ class Lap(Node):
                 'x': round(m.pose.pose.position.x, 4), 'y': round(m.pose.pose.position.y, 4),
                 'th': round(math.atan2(2 * q.w * q.z, 1 - 2 * q.z * q.z), 5),
                 'v': round(m.twist.twist.linear.x, 4), 'wz': round(m.twist.twist.angular.z, 4)})
+
+    def on_mon(self, m):
+        rec = {'k': 'm', 't': self.t(), 'a': int(m.action_type)}
+        if m.action_type == 1 and self.scan is not None:   # points within 0.6 m ahead/behind, |y| < 0.25 (base frame)
+            sc = self.scan
+            pts = []
+            for i, r in enumerate(sc.ranges):
+                if math.isfinite(r):
+                    a = sc.angle_min + i * sc.angle_increment
+                    x, y = -0.005 + r * math.cos(a), r * math.sin(a)
+                    if abs(x) < 0.6 and abs(y) < 0.25:
+                        pts.append((round(x, 3), round(y, 3)))
+            rec['pts'] = pts
+        self.w(rec)
 
     def on_cmd(self, m):
         self.w({'k': 'c', 't': self.t(), 'v': round(m.linear.x, 4), 'wz': round(m.angular.z, 4)})

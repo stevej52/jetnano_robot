@@ -76,3 +76,29 @@ all-round approach box that froze her in every direction. With steps 1-3 + plann
 | 0.15 / 0.28 / 0.17 (set H) | 2 | 3 | 1 + 0 |
 Set H: stuck 13-22 -> 2-3 of 199; one front-corner touch in ~400 trips (corner swinging out on a
 turn). ~7 % more time in all than her current settings. Not on Rosie yet.
+
+## 2026-10-07 evening: real time, a world from a real drive
+
+**Run it at SIM_SPEED 1.0.** Nav2 paces its controller (20 Hz) and the behaviour tree's replan (every
+3 s) by the wall clock, so at the old 3x she got ~7 steering corrections and a new plan every 9 s per
+simulated second: laps of 80-107 m with 35-46 reversals (the floor: ~27 m, 4). At 1x: 27-29 m, 2-4.
+Results from before this date were all at 3x - treat them as suspect.
+
+- `map/scan_world.py BAG REF.yaml OUT.npz` (run on Rosie, on a drive bag): her lidar's hits and
+  pass-throughs per map cell, placed with the recorded TF (lidar_link is turned 180 deg).
+- `map/make_world.py REF.yaml OUT.npz world_X [diff.png]`: the old map corrected where she looked
+  (crossed >= 4 times and hit < 10 % = floor, hit >= 3 times and >= 40 % = solid). `world_d51` is drive 51's.
+- `rosie_sim.py`: `low_map` (things that stop her body but are under the 0.20 m lidar - the robot vacuum;
+  her real lidar never saw it), `range_noise` (1 cm), and her measured full lock (0.33 m right, 0.39 m left)
+  instead of the planner's 0.40 (with no spare steering the car could not get back on a line).
+- `lap.py` records `/collision_monitor_state` (with the lidar points in the zone at each stop) and what
+  Nav2 asked (`/cmd_vel_smoothed`); `lapscore.py` adds `mon_stops` / `mon_stop_s`.
+- `world.sh TAG MIN_RADIUS N` and `capworld.sh TAG N` (+ near_cap between smoother and monitor, as on
+  Rosie since 37c6743; `LAP_OVERRIDE` for other waypoints). The map images stay on H2-Host (~/rosie-sim/map).
+
+| real-time sim, world_d51 | laps finished | monitor stop time a lap |
+|---|---|---|
+| RPP min radius 0.30 (before) | 3/5 | up to 31 s (dining N), vacuum-box aborts |
+| min radius 0.90 | 6/6 | mostly 0-4 s, one 17 s |
+| 0.90 + near_cap | 4/4, 74-81 s | 0-5 s |
+| + dining-N heading 150, or all headings "natural" | 3/3 each | no better; all-natural cut the chair margin 22 -> 12 cm |

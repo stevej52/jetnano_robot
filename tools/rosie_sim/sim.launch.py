@@ -16,7 +16,9 @@ def generate_launch_description():
     def nav(pkg, exe):
         return Node(package=pkg, executable=exe, name=exe, parameters=[P, SIM], output='screen')
     return LaunchDescription([
-        ExecuteProcess(cmd=['python3', f'{D}/rosie_sim.py', '--ros-args', '-p', 'speed:=3.0', '-p', 'map:=' + os.environ.get('PHYS_MAP', f'{D}/map/home.yaml')], output='screen'),
+        ExecuteProcess(cmd=['python3', f'{D}/rosie_sim.py', '--ros-args', '-p', 'speed:=' + os.environ.get('SIM_SPEED', '3.0'), '-p', 'map:=' + os.environ.get('PHYS_MAP', f'{D}/map/home.yaml'),
+                                    '-p', 'low_map:=' + os.environ.get('LOW_MAP', 'none'),
+                                    '-p', 'range_noise:=' + os.environ.get('RANGE_NOISE', '0.0')], output='screen'),
     ] + ([ExecuteProcess(cmd=['python3', f'{D}/getout.py', '--ros-args', '-p', 'use_sim_time:=true'], output='screen')]
          if os.environ.get('GETOUT') == '1' else []) + (
         [ExecuteProcess(cmd=['python3', '-c', 'from jetnano_navigation.nav_helper import main; main()',
