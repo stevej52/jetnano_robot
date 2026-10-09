@@ -52,6 +52,7 @@ setup(
             'voice = jetnano_bringup.voice_switch:main',
             'housekeeping = jetnano_bringup.housekeeping:main',
             'settle = jetnano_bringup.settle:main',
+            'buzz_source = jetnano_bringup.buzz_source:main',
             'motion_check = jetnano_bringup.motion_check:main',
             'csi_cameras = jetnano_bringup.csi_cameras:main',
             'listen = jetnano_bringup.listen:main',

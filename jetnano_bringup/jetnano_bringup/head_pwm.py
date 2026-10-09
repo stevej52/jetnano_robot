@@ -114,6 +114,9 @@ class HeadPwm(Node):
                 continue
             self.cfg[joint] = cfg
             self.create_subscription(Float64, cfg['topic'], lambda m, j=joint: self.on_angle(j, m.data), 10)
+            # as pca9685's <name>/pulse_width: a pulse in us, 0 = limp (the buzz hunt, 2026-10-08)
+            self.create_subscription(Float64, cfg['topic'].rsplit('/', 1)[0] + '/pulse_width',
+                                     lambda m, j=joint: self.on_pulse(j, m.data), 10)
             self.get_logger().info(f'{joint}: {cfg["device"]} ({os.path.basename(chip)}), '
                                    f'{cfg["min_pulse_us"]:.0f}-{cfg["max_pulse_us"]:.0f} us over 0-180 deg, '
                                    f'limits {cfg["min_limit"]:.0f}..{cfg["max_limit"]:.0f}, on {cfg["topic"]}')
@@ -121,6 +124,16 @@ class HeadPwm(Node):
     def on_angle(self, joint, angle):
         try:
             self.servos[joint].set_us(pulse_us(angle, self.cfg[joint]))
+        except OSError as exc:
+            self.get_logger().warning(f'{joint}: {exc}', throttle_duration_sec=5.0)
+
+    def on_pulse(self, joint, us):
+        cfg = self.cfg[joint]
+        try:
+            if us <= 0.0:
+                self.servos[joint].limp()
+            else:
+                self.servos[joint].set_us(min(max(us, cfg['min_pulse_us']), cfg['max_pulse_us']))
         except OSError as exc:
             self.get_logger().warning(f'{joint}: {exc}', throttle_duration_sec=5.0)
 
