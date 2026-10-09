@@ -163,6 +163,8 @@ def main():
     ap.add_argument('--rounds', type=int, default=5)
     ap.add_argument('--cut', type=float, default=3.0, help='find: seconds each output is cut')
     ap.add_argument('--only', default='', help='routines: comma list of candidates (wait always runs)')
+    ap.add_argument('--side', choices=['alt', 'plus', 'minus'], default='alt',
+                    help='routines: which way to provoke (2026-10-09: centring from minus buzzed, from plus not)')
     a = ap.parse_args()
     if not a.wheels_up:
         print('This drives the outputs directly, past every safety layer. Wheels up (or the ESC / motor\n'
@@ -288,6 +290,8 @@ def main():
                 'nudge2': nudge,
                 'offset1': lambda side: steer(side * 1.0),   # stay 1 deg toward the turn
             }
+            for deg in (3.0, 6.0, 10.0, 15.0):                # into centre from the + side, whatever the turn
+                routines[f'plus{deg:g}'] = lambda side, d=deg: (hold(d, 0.4), steer(0.0))
             if a.only:
                 routines = {k: v for k, v in routines.items() if k in a.only.split(',') or k == 'wait'}
             rec = {k: [] for k in routines}
@@ -297,7 +301,7 @@ def main():
                 random.shuffle(order)
                 for name in order:
                     trial += 1
-                    side = 1.0 if trial % 2 else -1.0
+                    side = {'plus': 1.0, 'minus': -1.0}.get(a.side, 1.0 if trial % 2 else -1.0)
                     hold(side * PROVOKE_DEG, 1.0)            # a turn ...
                     steer(0.0)                               # ... and the stop
                     time.sleep(1.0)
