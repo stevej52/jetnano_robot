@@ -123,6 +123,7 @@ class NavHelper(Node):
         # one pan-tilt sweep at a time: drive 41 (2026-10-06) ran two snapshots' sweeps at once, the
         # second took the first's 85 deg left as "where it was" and left the head there
         self._sweep_lock = threading.Lock()
+        self._d435_rotate = None                # from the camera server's config.json, on first use
         self._active_t = -1e9                    # when Nav2 last had a goal (monotonic)
         self._busy = 0                           # retrace / packet in progress: keep the odometry
         self.cmd = self.create_publisher(Twist, str(self.gp('cmd_topic')), 10)
@@ -313,9 +314,21 @@ class NavHelper(Node):
     def _picture(self, name, width=640):
         try:
             raw = self._http(f'{self.gp("cameras_url")}/{name}.jpg?w={width}&q=85')
-            return cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_COLOR)
+            img = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_COLOR)
         except (OSError, urllib.error.URLError, ValueError):
             return None
+        # the RealSense hangs upside down (2026-09-27); the server says how the pages turn it,
+        # and the stop pictures turn it the same (Steve, 2026-10-09: "make it right side up")
+        if name == 'd435' and img is not None:
+            if self._d435_rotate is None:
+                try:
+                    self._d435_rotate = int(json.loads(self._http(f'{self.gp("cameras_url")}/config.json'))
+                                            .get('d435_rotate', 0)) % 360
+                except (OSError, urllib.error.URLError, ValueError):
+                    return img
+            if self._d435_rotate == 180:
+                img = cv2.rotate(img, cv2.ROTATE_180)
+        return img
 
     def _sweep(self):
         """The pan-tilt camera round the sweep, then back where it was; plus the fixed cameras."""
