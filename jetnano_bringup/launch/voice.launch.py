@@ -38,6 +38,7 @@ def generate_launch_description():
         DeclareLaunchArgument('trim_own', default_value='false'),
         DeclareLaunchArgument('tts_url', default_value='http://192.168.1.238:8092'),
         DeclareLaunchArgument('tts_voice', default_value='nicole'),
+        DeclareLaunchArgument('use_settle', default_value='false'),
         DeclareLaunchArgument('lead_s', default_value='0.08'),
         DeclareLaunchArgument('pause_s', default_value='0.2'),
 
@@ -58,10 +59,14 @@ def generate_launch_description():
                           'board_profile': ParameterValue(LaunchConfiguration('board_profile'), value_type=str)}],
              condition=IfCondition(LaunchConfiguration('use_ears'))),
 
-        # Settles buzzing steering servos after a stop by ear (Steve, 2026-09-27).
+        # Settled buzzing steering servos after a stop by ear (Steve, 2026-09-27). Off since
+        # 2026-10-09: its releases did not quiet the servo (buzz_source), and stop_settle in the
+        # robot stack now does what did, at every stop, with no microphone. use_settle:=true for
+        # the old one (the two would fight over cmd_vel_settle).
         Node(package='jetnano_bringup', executable='settle', name='settle', output='screen',
              respawn=True, respawn_delay=10.0,
-             condition=IfCondition(LaunchConfiguration('use_ears'))),
+             condition=IfCondition(PythonExpression(["'", LaunchConfiguration('use_ears'), "' == 'true' and '",
+                                                     LaunchConfiguration('use_settle'), "' == 'true'"]))),
 
         # Her English voice (text on /speak). Same venv as listen.
         Node(package='jetnano_bringup', executable='speak', name='speak', output='screen',

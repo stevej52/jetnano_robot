@@ -124,6 +124,18 @@ def generate_launch_description():
             output='screen',
         ),
 
+        # After every stop, past centre on the steering's quiet side and back: the front
+        # servo buzzes when it centres from the other side (stop_settle.py, 2026-10-09).
+        Node(
+            condition=UnlessCondition(simulate),
+            package='jetnano_bringup',
+            executable='stop_settle',
+            name='stop_settle',
+            respawn=True,
+            respawn_delay=3.0,
+            output='screen',
+        ),
+
         # The fast safety watchers in one C++ process (2026-09-27: the three
         # Python nodes cost ~19 % of a core): tilt guard (cmd_vel_tilt), motion
         # check (told to drive but the odometry does not see her move: lock
