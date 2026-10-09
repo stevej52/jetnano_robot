@@ -27,6 +27,9 @@ side she is driving towards, the asked speed is capped below the fast zone's thr
 turn rate is scaled by the same factor, so the curve she drives does not change. The zones
 themselves are untouched: anything inside the slow zone still stops her.
 
+When the zone clears the cap is held 0.3 s, then lifted at the smoother's 1.0 m/s^2 (Ceiling),
+so a chair leg at the zone's edge does not jerk her between 0.24 and 0.44 scan by scan.
+
 Silence in, silence out (the monitor then stops her); no scan for scan_timeout s = no cap.
 """
 
@@ -51,6 +54,39 @@ def cap_twist(v, w, near_fwd, near_rev, cap):
     return math.copysign(cap, v), w * k
 
 
+class Ceiling:
+    """cap_twist plus a gentle release. She sits after the velocity smoother, so a bare cap would
+    jump 0.24 -> 0.44 in one tick the moment the zone clears (4x the smoother's 1.0 m/s^2), and a
+    point at the zone's edge flickers in and out scan by scan (drive 50: 16 flips in one lap).
+    So the cap holds hold_s after the last near scan, then lifts at accel m/s^2. Capping down
+    stays instant. A change of direction drops the old side's ceiling."""
+
+    def __init__(self, cap, hold_s=0.3, accel=1.0):
+        self.cap, self.hold_s, self.accel = cap, hold_s, accel
+        self.lim = None              # |v| allowed now, None = no ceiling
+        self.sign = 0.0
+        self.near_t = self.t = None
+
+    def step(self, v, w, near_fwd, near_rev, t):
+        dt = 0.0 if self.t is None else max(0.0, min(t - self.t, 0.2))
+        self.t = t
+        if v == 0.0:
+            return v, w
+        sign = math.copysign(1.0, v)
+        if self.lim is not None and sign != self.sign:
+            self.lim = None
+        if near_fwd if v > 0 else near_rev:
+            self.lim, self.sign, self.near_t = self.cap, sign, t
+        elif self.lim is not None and t - self.near_t >= self.hold_s:
+            self.lim += self.accel * dt
+        if self.lim is None or abs(v) <= self.lim:
+            if self.lim is not None and t - self.near_t >= self.hold_s:
+                self.lim = None      # ramped past what she asks: done
+            return v, w
+        k = self.lim / abs(v)
+        return math.copysign(self.lim, v), w * k
+
+
 def zone_counts(px, py, x_in, x_out, half_w):
     """Returns ahead / behind between x_in and x_out (base frame), within half_w of her centreline."""
     side = np.abs(py) <= half_w
@@ -70,6 +106,8 @@ class NearCap(Node):
         self.half_w = float(p('half_width', 0.19).value)     # zones 0.17 + 2 cm
         self.min_points = int(p('min_points', 4).value)      # as the monitor
         self.scan_timeout = float(p('scan_timeout', 0.5).value)
+        self.ceiling = Ceiling(self.cap, float(p('hold_s', 0.3).value),     # cap held after the zone clears
+                               float(p('release_accel', 1.0).value))        # then lifted at the smoother's max_accel
         self.near = (False, False)
         self.scan_t = None
         self.laser = None                                    # (x, y, yaw) of the scan frame in base
@@ -102,8 +140,9 @@ class NearCap(Node):
         fresh = (self.scan_t is not None and
                  (self.get_clock().now() - self.scan_t).nanoseconds * 1e-9 < self.scan_timeout)
         nf, nr = self.near if fresh else (False, False)
-        v, w = cap_twist(m.linear.x, m.angular.z, nf, nr, self.cap)
-        capped = v != m.linear.x
+        v, w = self.ceiling.step(m.linear.x, m.angular.z, nf, nr,
+                                 self.get_clock().now().nanoseconds * 1e-9)
+        capped = self.ceiling.lim is not None
         if capped != self.capped:
             self.capped = capped
             self.get_logger().info('something near ahead: speed held to %.2f m/s' % self.cap if capped

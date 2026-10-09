@@ -15,3 +15,13 @@ What 2026-09-29 showed: over an hour and 3700 deg of turning the EKF's heading l
 63 deg (camera yaw rate 5.7 % short on every turn, gyro 3.6 %), while the BNO055's own
 fused heading was off 12.4 deg with its scale right - so the EKF now takes its heading
 from that (`jetnano_bringup/config/ekf.yaml`, imu0).
+
+## Collision-monitor stops and near_cap (2026-10-08)
+
+`stop_why.py BAG T DUR` prints, around a stop, what Nav2 asked, the monitor's state and the
+lidar points inside the DirectionalStop zones. `near_cap_replay.py BAG...` replays drives
+through near_cap (`SMOOTH=1` = with its hold and ramp): stops, time capped, time lost.
+
+Drives 48-51 (10-07): every DirectionalStop stop had the slow zone EMPTY. All were fast-zone
+stops, the kind near_cap turns into a crawl. Cost: 0-14 s capped per lap (most of it at the
+dining-north line-up), 0-10 s lost. Hold + ramp: +0.3 s and no sub-0.3 s caps.
