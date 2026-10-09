@@ -99,9 +99,13 @@
        floor: 4.9 deg UP (pitch -0.085), roll 183.2 deg (-3.086), lens 0.109 m above the floor,
        27 012 inliers, 3.6 mm mean residual. The High Accuracy preset (since 10-02) drops the
        near floor, so the fit needs depth_module.visual_preset 1 for a minute - and changing it
-       live restarts the camera driver (the watchdog brings it back). -->
+       live restarts the camera driver (the watchdog brings it back).
+       Aim (yaw) the same day, its depth matched against the lidar on the walls 0.16-0.26 m up,
+       turning about the lens: 8.5 and 6.0 deg LEFT at two spots / headings (5 at a third, before
+       the plane fit) -> 7 deg (0.122). A sideways offset is not measurable that way (it trades
+       against the turn along the walls), so y stays 0. -->
   <xacro:property name="camera_xyz" value="0.185 0.0 0.044"/>
-  <xacro:property name="camera_rpy" value="-3.086 -0.085 0"/>
+  <xacro:property name="camera_rpy" value="-3.086 -0.085 0.122"/>
   <xacro:property name="imu_xyz"    value="0.0 0.0 0.060"/>
   <xacro:property name="imu_rpy"    value="2.9698 0.0552 1.5680"/>
 
