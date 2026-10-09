@@ -60,6 +60,14 @@ def throttle_for(speed, table):
     return t0 + (t1 - t0) * (v - v0) / (v1 - v0)
 
 
+def scrub_factor(lock, loss):
+    """Her speed at this much of full lock (0..1) over her speed going straight, same throttle.
+    Four-wheel steering with no differential scrubs all four tyres in a turn (Steve heard it,
+    2026-10-09); drives 50-52, held steering: 0.89 at 1/4-1/2 lock, 0.77 at 0.6, 0.72 at 0.8,
+    0.56-0.74 at 0.9-1.0 -> about 1 - 0.35 x lock."""
+    return max(0.4, 1.0 - loss * max(0.0, min(1.0, lock)))
+
+
 class NavTranslator(Node):
 
     def __init__(self):
@@ -85,6 +93,8 @@ class NavTranslator(Node):
         # a goal's last metre: Nav2 asked 0.08 m/s on a 10 cm radius, full lock at throttle 0.08,
         # and she slowed from 0.22 m/s to a standstill until the motion check stopped her.
         self.lock_boost = float(self.declare_parameter('lock_throttle_boost', 0.04).value)
+        # ... and the speed table asked for more as the wheels turn: 1/scrub_factor (2026-10-09)
+        self.lock_loss = float(self.declare_parameter('lock_speed_loss', 0.35).value)
         self.steer = 0.0
         self.trim = 0.0
         self.measured = 0.0
@@ -119,13 +129,8 @@ class NavTranslator(Node):
             out.angular.z = self.steer
             self.pub.publish(out)
             return
-        # speed: the measured table, then a slow nudge toward the speed Nav2 asked for
         if self._odom_raw is not None:
             self.measured = deserialize_message(self._odom_raw, Odometry).twist.twist.linear.x
-        base = throttle_for(v, SPEED_FWD if v > 0 else SPEED_REV)
-        err = abs(v) - abs(self.measured) if (self.measured > 0) == (v > 0) else abs(v)
-        self.trim = max(-self.trim_limit, min(self.trim_limit, self.trim + self.ki * err * dt))
-        throttle = max(0.0, min(self.max_throttle, base + self.trim))
         # steering: the planned curve, whatever the speed
         curvature = w / v
         steer = curvature / (self.gain_left if curvature > 0 else self.gain_right)
@@ -133,7 +138,14 @@ class NavTranslator(Node):
         step = self.max_steer_rate * (dt if dt > 0 else 0.05)
         self.steer = max(self.steer - step, min(self.steer + step, steer))
         out.angular.z = self.steer
-        lock = max(0.0, min(1.0, (abs(self.steer) / self.max_steer - 0.5) / 0.5))
+        lock_frac = abs(self.steer) / self.max_steer
+        # speed: the measured table (asked for what the turn's scrub will take off), then a slow
+        # nudge toward the speed Nav2 asked for
+        base = throttle_for(v / scrub_factor(lock_frac, self.lock_loss), SPEED_FWD if v > 0 else SPEED_REV)
+        err = abs(v) - abs(self.measured) if (self.measured > 0) == (v > 0) else abs(v)
+        self.trim = max(-self.trim_limit, min(self.trim_limit, self.trim + self.ki * err * dt))
+        throttle = max(0.0, min(self.max_throttle, base + self.trim))
+        lock = max(0.0, min(1.0, (lock_frac - 0.5) / 0.5))
         throttle = min(self.max_throttle, throttle + self.lock_boost * lock)
         out.linear.x = math.copysign(throttle, v)
         self.pub.publish(out)
