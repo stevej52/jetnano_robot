@@ -2,6 +2,13 @@
   Nav2's stock navigate_through_poses_w_replanning_and_recovery.xml (Jazzy) with
   the Spin recovery removed, for the same reason as navigate_to_pose_no_spin.xml:
   a four-wheel-steering crawler cannot turn on the spot.
+
+  Passed waypoints are dropped on EVERY tick, and the path is replanned at once when one is
+  (GoalUpdatedController), as well as every 3 s (2026-10-09). Inside the 3 s RateController
+  the drop happened anywhere from 0.7 m to 0 m out, and each leg is planned on its own, so a
+  late drop left her on a plan that kinked into the waypoint: drive 54's turn 6 (heading 77 ->
+  40 into (3.00, -1.95), then a reverse) where drive 52 dropped it at 0.7 m and turned straight
+  for home; the sim's dining-north line-ups the same.
 -->
 <root BTCPP_format="4" main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
@@ -9,10 +16,13 @@
       <PipelineSequence name="NavigateWithReplanning">
         <ControllerSelector selected_controller="{selected_controller}" default_controller="FollowPath" topic_name="controller_selector"/>
         <PlannerSelector selected_planner="{selected_planner}" default_planner="GridBased" topic_name="planner_selector"/>
+        <RemovePassedGoals input_goals="{goals}" output_goals="{goals}" radius="0.7"/>
+        <GoalUpdatedController goals="{goals}">
+          <ComputePathThroughPoses goals="{goals}" path="{path}" planner_id="{selected_planner}" error_code_id="{compute_path_error_code}"/>
+        </GoalUpdatedController>
         <RateController hz="0.333">
           <RecoveryNode number_of_retries="1" name="ComputePathThroughPoses">
             <ReactiveSequence>
-              <RemovePassedGoals input_goals="{goals}" output_goals="{goals}" radius="0.7"/>
               <ComputePathThroughPoses goals="{goals}" path="{path}" planner_id="{selected_planner}" error_code_id="{compute_path_error_code}"/>
             </ReactiveSequence>
             <Sequence>

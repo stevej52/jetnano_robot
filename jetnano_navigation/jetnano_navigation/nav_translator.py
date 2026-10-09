@@ -92,7 +92,10 @@ class NavTranslator(Node):
         # scrubs all four tyres, and the speed table was measured going straight. 2026-09-28,
         # a goal's last metre: Nav2 asked 0.08 m/s on a 10 cm radius, full lock at throttle 0.08,
         # and she slowed from 0.22 m/s to a standstill until the motion check stopped her.
-        self.lock_boost = float(self.declare_parameter('lock_throttle_boost', 0.04).value)
+        # 0.04 -> 0.08 2026-10-09: with lock_speed_loss she held the asked speed up to 0.7 lock
+        # (drive 54) but made only 0.63-0.74 of it at 0.7-0.95 lock and crawl speeds (0.18-0.22
+        # m/s), where the table is flattest and a fixed add-on counts most.
+        self.lock_boost = float(self.declare_parameter('lock_throttle_boost', 0.08).value)
         # ... and the speed table asked for more as the wheels turn: 1/scrub_factor (2026-10-09)
         self.lock_loss = float(self.declare_parameter('lock_speed_loss', 0.35).value)
         self.steer = 0.0
