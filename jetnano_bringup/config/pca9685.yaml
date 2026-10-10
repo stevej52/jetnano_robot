@@ -89,8 +89,9 @@
       # is off and the settle node listens and wiggles until it is quiet.
       relax_deg: 0.0
       relax_after_s: 0.7
-      min_limit: 40.0          # measured: 45 reaches cleanly, no binding
-      max_limit: 125.0         # measured: 120 reaches cleanly, no binding
+      # full lock 2 deg in from 40 / 125 (Steve, 2026-10-09): 39 deg left, 42 right of home
+      min_limit: 42.0          # measured: 45 reaches cleanly, no binding
+      max_limit: 123.0         # measured: 120 reaches cleanly, no binding
       timeout: 0.5
       joint: front_left_steer_joint
       twist:
@@ -102,8 +103,8 @@
       home_on_start: true
       relax_deg: 0.0           # see steering: the settle node does this by ear
       relax_after_s: 0.7
-      min_limit: 43.0
-      max_limit: 128.0
+      min_limit: 45.0          # 2 deg in from 43 / 128 (Steve, 2026-10-09), as the front
+      max_limit: 126.0
       timeout: 0.5
       joint: rear_left_steer_joint
       twist:
