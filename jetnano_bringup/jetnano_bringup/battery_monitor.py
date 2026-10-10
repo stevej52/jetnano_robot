@@ -42,8 +42,8 @@ A pack that is not there (the robot on its wall supply) reads under 8 V and
 is reported as "no battery"; nothing is raised for that. On the bench the BEC
 backfeeds the ESC's input capacitors, so the tap reads a drifting 5-9 V with no
 pack in; a real 3S pack would have powered her off at 9.9 V long before 8
-(2026-10-06: three bench power-offs on that reading). Right after the pack comes out the
-capacitors still hold its voltage and drain fast (10.39 -> 9.34 V in two minutes,
+(2026-10-06: three bench power-offs on that reading). Right after the pack comes out Steve's two
+capacitors (2026-09-26) still hold its voltage and drain fast (10.39 -> 9.34 V in two minutes,
 2026-10-09): a power-off minute that fell more than ``poweroff_max_fall_v`` is not a pack,
 and the minute starts again.
 
@@ -151,7 +151,7 @@ class BatteryMonitor(QuietNode):
         self.declare_parameter('poweroff_after_s', 60.0)
         self.declare_parameter('poweroff_cmd', 'sudo -n systemctl poweroff')
         # ... unless it fell more than this during that minute. 2026-10-09 16:01-16:03: switched to
-        # the bench supply with no pack, the tap read the ESC's capacitors draining, 10.39 -> 9.34 V
+        # the bench supply with no pack, the tap read Steve's two capacitors (fitted ~09-26) draining, 10.39 -> 9.34 V
         # in two minutes (0.56 V in the last one), and this powered her off. A real pack parked at
         # the line falls far slower: 9.90 -> 9.82 V in its minute on 2026-09-30.
         self.declare_parameter('poweroff_max_fall_v', 0.3)
@@ -409,7 +409,7 @@ class BatteryMonitor(QuietNode):
                                         f'powering off in {self.poweroff_after:.0f} s unless it recovers')
             elif now - self._low_since >= self.poweroff_after and self._low_from - voltage > self.poweroff_max_fall:
                 self.get_logger().warning(f'battery {self._low_from:.2f} -> {voltage:.2f} V in '
-                                          f'{now - self._low_since:.0f} s: too fast for a pack: the ESC capacitors '
+                                          f'{now - self._low_since:.0f} s: too fast for a pack: the capacitors '
                                           'draining with no pack in - not powering off, watching another minute')
                 self._low_since, self._low_from = now, voltage
             elif now - self._low_since >= self.poweroff_after:
