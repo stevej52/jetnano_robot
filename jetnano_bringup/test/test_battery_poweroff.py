@@ -45,7 +45,8 @@ def monitor(on=True):
     log = Log()
     return SimpleNamespace(
         poweroff_on=on, poweroff_v=9.9, poweroff_after=60.0, cells=3,
-        poweroff_cmd='sudo -n systemctl poweroff', _powering_off=False, _low_since=None,
+        poweroff_cmd='sudo -n systemctl poweroff', _powering_off=False, _low_since=None, _low_from=None,
+        poweroff_max_fall=0.3,
         stop_pub=Pub(), get_logger=lambda: log, log=log)
 
 
@@ -109,6 +110,29 @@ def test_hovering_just_over_the_line_keeps_counting(monkeypatch):
     # 10.0 V is over 9.9 but inside the 0.05 V/cell margin: not a recovery
     ran = run(m, [(0, 9.85), (20, 10.0), (40, 9.9), (60, 9.9)], monkeypatch)
     assert ran == [['sudo', '-n', 'systemctl', 'poweroff']]
+
+
+def test_capacitors_draining_with_no_pack_do_not_power_off(monkeypatch):
+    """2026-10-09 16:02-16:03, the bench supply and no pack: the tap's 5 s average fell 9.90 ->
+    9.34 V during the minute and she powered off. Then it went under 8 V ("no battery")."""
+    m = monitor()
+    v = [(t, 9.90 - 0.56 * t / 60) for t in range(0, 61, 2)]
+    assert run(m, v, monkeypatch) == []
+    assert m._low_since == 60                                       # watching another minute
+    assert any('capacitors' in text for _, text in m.log.lines)
+
+
+def test_a_real_pack_at_the_line_still_powers_off(monkeypatch):
+    """2026-09-30 05:27-05:28, a real pack parked: 9.90 -> 9.82 V in its minute."""
+    m = monitor()
+    v = [(t, 9.90 - 0.08 * t / 60) for t in range(0, 61, 2)]
+    assert run(m, v, monkeypatch) == [['sudo', '-n', 'systemctl', 'poweroff']]
+
+
+def test_draining_then_settling_powers_off_a_minute_later(monkeypatch):
+    m = monitor()
+    v = [(t, 9.90 - 0.56 * t / 60) for t in range(0, 61, 2)] + [(t, 9.34) for t in range(62, 121, 2)]
+    assert run(m, v, monkeypatch) == [['sudo', '-n', 'systemctl', 'poweroff']]
 
 
 def test_off_means_off(monkeypatch):

@@ -42,7 +42,10 @@ A pack that is not there (the robot on its wall supply) reads under 8 V and
 is reported as "no battery"; nothing is raised for that. On the bench the BEC
 backfeeds the ESC's input capacitors, so the tap reads a drifting 5-9 V with no
 pack in; a real 3S pack would have powered her off at 9.9 V long before 8
-(2026-10-06: three bench power-offs on that reading).
+(2026-10-06: three bench power-offs on that reading). Right after the pack comes out the
+capacitors still hold its voltage and drain fast (10.39 -> 9.34 V in two minutes,
+2026-10-09): a power-off minute that fell more than ``poweroff_max_fall_v`` is not a pack,
+and the minute starts again.
 
 ``simulate: true`` publishes a slowly draining pack for testing the rest of
 the system without the board.
@@ -147,6 +150,11 @@ class BatteryMonitor(QuietNode):
         self.declare_parameter('poweroff_v_per_cell', 3.3)
         self.declare_parameter('poweroff_after_s', 60.0)
         self.declare_parameter('poweroff_cmd', 'sudo -n systemctl poweroff')
+        # ... unless it fell more than this during that minute. 2026-10-09 16:01-16:03: switched to
+        # the bench supply with no pack, the tap read the ESC's capacitors draining, 10.39 -> 9.34 V
+        # in two minutes (0.56 V in the last one), and this powered her off. A real pack parked at
+        # the line falls far slower: 9.90 -> 9.82 V in its minute on 2026-09-30.
+        self.declare_parameter('poweroff_max_fall_v', 0.3)
         self.declare_parameter('simulate_start_v', 12.4)
         self.declare_parameter('present_above_v', 8.0)
         self.declare_parameter('rate', 2.0)
@@ -167,10 +175,12 @@ class BatteryMonitor(QuietNode):
         self.poweroff_v = float(self.get_parameter('poweroff_v_per_cell').value) * self.cells
         self.poweroff_after = float(self.get_parameter('poweroff_after_s').value)
         self.poweroff_cmd = str(self.get_parameter('poweroff_cmd').value)
+        self.poweroff_max_fall = float(self.get_parameter('poweroff_max_fall_v').value)
         self.rate = float(self.get_parameter('rate').value)
         self.slow_s = float(self.get_parameter('slow_s').value)
         self._v_slow = None
         self._low_since = None
+        self._low_from = None             # the voltage when that minute began
         self._powering_off = False
         self.window_s = float(self.get_parameter('level_window_s').value)
         self.readings = deque()          # (monotonic t, instant volts), the last minute
@@ -332,6 +342,13 @@ class BatteryMonitor(QuietNode):
                 self.get_logger().info('battery lock released at start (the pack is %s)'
                                        % (f'{judged:.2f} V' if present else 'absent'))
         if not present:
+            if self._stopped:
+                # flat, then no pack at all (2026-10-09 17:37: the bench supply's leftover reading
+                # went 8.40 -> under 8 V and the lock stayed on with nothing left to protect)
+                release = Bool()
+                release.data = False
+                self.stop_pub.publish(release)
+                self.get_logger().warning('no pack any more (bench power): motors released')
             self._warned = self._stopped = False
             self._low_since = None
             self.readings.clear()
@@ -387,9 +404,14 @@ class BatteryMonitor(QuietNode):
         now = time.monotonic()
         if voltage <= self.poweroff_v:
             if self._low_since is None:
-                self._low_since = now
+                self._low_since, self._low_from = now, voltage
                 self.get_logger().error(f'battery {voltage:.2f} V is at or below {self.poweroff_v:.2f} V: '
                                         f'powering off in {self.poweroff_after:.0f} s unless it recovers')
+            elif now - self._low_since >= self.poweroff_after and self._low_from - voltage > self.poweroff_max_fall:
+                self.get_logger().warning(f'battery {self._low_from:.2f} -> {voltage:.2f} V in '
+                                          f'{now - self._low_since:.0f} s: too fast for a pack: the ESC capacitors '
+                                          'draining with no pack in - not powering off, watching another minute')
+                self._low_since, self._low_from = now, voltage
             elif now - self._low_since >= self.poweroff_after:
                 self._powering_off = True
                 self.get_logger().error(f'battery {voltage:.2f} V for {self.poweroff_after:.0f} s: powering off now '
