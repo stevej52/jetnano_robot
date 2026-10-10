@@ -13,3 +13,15 @@ def test_turning_asks_the_table_for_more_throttle():
     straight = throttle_for(0.25, SPEED_FWD)
     at_lock = throttle_for(0.25 / scrub_factor(0.9, 0.35), SPEED_FWD)
     assert at_lock > straight + 0.02
+
+
+def test_steering_trim_is_added_within_lock():
+    """Drives 52-54: she goes straight at -0.20, not 0."""
+    from types import SimpleNamespace
+    from jetnano_navigation.nav_translator import NavTranslator
+    n = SimpleNamespace(max_steer=2.4, steer_trim=-0.20, steer=0.0)
+    assert abs(NavTranslator.steered(n) + 0.20) < 1e-9
+    n.steer = -2.4
+    assert NavTranslator.steered(n) == -2.4                 # never past full lock
+    n.steer = 2.4
+    assert abs(NavTranslator.steered(n) - 2.2) < 1e-9

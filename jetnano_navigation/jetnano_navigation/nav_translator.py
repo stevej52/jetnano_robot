@@ -98,6 +98,13 @@ class NavTranslator(Node):
         self.lock_boost = float(self.declare_parameter('lock_throttle_boost', 0.08).value)
         # ... and the speed table asked for more as the wheels turn: 1/scrub_factor (2026-10-09)
         self.lock_loss = float(self.declare_parameter('lock_speed_loss', 0.35).value)
+        # steering added to every command: where she actually goes straight. Drives 52-54
+        # (2026-10-09, three laps, steering held): sent -0.20 -> straight (+0.01 1/m), -0.41 ->
+        # -0.09, +0.19 -> +0.18 - so at 0 she pulled LEFT and the wheels barely answer within
+        # ~0.3 of centre (play). Pure pursuit only steered that -0.2 to -0.4 once she was 10-15 cm
+        # left of the path: by the curtain going out past Steve's chair, by the chair coming back,
+        # while the plan ran down the middle.
+        self.steer_trim = float(self.declare_parameter('steer_trim', -0.20).value)
         self.steer = 0.0
         self.trim = 0.0
         self.measured = 0.0
@@ -113,7 +120,11 @@ class NavTranslator(Node):
                                  lambda raw: setattr(self, '_odom_raw', raw), 10, raw=True)
         self.get_logger().info(
             f'Nav2 m/s -> throttle (max {self.max_throttle:.2f}), curvature -> steering '
-            f'(left x{self.gain_left:.2f}, right x{self.gain_right:.2f}, lock {self.max_steer:.1f})')
+            f'(left x{self.gain_left:.2f}, right x{self.gain_right:.2f}, lock {self.max_steer:.1f}, trim {self.steer_trim:+.2f})')
+
+    def steered(self):
+        """The steering to send: the planned curve's plus the straight-ahead trim, within lock."""
+        return max(-self.max_steer, min(self.max_steer, self.steer + self.steer_trim))
 
     def on_cmd(self, m):
         now = self.get_clock().now().nanoseconds * 1e-9
@@ -129,7 +140,7 @@ class NavTranslator(Node):
             # than centring them and swinging back (twist_mux / the driver centre them anyway
             # once Nav2 goes quiet)
             self.trim = 0.0
-            out.angular.z = self.steer
+            out.angular.z = self.steered()
             self.pub.publish(out)
             return
         if self._odom_raw is not None:
@@ -140,7 +151,7 @@ class NavTranslator(Node):
         steer = max(-self.max_steer, min(self.max_steer, steer))
         step = self.max_steer_rate * (dt if dt > 0 else 0.05)
         self.steer = max(self.steer - step, min(self.steer + step, steer))
-        out.angular.z = self.steer
+        out.angular.z = self.steered()
         lock_frac = abs(self.steer) / self.max_steer
         # speed: the measured table (asked for what the turn's scrub will take off), then a slow
         # nudge toward the speed Nav2 asked for
