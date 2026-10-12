@@ -17,6 +17,14 @@ safety_gate:
   ros__parameters:
     rate_hz: 5.0
 
+# rest the lidar motor and the camera projector while she idles (Steve, 2026-10-11)
+sensor_sleep:
+  ros__parameters:
+    enabled: true
+    idle_s: 600.0          # 10 min with no drive command, no goal
+    bench_idle_s: 90.0     # on the bench (where_am_i says bench, or bench power)
+    wake_timeout_s: 20.0
+
 guard_flow:
   ros__parameters:
     act: true

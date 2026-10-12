@@ -44,6 +44,8 @@ import rclpy
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 
+from jetnano_bringup import sensor_flag
+
 
 class VoWatchdog(Node):
 
@@ -123,7 +125,8 @@ class VoWatchdog(Node):
             self.hold_pub.publish(msg)
 
         if (silent > self.restart_after and since_start > self.grace
-                and now - self.last_restart > self.min_interval):
+                and now - self.last_restart > self.min_interval
+                and 'vo' not in sensor_flag.not_judged()):        # sensor_sleep switching the projector
             self.last_restart = now
             self.get_logger().error(
                 f'/vo silent for {silent:.0f} s: stopping the launch in {self.container} so it is respawned')

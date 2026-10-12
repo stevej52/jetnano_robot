@@ -59,7 +59,11 @@ def decide(now, inp):
     latest facts (see SafetyGate._facts); None/missing = unknown."""
     reasons, stopped, degraded = [], [], []
     # required knowledge: without it she stays inhibited
-    if inp.get('scan_age') is None or inp['scan_age'] > 1.5:
+    if inp.get('sensors') in ('asleep', 'waking'):
+        # sensor_sleep rests the lidar and the projector while she idles; a drive command wakes them
+        reasons.append('sensors asleep: a drive command wakes them' if inp['sensors'] == 'asleep'
+                       else 'sensors waking')
+    elif inp.get('scan_age') is None or inp['scan_age'] > 1.5:
         reasons.append('no lidar' if inp.get('scan_age') is None else f'lidar silent {inp["scan_age"]:.0f} s')
     if inp.get('odom_age') is None or inp['odom_age'] > 1.0:
         reasons.append('no odometry' if inp.get('odom_age') is None else f'odometry silent {inp["odom_age"]:.0f} s')
@@ -126,6 +130,7 @@ class SafetyGate(QuietNode):
         self.locks = {}
         self.battery = None
         self.where = None
+        self.sensors = None
         self.tilt = ''
         self.guard_flow = ''
         self.camera = ''
@@ -148,6 +153,7 @@ class SafetyGate(QuietNode):
         for qos in (10, latched):
             self.create_subscription(String, 'battery/level', self._on_battery, qos)
             self.create_subscription(String, 'where_am_i/state', self._on_where, qos)
+            self.create_subscription(String, 'sensors/state', self._on_sensors, qos)
         self.create_subscription(String, 'safety_monitor/tilt_status', lambda m: setattr(self, 'tilt', m.data), 10)
         self.create_subscription(String, 'guard_flow/status', lambda m: setattr(self, 'guard_flow', m.data), 10)
         self.create_subscription(String, 'camera_obstacles/health', self._on_camera, 10)
@@ -187,6 +193,12 @@ class SafetyGate(QuietNode):
         except ValueError:
             pass
 
+    def _on_sensors(self, m):
+        try:
+            self.sensors = json.loads(m.data).get('state')
+        except ValueError:
+            pass
+
     def _on_watchdog(self, m):
         try:
             self.watchdog = list(json.loads(m.data).get('problems', []))
@@ -199,7 +211,7 @@ class SafetyGate(QuietNode):
         f = {'scan_age': age('scan'), 'odom_age': age('odom'), 'vo_age': age('vo'), 'battery': self.battery,
              'battery_age': None if self.battery_at is None else now - self.battery_at,
              'camera_age': None if self.camera_at is None else now - self.camera_at,
-             'where': self.where, 'tilt': self.tilt, 'guard_flow': self.guard_flow, 'camera': self.camera,
+             'where': self.where, 'sensors': self.sensors, 'tilt': self.tilt, 'guard_flow': self.guard_flow, 'camera': self.camera,
              'watchdog': self.watchdog, 'allow_bench': bool(self.get_parameter('allow_bench').value)}
         for key, _ in LOCKS:
             f['lock_' + key] = self.locks.get(key, False)

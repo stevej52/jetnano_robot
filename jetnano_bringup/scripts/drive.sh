@@ -70,6 +70,8 @@ for try in 1 2 3 4 5 6; do
     sleep 3
 done
 echo "   ros2 graph: $NODES nodes known to the daemon  $(date +%T)"
+# the lidar motor and the camera projector rest while she idles (sensor_sleep): wake them first
+ros2 run jetnano_bringup sensors wake 2>/dev/null | sed 's/^/   /'
 # Nav2 is not part of the robot service: start it (one instance, nav2_ctl.sh refuses a second)
 if ! pgrep -f '^/opt/ros/jazzy/lib/rclcpp_components/component_container_isolated' > /dev/null; then
     echo "   Nav2 not running: starting it"

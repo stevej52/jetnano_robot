@@ -51,6 +51,7 @@ setup(
             'guard_flow = jetnano_bringup.guard_flow:main',
             'voice = jetnano_bringup.voice_switch:main',
             'housekeeping = jetnano_bringup.housekeeping:main',
+            'sensors = jetnano_bringup.sensors_cmd:main',
             'settle = jetnano_bringup.settle:main',
             'buzz_source = jetnano_bringup.buzz_source:main',
             'stop_settle = jetnano_bringup.stop_settle:main',

@@ -65,12 +65,16 @@
 #include <stdexcept>
 #include <cmath>
 #include <cstdlib>
+#include <ctime>
 #include <memory>
 #include <string>
 #include <thread>
 #include <vector>
 #include <deque>
+#include <fstream>
 #include <optional>
+#include <sstream>
+#include <sys/stat.h>
 
 #include "action_msgs/srv/cancel_goal.hpp"
 #include "geometry_msgs/msg/transform_stamped.hpp"
@@ -597,7 +601,7 @@ private:
       hold_pub_->publish(m);
     }
     if (silent > restart_after_ && since_start > grace_ &&
-      (!last_restart_ || seconds_since(*last_restart_) > min_interval_))
+      (!last_restart_ || seconds_since(*last_restart_) > min_interval_) && !camera_switching())
     {
       last_restart_ = now;
       RCLCPP_ERROR(get_logger(), "/vo silent for %.0f s: stopping the launch in %s so it is respawned",
@@ -610,6 +614,34 @@ private:
             RCLCPP_ERROR(logger, "could not reach the container");
           }
         }).detach();
+    }
+  }
+
+  // sensor_sleep (jetnano_bringup/sensor_flag.py) has the camera's projector off, or is
+  // switching it back: /vo may stop then (2026-10-11: 2 times in 4 when it went off), and a
+  // restart here would only turn the projector on again. While asleep she does not move and
+  // the hold above keeps the EKF still. A flag older than 60 s is a dead writer's and does
+  // not count.
+  static bool camera_switching()
+  {
+    const char * home = std::getenv("HOME");
+    if (!home) {return false;}
+    const std::string path = std::string(home) + "/sensors/asleep";
+    struct stat st{};
+    const double wall = static_cast<double>(std::time(nullptr));
+    if (stat(path.c_str(), &st) != 0 || wall - static_cast<double>(st.st_mtime) > 60.0) {return false;}
+    std::ifstream f(path);
+    std::stringstream buf;
+    buf << f.rdbuf();
+    const std::string text = buf.str();
+    if (text.find("\"state\": \"asleep\"") != std::string::npos) {return true;}
+    const std::string key = "\"switching_until\":";
+    const auto at = text.find(key);
+    if (at == std::string::npos) {return false;}
+    try {
+      return wall < std::stod(text.substr(at + key.size()));
+    } catch (const std::exception &) {
+      return false;
     }
   }
 

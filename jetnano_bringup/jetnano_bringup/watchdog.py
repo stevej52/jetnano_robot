@@ -83,6 +83,8 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
 from std_msgs.msg import Bool, String
 
+from jetnano_bringup import sensor_flag
+
 CONTAINER = 'isaac_vo'
 CONTAINER_LAUNCH = r'cuvslam_.*\.launch\.py'
 LIDAR_USB = '10c4:ea60'
@@ -390,9 +392,13 @@ class Watchdog(Node):
                 self._bad(self.node_items['topic_watch'], 'no summary from topic_watch', act=False)
             return
         voice_off = os.path.exists(VOICE_OFF_FLAG)
+        resting = sensor_flag.not_judged()        # sensor_sleep: lidar asleep, camera projector switching
         for key, item in self.items.items():
             if voice_off and key in VOICE_STREAMS:
                 item.state, item.step, item.seen = 'ok', 0, False     # switched off on purpose: not a fault
+                continue
+            if key in resting:
+                item.state, item.step = 'ok', 0
                 continue
             label, topic, stale, min_hz, _need, depends, _ = TOPICS[key]
             need = item.need
