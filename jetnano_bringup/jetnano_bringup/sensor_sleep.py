@@ -104,6 +104,7 @@ class SensorSleep(QuietNode):
         self.cam_bad = 0                    # keeper: polls in a row the camera was not alternating
         self.cam_changed_at = 0.0
         self.cam_flag_until = 0.0
+        self.wake_todo = set()              # wake calls whose service was not reachable yet
         self.last_pub = ''
         cam = str(self.get_parameter('camera_node').value).rstrip('/')
         self.stop_motor = self.create_client(Empty, 'stop_motor')
@@ -202,10 +203,13 @@ class SensorSleep(QuietNode):
         sensor_flag.write('waking', SWITCH_S if self.gp('camera') else 0.0)
         self.flag_at = now
         self.get_logger().info(f'sensors waking ({why})')
-        if self.gp('lidar'):
-            self._call(self.start_motor, Empty.Request(), 'start_motor')
-        if self.gp('camera'):
-            self._camera(CAMERA_ON, 'on')
+        # right after a restart the drivers' services are not discovered yet: retried while waking
+        # (2026-10-12: the start was lost and the watchdog restarted the lidar driver 12 s later)
+        self.wake_todo = set()
+        if self.gp('lidar') and not self._call(self.start_motor, Empty.Request(), 'start_motor', quiet=True):
+            self.wake_todo.add('lidar')
+        if self.gp('camera') and not self._camera(CAMERA_ON, 'on', quiet=True):
+            self.wake_todo.add('camera')
         self._publish()
 
     def _awake(self, note):
@@ -251,6 +255,10 @@ class SensorSleep(QuietNode):
                 self.cam_check_at = now
                 self._check_camera()
         elif self.state == 'waking':
+            if 'lidar' in self.wake_todo and self._call(self.start_motor, Empty.Request(), 'start_motor', quiet=True):
+                self.wake_todo.discard('lidar')
+            if 'camera' in self.wake_todo and self._camera(CAMERA_ON, 'on', quiet=True):
+                self.wake_todo.discard('camera')
             if now - self.flag_at >= 10.0:
                 sensor_flag.write('waking')
                 self.flag_at = now
@@ -266,25 +274,30 @@ class SensorSleep(QuietNode):
             self._publish()
 
     # ---- the calls ----
-    def _call(self, client, req, name):
+    def _call(self, client, req, name, quiet=False):
+        """-> whether the call went out."""
         if not client.service_is_ready():
-            self.get_logger().warning(f'{name}: service not there')
-            return
+            if not quiet:
+                self.get_logger().warning(f'{name}: service not there')
+            return False
         client.call_async(req)
+        return True
 
-    def _camera(self, steps, what):
-        """Set the camera's parameters one after the other (the order matters)."""
-        self.cam_changed_at = time.monotonic()
+    def _camera(self, steps, what, quiet=False):
+        """Set the camera's parameters one after the other (the order matters). -> whether it started."""
         if not steps:
             self.get_logger().info(f'camera projector {what}')
-            return
+            return True
         if not self.cam_set.service_is_ready():
-            self.get_logger().warning(f'camera parameters not reachable: projector left as it is (wanted {what})')
-            return
+            if not quiet:
+                self.get_logger().warning(f'camera parameters not reachable: projector left as it is (wanted {what})')
+            return False
+        self.cam_changed_at = time.monotonic()
         name, value = steps[0]
         req = SetParameters.Request()
         req.parameters = [Parameter(name, value=value).to_parameter_msg()]
         self.cam_set.call_async(req).add_done_callback(lambda f: self._camera_step(f, steps, what))
+        return True
 
     def _camera_step(self, fut, steps, what):
         name, value = steps[0]
@@ -312,6 +325,10 @@ class SensorSleep(QuietNode):
         except Exception:  # noqa: BLE001
             return
         now = time.monotonic()
+        if now - self.cam_changed_at < 10.0:
+            # asked before our own switch and answered after it (2026-10-12: a poll sent while
+            # awake came back just after the sleep switch and read as "projector on again")
+            return
         if self.state == 'awake':
             # the keeper: the camera streams but does not alternate (it starts that way)
             self.cam_bad = 0 if (on and alternating) else self.cam_bad + 1
