@@ -34,6 +34,11 @@ and the lidar's motor with them. Both wear: the A1's motor and belt, the project
            asks where_am_i again (she may have been carried while blind).
   while asleep the safety gate is inhibited (no lidar) and says "sensors asleep"; the
   watchdogs skip the lidar's streams through ~/sensors/asleep (sensor_flag.py).
+
+Camera keeper (2026-10-12, D435 FW 5.17.3.10 + librealsense 2.59.1): the camera refuses the
+projector's alternation before it streams, so its launch starts it with the projector off
+and, while awake, this switches alternation on live (CAMERA_ON) whenever the camera reports
+otherwise twice in a row - after a boot, a container restart, a driver restart.
 """
 
 import json
@@ -96,6 +101,9 @@ class SensorSleep(QuietNode):
         self.wake_at = self.stop_at = self.flag_at = self.cam_check_at = 0.0
         self.was_bench = False
         self.cam_reoffs = 0
+        self.cam_bad = 0                    # keeper: polls in a row the camera was not alternating
+        self.cam_changed_at = 0.0
+        self.cam_flag_until = 0.0
         self.last_pub = ''
         cam = str(self.get_parameter('camera_node').value).rstrip('/')
         self.stop_motor = self.create_client(Empty, 'stop_motor')
@@ -119,10 +127,13 @@ class SensorSleep(QuietNode):
         self.create_service(Trigger, '~/wake', self._srv_wake)
         self.state_pub = self.create_publisher(String, 'sensors/state', latched)
         self.create_timer(1.0, self._tick)
-        if sensor_flag.read() is not None:
+        flag = sensor_flag.read()
+        if flag is not None and flag.get('state') in ('asleep', 'waking'):
             # restarted while they slept: wake them, the next idle spell puts them back
             self.state = 'asleep'
             self._wake('sensor_sleep restarted while they slept')
+        elif flag is not None:
+            sensor_flag.clear()
         self._publish()
         self.get_logger().info(
             f'sensor sleep: lidar motor and camera projector rest after {self.gp("idle_s") / 60:.0f} min idle, '
@@ -213,6 +224,12 @@ class SensorSleep(QuietNode):
             self.last_active = now
         idle = now - self.last_active
         if self.state == 'awake':
+            if self.cam_flag_until and now > self.cam_flag_until:
+                self.cam_flag_until = 0.0
+                sensor_flag.clear()
+            if self.gp('camera') and now - self.cam_check_at >= 5.0:
+                self.cam_check_at = now
+                self._check_camera()
             if self.gp('enabled'):
                 why = due_to_sleep(idle, self.busy(), self.bench(), self.gp('idle_s'), self.gp('bench_idle_s'))
                 if why:
@@ -257,6 +274,7 @@ class SensorSleep(QuietNode):
 
     def _camera(self, steps, what):
         """Set the camera's parameters one after the other (the order matters)."""
+        self.cam_changed_at = time.monotonic()
         if not steps:
             self.get_logger().info(f'camera projector {what}')
             return
@@ -284,13 +302,26 @@ class SensorSleep(QuietNode):
         if not self.cam_get.service_is_ready():
             return
         req = GetParameters.Request()
-        req.names = ['depth_module.emitter_enabled']
+        req.names = ['depth_module.emitter_enabled', 'depth_module.emitter_on_off']
         self.cam_get.call_async(req).add_done_callback(self._camera_checked)
 
     def _camera_checked(self, fut):
         try:
-            on = fut.result().values[0].integer_value != 0
+            vals = fut.result().values
+            on, alternating = vals[0].integer_value != 0, vals[1].bool_value
         except Exception:  # noqa: BLE001
+            return
+        now = time.monotonic()
+        if self.state == 'awake':
+            # the keeper: the camera streams but does not alternate (it starts that way)
+            self.cam_bad = 0 if (on and alternating) else self.cam_bad + 1
+            if self.cam_bad >= 2 and now - self.cam_changed_at > 15.0:
+                self.cam_bad = 0
+                self.get_logger().info('camera: projector alternation on (the camera started without it)')
+                if sensor_flag.read() is None:
+                    sensor_flag.write('camera', SWITCH_S)
+                    self.cam_flag_until = now + SWITCH_S + 1.0
+                self._camera(CAMERA_ON, 'alternating')
             return
         if on and self.state == 'asleep':
             # once per sleep: the camera's launch restarting again and again must not become a loop

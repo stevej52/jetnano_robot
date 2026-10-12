@@ -15,7 +15,8 @@
 """The sensors-asleep flag: sensor_sleep writes it, the watchdogs read it.
 
 ~/sensors/asleep exists while the lidar's motor is stopped (asleep, and while it spins up
-again). JSON: {"state": "asleep"|"waking", "since": wall s, "switching_until": wall s}.
+again). JSON: {"state": "asleep"|"waking"|"camera", "since": wall s, "switching_until": wall s}.
+"camera": awake, only the projector being switched (sensor_sleep's camera keeper).
 Switching the camera's projector stops /vo: on 2026-10-11 it came back by itself 2 times
 in 4 when the projector went off (once after ~4 s) and every time it came back on. So
 while asleep the camera's streams are not judged at all (she does not move; the safety
@@ -53,8 +54,9 @@ def not_judged(path=FLAG, now=None):
     d = read(path, now)
     if d is None:
         return ()
-    skip = LIDAR_STREAMS
-    if d.get('state') == 'asleep' or now < float(d.get('switching_until', 0) or 0):
+    state = d.get('state')
+    skip = LIDAR_STREAMS if state in ('asleep', 'waking') else ()
+    if state == 'asleep' or now < float(d.get('switching_until', 0) or 0):
         skip += CAMERA_STREAMS
     return skip
 
