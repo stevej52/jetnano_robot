@@ -46,6 +46,12 @@ else
     LAUNCH=/workspaces/isaac_ros-dev/cuvslam_d435_stereo.launch.py
     SOURCE_WS=''
 fi
+# The RealSense SDK beside NVIDIA's (librealsense 2.56.3 in /usr/local, realsense-ros 4.56.3 debs):
+# rs259/ holds librealsense 2.59.1 (rs259/prefix, RSUSB like theirs, build_librealsense.sh) and
+# realsense-ros 4.59.1 (rs259/ws, build_ros.sh), built 2026-10-12 because Steve wants the newest.
+# Used while rs259/ws exists; `touch .../rs259/OFF` goes back to NVIDIA's at the next start.
+RS=/workspaces/isaac_ros-dev/rs259
+SOURCE_WS="${SOURCE_WS} if [ -f ${RS}/ws/install/setup.bash ] && [ ! -e ${RS}/OFF ]; then source ${RS}/ws/install/setup.bash; export LD_LIBRARY_PATH=${RS}/prefix/lib:\${LD_LIBRARY_PATH:-}; echo 'cuvslam_vo: RealSense SDK 2.59.1 (rs259)' >&2; fi;"
 # web_video:=false: browsers get the camera from jetnano_bringup csi_cameras (:8082) since
 # 2026-09-27; web_video_server hung under load, spinning 76 % of a core on stuck connections.
 DDS_PROFILE=/workspaces/isaac_ros-dev/fastdds_udp_only.xml
