@@ -44,7 +44,7 @@ from geometry_msgs.msg import Twist
 from jetnano_bringup.quiet_node import QuietNode
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from nav2_msgs.msg import CollisionMonitorState
-from sensor_msgs.msg import CameraInfo, PointCloud2
+from sensor_msgs.msg import CameraInfo
 from std_msgs.msg import String
 
 CONTAINER, CONTAINER_LAUNCH = 'isaac_vo', r'cuvslam_.*\.launch\.py'     # cuvslam_vo.sh picks the file
@@ -60,8 +60,6 @@ class GuardFlow(QuietNode):
         self.declare_parameter('stale_s', 3.0)
         self.mux_at = 0.0           # last non-zero command into the guard
         self.out_at = 0.0           # last non-zero command out of it
-        self.pts_at = 0.0           # last obstacle_points arrival (monotonic)
-        self.pts_age = 0.0          # its stamp's age then (s)
         self.bad_since = None
         self.why = ''
         self.fix_at = {'grid_to_points': 0.0, 'container': 0.0}
@@ -69,18 +67,24 @@ class GuardFlow(QuietNode):
         be = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
         self.create_subscription(Twist, 'cmd_vel_mux', lambda m: self._cmd('mux_at', m), 10)
         self.create_subscription(Twist, 'cmd_vel', lambda m: self._cmd('out_at', m), 10)
-        self.create_subscription(PointCloud2, '/nvblox_node/obstacle_points', self._on_points, be, raw=True)
         # the depth stream behind nvblox, raw (the header's stamp is bytes 4-12 of the CDR; no
         # deserialising): when the grid goes stale this tells WHICH of three things happened -
         # no depth frames (the camera's stream died), frames with old stamps (the camera's clock
         # drifted off ROS time and nvblox refuses them), or fresh frames (nvblox itself stalled).
         # 2026-10-01 19:31: twelve minutes frozen, and the log could not say which.
         # ... from camera_info, which carries the same stamps at a few hundred bytes a frame (the
-        # audit of 2026-10-02: the raw image was ~14 MB/s across the host for eight bytes)
+        # audit of 2026-10-02: the raw image was ~14 MB/s across the host for eight bytes).
+        # Only while the camera's obstacles are stale (and 30 s after): camera_info comes at the
+        # depth rate, 90 Hz, and a standing subscription cost this process ~20 % of a core for a
+        # diagnosis needed a few times a month (2026-10-12). The hold (hold_s) gives it 2 s of
+        # frames before the first verdict. Raw: only the stamp is read.
         self.depth_n = 0
         self.depth_lag = 0.0
         self.depth_at = 0.0
-        self.create_subscription(CameraInfo, '/camera/depth/camera_info', self._on_depth_info, be)
+        self.depth_sub = None
+        self.depth_since = 0.0
+        self.stale_at = 0.0
+        self.be = be
         # the guard's own verdict: a STOP for an obstacle is her doing her job, not a fault
         # the monitor publishes its state on CHANGE, not as a heartbeat (review 2026-10-03), so the
         # last state is held until the next; the polygon name tells an obstacle stop (a named
@@ -106,11 +110,22 @@ class GuardFlow(QuietNode):
         if abs(m.linear.x) > 0.02 or abs(m.angular.z) > 0.02:
             setattr(self, key, time.monotonic())
 
-    def _on_depth_info(self, m):
+    def _on_depth_info(self, raw):
         self.depth_n += 1
         self.depth_at = time.monotonic()
-        if self.depth_n % 10 == 0:                 # every 10th frame is plenty for a lag figure
-            self.depth_lag = self.get_clock().now().nanoseconds / 1e9 - (m.header.stamp.sec + m.header.stamp.nanosec * 1e-9)
+        if self.depth_n % 10 == 0 and len(raw) >= 12:     # every 10th frame is plenty for a lag figure
+            stamp = int.from_bytes(raw[4:8], 'little', signed=True) + int.from_bytes(raw[8:12], 'little') * 1e-9
+            self.depth_lag = self.get_clock().now().nanoseconds / 1e9 - stamp
+
+    def _watch_depth(self, on):
+        if on and self.depth_sub is None:
+            self.depth_n, self.depth_at, self.depth_lag = 0, 0.0, 0.0
+            self.depth_since = time.monotonic()
+            self.depth_sub = self.create_subscription(CameraInfo, '/camera/depth/camera_info', self._on_depth_info,
+                                                      self.be, raw=True)
+        elif not on and self.depth_sub is not None:
+            self.destroy_subscription(self.depth_sub)
+            self.depth_sub = None
 
     def _on_guard_state(self, m):
         self.guard_action = int(m.action_type)
@@ -118,8 +133,14 @@ class GuardFlow(QuietNode):
         self.guard_at = time.monotonic()
 
     def _on_camera_health(self, m):
+        now = time.monotonic()
         self.camera_health = m.data
-        self.camera_health_at = time.monotonic()
+        self.camera_health_at = now
+        if m.data.startswith('stale'):
+            self.stale_at = now
+            self._watch_depth(True)
+        elif self.depth_sub is not None and now - self.stale_at > 30.0:
+            self._watch_depth(False)
 
     def depth_words(self) -> str:
         now = time.monotonic()
@@ -130,14 +151,6 @@ class GuardFlow(QuietNode):
         if abs(self.depth_lag) > 2.0:
             return f'depth frames arrive but stamped {self.depth_lag:+.1f} s off ROS time (the camera clock)'
         return f'depth frames arrive, stamps fresh ({self.depth_lag * 1000:+.0f} ms): nvblox itself stalled'
-
-    def _on_points(self, raw):
-        # raw: only the header's stamp is read (bytes 4-12 of the CDR), not a Python PointCloud2
-        self.pts_at = time.monotonic()
-        if len(raw) < 12:
-            return
-        stamp = int.from_bytes(raw[4:8], 'little', signed=True) + int.from_bytes(raw[8:12], 'little') * 1e-9
-        self.pts_age = self.get_clock().now().nanoseconds / 1e9 - stamp
 
     def _tick(self):
         now = time.monotonic()
