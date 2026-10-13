@@ -59,3 +59,24 @@ def test_verdicts_expire_and_a_frozen_stamp_counts_as_stale():
     # the node adds the measurement's lag to a stream's age: a scan arriving with a 3 s old stamp
     # is a 3 s old scan, so the pure decision sees scan_age 3 and inhibits
     assert decide(0, {**OK, 'scan_age': 3.0})[0] == 'inhibited'
+
+
+def test_no_freshness_report_means_inhibited():
+    state, reasons, _ = decide(0, {**OK, 'fresh_report': False, 'scan_age': None, 'odom_age': None})
+    assert state == 'inhibited' and reasons[0].startswith('stream ages unknown')
+    assert decide(0, {**OK, 'fresh_report': True}) == ('ok', [], 100.0)
+
+
+def test_stream_age_from_topic_watch():
+    from types import SimpleNamespace
+    from jetnano_bringup.safety_gate import SafetyGate
+    g = SimpleNamespace(fresh={'/scan': (0.10, 0.02), '/vo': (0.01, float('nan')), '/odometry/filtered': (-1.0, 0.0),
+                               '/frozen': (0.01, 5.0), '/future': (0.01, -3.0)}, fresh_at=100.0)
+    age = lambda topic, report=True: SafetyGate._age(g, topic, 100.5, report)  # noqa: E731
+    assert abs(age('/scan') - 0.62) < 1e-9          # its age + the report's age + the stamp lag
+    assert abs(age('/vo') - 0.51) < 1e-9            # no stamp: arrival only
+    assert age('/odometry/filtered') is None        # never seen
+    assert age('/missing') is None
+    assert abs(age('/frozen') - 5.51) < 1e-9        # arriving, but stamped 5 s ago: stale
+    assert abs(age('/future') - 0.51) < 1e-9        # a stamp from the future counts as arrival only
+    assert age('/scan', report=False) is None

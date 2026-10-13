@@ -41,12 +41,11 @@ locks stay as defence in depth; this is the one that decides and explains.
 import json
 import time
 
+from diagnostic_msgs.msg import DiagnosticArray
 from nav2_msgs.msg import SpeedLimit
-from nav_msgs.msg import Odometry
 
 from jetnano_bringup.quiet_node import QuietNode
-from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-from sensor_msgs.msg import LaserScan
+from rclpy.qos import DurabilityPolicy, QoSProfile
 from std_msgs.msg import Bool, String
 
 DEGRADED_SPEED_PCT = 50.0
@@ -59,6 +58,9 @@ def decide(now, inp):
     latest facts (see SafetyGate._facts); None/missing = unknown."""
     reasons, stopped, degraded = [], [], []
     # required knowledge: without it she stays inhibited
+    if inp.get('fresh_report') is False:
+        # topic_watch's watchdog/fresh carries the stream ages; without it nothing is known
+        reasons.append('stream ages unknown (no freshness report from topic_watch)')
     if inp.get('sensors') in ('asleep', 'waking'):
         # sensor_sleep rests the lidar and the projector while she idles; a drive command wakes them
         reasons.append('sensors asleep: a drive command wakes them' if inp['sensors'] == 'asleep'
@@ -124,9 +126,8 @@ class SafetyGate(QuietNode):
         super().__init__('safety_gate')
         self.declare_parameter('rate_hz', 5.0)
         self.declare_parameter('allow_bench', False)     # ros2 param set /safety_gate allow_bench true
-        be = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
         latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
-        self.t = {'scan': None, 'odom': None, 'vo': None}
+        self.fresh, self.fresh_at = {}, None
         self.locks = {}
         self.battery = None
         self.where = None
@@ -138,14 +139,12 @@ class SafetyGate(QuietNode):
         self.state, self.reasons, self.speed = 'inhibited', ['starting'], 0.0
         self.since = time.monotonic()
         self.last_lock_pub = 0.0
-        self.lag = {}                    # measurement stamp behind ROS time at arrival, per stream
-        # raw subscriptions where the message is big or frequent: only the arrival matters
-        # raw: the header's stamp is bytes 4-12 of the CDR (sec int32, nanosec uint32), so a
-        # stream that keeps arriving with a frozen stamp is as stale as one that stopped
-        # (review 2026-10-03: arrival time alone said "fresh")
-        self.create_subscription(LaserScan, 'scan', lambda raw: self._seen('scan', raw), be, raw=True)
-        self.create_subscription(Odometry, 'odometry/filtered', lambda raw: self._seen('odom', raw), 10, raw=True)
-        self.create_subscription(Odometry, 'vo', lambda raw: self._seen('vo', raw), be, raw=True)
+        # The streams' ages come from topic_watch (C++) on watchdog/fresh, 5 times a second: the
+        # age of the last message and how far its stamp was behind ROS time on arrival, so a
+        # stream that keeps arriving with a frozen stamp is as stale as one that stopped (review
+        # 2026-10-03). Until 2026-10-12 this node subscribed to /odometry/filtered (100 Hz), /vo
+        # (45 Hz) and /scan itself, ~30 % of a core in rclpy; Steve: "we will always need compute".
+        self.create_subscription(DiagnosticArray, 'watchdog/fresh', self._on_fresh, 10)
         for key, _ in LOCKS:
             self.create_subscription(Bool, key, lambda m, key=key: self.locks.__setitem__(key, bool(m.data)), 10)
         self.battery_at = None
@@ -165,16 +164,16 @@ class SafetyGate(QuietNode):
         self.create_timer(1.0 / float(self.get_parameter('rate_hz').value), self._tick)
         self.get_logger().info('safety gate: inhibited until the lidar, the odometry and a battery verdict are in')
 
-    def _seen(self, key, raw=None):
-        now = time.monotonic()
-        self.t[key] = now
-        if raw is not None and len(raw) >= 12:
-            sec = int.from_bytes(raw[4:8], 'little', signed=True)
-            nsec = int.from_bytes(raw[8:12], 'little')
-            stamp = sec + nsec * 1e-9
-            ros_now = self.get_clock().now().nanoseconds * 1e-9
-            # a stamp within a minute of now is believed; else only the arrival counts
-            self.lag[key] = (ros_now - stamp) if 0 < stamp and abs(ros_now - stamp) < 60.0 else 0.0
+    def _on_fresh(self, m):
+        self.fresh_at = time.monotonic()
+        fresh = {}
+        for st in m.status:
+            v = {kv.key: kv.value for kv in st.values}
+            try:
+                fresh[st.name] = (float(v.get('age_s', '-1')), float(v.get('lag_s', 'nan')))
+            except ValueError:
+                pass
+        self.fresh = fresh
 
     def _on_camera(self, m):
         self.camera = m.data
@@ -206,9 +205,9 @@ class SafetyGate(QuietNode):
             pass
 
     def _facts(self, now):
-        # a stream's age = time since it arrived, plus how far its measurement stamp was behind then
-        age = lambda k: None if self.t[k] is None else now - self.t[k] + max(0.0, self.lag.get(k, 0.0))  # noqa: E731
-        f = {'scan_age': age('scan'), 'odom_age': age('odom'), 'vo_age': age('vo'), 'battery': self.battery,
+        report = self.fresh_at is not None and now - self.fresh_at < 1.0
+        f = {'scan_age': self._age('/scan', now, report), 'odom_age': self._age('/odometry/filtered', now, report),
+             'vo_age': self._age('/vo', now, report), 'fresh_report': report, 'battery': self.battery,
              'battery_age': None if self.battery_at is None else now - self.battery_at,
              'camera_age': None if self.camera_at is None else now - self.camera_at,
              'where': self.where, 'sensors': self.sensors, 'tilt': self.tilt, 'guard_flow': self.guard_flow, 'camera': self.camera,
@@ -216,6 +215,18 @@ class SafetyGate(QuietNode):
         for key, _ in LOCKS:
             f['lock_' + key] = self.locks.get(key, False)
         return f
+
+    def _age(self, topic, now, report):
+        """A stream's age: since it last arrived (topic_watch's figure plus the report's own age),
+        plus how far its stamp was behind ROS time then - believed within a minute, else only
+        the arrival counts. None = unknown (never seen, or no fresh report)."""
+        if not report or topic not in self.fresh:
+            return None
+        age, lag = self.fresh[topic]
+        if age < 0:
+            return None
+        lag = lag if lag == lag and 0.0 < lag < 60.0 else 0.0     # nan, negative, absurd: arrival only
+        return age + (now - self.fresh_at) + lag
 
     def _tick(self):
         now = time.monotonic()

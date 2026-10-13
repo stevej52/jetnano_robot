@@ -309,7 +309,11 @@ def generate_launch_description():
                                     '/lidar_odometry/pose', '/odometry/filtered',
                                     '/nvblox_node/static_occupancy_grid', '/nvblox_node/obstacle_points',
                                     '/sound/audio', '/speech/heartbeat',
-                                    '/map', '/battery', '/cliff/ranges']}],
+                                    '/map', '/battery', '/cliff/ranges'],
+                         # the safety gate's streams: their stamps too, 5 times a second on
+                         # watchdog/fresh (the gate no longer subscribes to them, 2026-10-12)
+                         'fresh_topics': ['/scan', '/odometry/filtered', '/vo'],
+                         'fresh_rate_hz': 5.0}],
             condition=IfCondition(LaunchConfiguration('use_watchdog')),
         ),
         Node(
