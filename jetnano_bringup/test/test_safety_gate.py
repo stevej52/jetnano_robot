@@ -80,3 +80,21 @@ def test_stream_age_from_topic_watch():
     assert abs(age('/frozen') - 5.51) < 1e-9        # arriving, but stamped 5 s ago: stale
     assert abs(age('/future') - 0.51) < 1e-9        # a stamp from the future counts as arrival only
     assert age('/scan', report=False) is None
+
+
+UP = {**OK, 'uptime': 200.0, 'tilt_age': 30.0, 'guard_flow_age': 0.2, 'watchdog_age': 2.0, 'camera_age': 0.5,
+      'fresh_report': True}
+
+
+def test_silence_is_not_health_after_the_grace():
+    assert decide(0, UP) == ('ok', [], 100.0)
+    # starting up: missing reports are still parts on their way
+    assert decide(0, {**UP, 'uptime': 60.0, 'tilt_age': None, 'watchdog_age': None})[0] == 'ok'
+    state, reasons, _ = decide(0, {**UP, 'tilt_age': None})
+    assert state == 'inhibited' and 'tilt guard has not reported' in reasons
+    for change, words in (({'guard_flow_age': 5.0}, 'guard_flow silent'), ({'guard_flow_age': None}, 'guard_flow silent'),
+                          ({'watchdog_age': None}, 'watchdog silent'), ({'watchdog_age': 40.0}, 'watchdog silent'),
+                          ({'camera_age': None}, 'no health report ever'), ({'vo_age': None}, 'never seen'),
+                          ({'tilt': 'off -> off: tilt guard switched off'}, 'tilt guard switched off')):
+        state, reasons, speed = decide(0, {**UP, **change})
+        assert state == 'degraded' and speed == DEGRADED_SPEED_PCT and any(words in r for r in reasons), change

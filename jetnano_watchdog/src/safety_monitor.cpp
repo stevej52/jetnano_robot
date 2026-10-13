@@ -216,13 +216,23 @@ public:
           rpy.at(0), rpy.at(1), rpy.at(2));
       }
       tilt_pub_ = create_publisher<geometry_msgs::msg::Twist>("cmd_vel_tilt", 10);
-      tilt_status_pub_ = create_publisher<std_msgs::msg::String>("~/tilt_status", 10);
+      // latched: the state changes rarely, and a reader that starts later (the safety gate after a
+      // housekeeping restart) must still get it - silence from here now means "no tilt guard"
+      tilt_status_pub_ = create_publisher<std_msgs::msg::String>(
+        "~/tilt_status", rclcpp::QoS(1).reliable().transient_local());
       imu_sub_ = create_subscription<sensor_msgs::msg::Imu>(
         "imu/data", sensor_qos, [this](sensor_msgs::msg::Imu::ConstSharedPtr m) {on_imu(*m);});
       tilt_timer_ = create_wall_timer(
         std::chrono::duration<double>(1.0 / tilt_rate), [this] {tilt_tick();});
       RCLCPP_INFO(get_logger(), "tilt: roll %.0f deg, pitch %.0f deg, reversing at %.2f on cmd_vel_tilt",
         roll_trigger_, pitch_trigger_, reverse_speed_);
+    } else {
+      // switched off on purpose: say so (latched), so the gate shows "switched off", not "missing"
+      tilt_status_pub_ = create_publisher<std_msgs::msg::String>(
+        "~/tilt_status", rclcpp::QoS(1).reliable().transient_local());
+      std_msgs::msg::String s;
+      s.data = "off -> off: tilt guard switched off (tilt.enabled false)";
+      tilt_status_pub_->publish(s);
     }
 
     if (motion_on_ || vo_on_) {
@@ -305,7 +315,17 @@ private:
     update(roll * kDeg, pitch * kDeg, *last_imu_);
     if (state_ != before) {
       announce(before, state_);
+    } else if (!tilt_reported_) {
+      // the first reading: say the guard is working (it starts "safe" and otherwise speaks only on
+      // a tilt, so a normal boot published nothing and the gate could not tell it from no guard)
+      std_msgs::msg::String s;
+      char buf[96];
+      std::snprintf(buf, sizeof(buf), "starting -> %s: first IMU reading, roll %.1f deg, pitch %.1f deg",
+        name_of(state_), roll * kDeg, pitch * kDeg);
+      s.data = buf;
+      tilt_status_pub_->publish(s);
     }
+    tilt_reported_ = true;
   }
 
   bool find_mount(const std::string & imu_frame)
@@ -668,6 +688,7 @@ private:
   std::optional<Quat> mount_;
   std::optional<double> last_imu_, armed_at_, recovery_at_;
   TiltState state_{TiltState::SAFE};
+  bool tilt_reported_ = false;
   int recoveries_{0};
   std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
   std::unique_ptr<tf2_ros::TransformListener> tf_listener_;

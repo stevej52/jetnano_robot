@@ -459,6 +459,10 @@ class Watchdog(Node):
                 alive = n in NODE_PROCS and bool(self._pids(NODE_PROCS[n]))
                 why, act = node_gone_verdict(now - self.node_seen[n], alive)
                 self._bad(item, why, act=act)      # dead: its respawn brings it back; hung: the ladder does
+            elif n not in self.node_seen and now - self.stack_started > self.expect_after:
+                # never seen since the stack started: before 2026-10-12 only a node that had been
+                # seen once could be reported, so one that never came up looked healthy
+                self._bad(item, 'never started', act=False)
         threading.Thread(target=self._check_http, daemon=True).start()
         self._check_guard(names)
 

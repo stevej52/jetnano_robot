@@ -49,6 +49,9 @@ from rclpy.qos import DurabilityPolicy, QoSProfile
 from std_msgs.msg import Bool, String
 
 DEGRADED_SPEED_PCT = 50.0
+# After this long, a report that never came is a missing part, not one still starting
+# (2026-10-12: silence used to read as healthy - a tilt guard that never started let her drive).
+GRACE_S = 120.0
 LOCKS = (('e_stop_web', 'STOP on the page'), ('e_stop_joy', 'STOP on the joystick'),
          ('e_stop', 'battery stop'), ('e_stop_motion', 'motion check'))
 
@@ -81,6 +84,9 @@ def decide(now, inp):
     # allow_bench the bench is "degraded: wheels up?" instead of inhibited
     if bench and not inp.get('allow_bench'):
         reasons += bench
+    started = inp.get('uptime') is not None and inp['uptime'] > GRACE_S
+    if started and inp.get('tilt_age') is None:
+        reasons.append('tilt guard has not reported')
     if reasons:
         return 'inhibited', reasons, 0.0
     # stops
@@ -100,6 +106,16 @@ def decide(now, inp):
     # degraded
     cam = inp.get('camera') or ''
     cam_age = inp.get('camera_age')
+    if started and cam_age is None:
+        degraded.append('camera obstacles: no health report ever: lidar only')
+    if started and (inp.get('guard_flow_age') is None or inp['guard_flow_age'] > 3.0):
+        degraded.append('guard_flow silent: the collision guard is not being watched')
+    if started and (inp.get('watchdog_age') is None or inp['watchdog_age'] > 15.0):
+        degraded.append('watchdog silent')
+    if started and inp.get('fresh_report') and inp.get('vo_age') is None:
+        degraded.append('visual odometry never seen')
+    if tilt.startswith('off'):
+        degraded.append('tilt guard switched off')
     if cam_age is not None and cam_age > 5.0:
         degraded.append(f'camera obstacles: no health report for {cam_age:.0f} s: lidar only')
     elif cam.startswith('stale'):
@@ -138,6 +154,8 @@ class SafetyGate(QuietNode):
         self.watchdog = []
         self.state, self.reasons, self.speed = 'inhibited', ['starting'], 0.0
         self.since = time.monotonic()
+        self.started = self.since
+        self.tilt_at = self.guard_flow_at = self.watchdog_at = None
         self.last_lock_pub = 0.0
         # The streams' ages come from topic_watch (C++) on watchdog/fresh, 5 times a second: the
         # age of the last message and how far its stamp was behind ROS time on arrival, so a
@@ -153,8 +171,9 @@ class SafetyGate(QuietNode):
             self.create_subscription(String, 'battery/level', self._on_battery, qos)
             self.create_subscription(String, 'where_am_i/state', self._on_where, qos)
             self.create_subscription(String, 'sensors/state', self._on_sensors, qos)
-        self.create_subscription(String, 'safety_monitor/tilt_status', lambda m: setattr(self, 'tilt', m.data), 10)
-        self.create_subscription(String, 'guard_flow/status', lambda m: setattr(self, 'guard_flow', m.data), 10)
+        for qos in (10, latched):        # latched since 2026-10-12: changes only, and we may start later
+            self.create_subscription(String, 'safety_monitor/tilt_status', self._on_tilt, qos)
+        self.create_subscription(String, 'guard_flow/status', self._on_guard_flow, 10)
         self.create_subscription(String, 'camera_obstacles/health', self._on_camera, 10)
         self.create_subscription(String, 'watchdog/status', self._on_watchdog, latched)
         self.state_pub = self.create_publisher(String, 'safety/state', latched)
@@ -198,7 +217,14 @@ class SafetyGate(QuietNode):
         except ValueError:
             pass
 
+    def _on_tilt(self, m):
+        self.tilt, self.tilt_at = m.data, time.monotonic()
+
+    def _on_guard_flow(self, m):
+        self.guard_flow, self.guard_flow_at = m.data, time.monotonic()
+
     def _on_watchdog(self, m):
+        self.watchdog_at = time.monotonic()
         try:
             self.watchdog = list(json.loads(m.data).get('problems', []))
         except ValueError:
@@ -210,6 +236,10 @@ class SafetyGate(QuietNode):
              'vo_age': self._age('/vo', now, report), 'fresh_report': report, 'battery': self.battery,
              'battery_age': None if self.battery_at is None else now - self.battery_at,
              'camera_age': None if self.camera_at is None else now - self.camera_at,
+             'uptime': now - self.started,
+             'tilt_age': None if self.tilt_at is None else now - self.tilt_at,
+             'guard_flow_age': None if self.guard_flow_at is None else now - self.guard_flow_at,
+             'watchdog_age': None if self.watchdog_at is None else now - self.watchdog_at,
              'where': self.where, 'sensors': self.sensors, 'tilt': self.tilt, 'guard_flow': self.guard_flow, 'camera': self.camera,
              'watchdog': self.watchdog, 'allow_bench': bool(self.get_parameter('allow_bench').value)}
         for key, _ in LOCKS:
