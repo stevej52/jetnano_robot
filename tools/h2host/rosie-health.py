@@ -164,7 +164,9 @@ SCORE_COLS = [('drive', 'drive', lambda v: f'{v}' if v is not None else '?'),
               ('clear_p1_m', 'clear m', lambda v: '' if v is None else f'{v:.2f}'),
               ('park_cm', 'park cm', lambda v: '' if v is None else f'{v}'),
               ('park_deg', 'deg', lambda v: '' if v is None else f'{v:+d}'),
-              ('park_s', 'park s', lambda v: '' if v is None else f'{v}')]
+              ('park_s', 'park s', lambda v: '' if v is None else f'{v}'),
+              # drive.sh's crashes.json (2026-10-12): deaths + tracebacks + watchdog downs; blank = not known
+              ('crashes', 'crashes', lambda v: '' if v is None else f'{v}')]
 
 
 def score_rows(cards):

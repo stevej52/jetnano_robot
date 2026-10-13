@@ -159,9 +159,12 @@ j['ended'] = time.strftime('%Y-%m-%dT%H:%M:%S')
 j['logs'] = d
 json.dump(j, open(p, 'w'), indent=1)
 EOF
+    # what crashed during the run: process deaths, tracebacks, watchdog downs (the scorecard's column)
+    python3 "$S/drive_crashes.py" "$T0" "$(date +%s)" "$D/crashes.json" 2>/dev/null | sed 's/^/   /'
     cp "$D/drive.json" "$D/route.log" "$BAG/" 2>/dev/null
     [ -f "$D/park.log" ] && cp "$D/park.log" "$BAG/"
-    echo "   bag: $BAG (+ drive.json, route.log, park.log)"
+    [ -f "$D/crashes.json" ] && cp "$D/crashes.json" "$BAG/"
+    echo "   bag: $BAG (+ drive.json, route.log, park.log, crashes.json)"
     # the lap's scorecard against the ground zero (2026-10-07): $D/report.txt and the bag's copy
     echo "== report"
     nice python3 "$S/lap_report.py" "$BAG" "$D" 2>/dev/null | sed 's/^/   /' || echo "   (report failed)"

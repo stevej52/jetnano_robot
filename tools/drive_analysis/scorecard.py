@@ -25,6 +25,9 @@ What is scored, and from where:
   route                             route.log: SUCCEEDED/ABORTED, waypoints passed, seconds
   park_cm, park_deg, park_s         park.log: the reverse-in's "ended N cm ... off by D deg",
                                     and how long the parking took
+  crashes, crash_what               crashes.json (drive.sh, since 2026-10-12): processes that died,
+                                    tracebacks and watchdog downs during the run; None = not known
+                                    (an older drive, or the drive itself died)
 """
 
 import argparse
@@ -215,6 +218,15 @@ def parse_logs(logs_dir, n=None, day=None):
         if m:
             out['park_deg_final'] = int(m[-1][1])
         out['parked'] = 'parked' in park
+    cr = read(os.path.join(logs_dir, 'crashes.json')) if logs_dir else ''
+    if cr:
+        try:
+            c = json.loads(cr)
+            out['crashes'] = int(c.get('process_deaths', 0)) + int(c.get('tracebacks', 0)) + int(c.get('watchdog_downs', 0))
+            out['crash_what'] = ', '.join(list(c.get('deaths', {})) + [f'{k} traceback' for k in c.get('traceback_by', {})]
+                                          + [f'{k} down' for k in c.get('downs', {})])
+        except (ValueError, TypeError):
+            pass
     console = console_text(logs_dir, n)
     tp = re.search(r'== park\s+(\d+):(\d+):(\d+)', console)
     if tp and day:
@@ -307,6 +319,8 @@ def one_line(c):
         bits.append(f'clearance {c["clear_p1_m"]:.2f} m')
     if c.get('route'):
         bits.append(f'route {c["route"]}' + (f' {c["waypoints"]}' if c.get('waypoints') else ''))
+    if c.get('crashes') is not None:
+        bits.append(f'crashes {c["crashes"]}' + (f' ({c["crash_what"]})' if c.get('crash_what') else ''))
     if c.get('park_cm') is not None:
         bits.append(f'park {c["park_cm"]} cm / {c.get("park_deg_final", c["park_deg"])} deg' + (f' in {c["park_s"]} s' if c.get('park_s') else ''))
     return f'{d}: ' + '; '.join(bits)
