@@ -226,21 +226,43 @@ def nav_goal(x, y, h_deg, timeout=90, exact=False):
 class Straighten:
     """Shuffle at full lock until she faces `heading` (map frame)."""
 
-    def __init__(self, node, heading, tol, leg_max_m=LEG_MAX_M, fresh_s=0.5):
+    def __init__(self, node, heading, tol, leg_max_m=LEG_MAX_M, fresh_s=0.5, lazy=False):
         self.n, self.heading, self.tol = node, heading, tol
         self.leg_max = leg_max_m
-        self.fresh = fresh_s              # server mode spins all the time: its reads are fresh already
+        self.fresh = fresh_s              # how long map_pose spins before it reads (server: 0.05 s)
         self.plan = Shuffles(leg_max_m)
         self.pub = node.create_publisher(Twist, 'cmd_vel_park', 10)
         self.odom = None
         self.motion_lock = False
         self.person = False               # a person drove her: every move stops, for good (drive 46)
-        node.create_subscription(Odometry, 'odometry/filtered', self._on_odom, 10)
         node.create_subscription(Bool, 'e_stop_motion', lambda m: setattr(self, 'motion_lock', m.data), 10)
         for topic in ('cmd_vel_web', 'cmd_vel_teleop'):
             node.create_subscription(Twist, topic, self._on_person, 10)
-        self.buf = tf2_ros.Buffer()
-        self.tf = tf2_ros.TransformListener(self.buf, node)
+        self.odom_sub = self.buf = self.tf = None
+        if not lazy:
+            self.wake()
+
+    def wake(self, wait_s=3.0):
+        """Odometry and TF on, and wait until both have arrived. The server keeps them off while
+        it waits for a command: /tf and the 100 Hz odometry, unpacked in Python, cost it a quarter
+        of a core around the clock (2026-10-12) for a command that comes once a lap."""
+        if self.odom_sub is None:
+            self.odom = None
+            self.odom_sub = self.n.create_subscription(Odometry, 'odometry/filtered', self._on_odom, 10)
+            self.buf = tf2_ros.Buffer()       # a fresh one: nothing from before the rest
+            self.tf = tf2_ros.TransformListener(self.buf, self.n)
+        end = time.time() + wait_s
+        while time.time() < end and (self.odom is None
+                                     or not self.buf.can_transform('map', 'base_footprint', rclpy.time.Time())):
+            rclpy.spin_once(self.n, timeout_sec=0.02)
+
+    def rest(self):
+        """Odometry and TF off again (server mode, between commands)."""
+        if self.odom_sub is not None:
+            self.n.destroy_subscription(self.odom_sub)
+            self.tf.unregister()
+            self.odom_sub = self.tf = None
+            self.odom = None
 
     @property
     def lock(self):
@@ -267,6 +289,8 @@ class Straighten:
         transforms while this node is spun, and it is not spun while nav_goal runs - drive 8
         (2026-09-30) read the heading from BEFORE the reverse in, -5 deg, when she stood at +31,
         and the straightening on the spot did nothing."""
+        if self.buf is None:
+            self.wake()
         self.spin(self.fresh if fresh_s is None else fresh_s)
         for _ in range(50):
             if self.buf.can_transform('map', 'base_footprint', rclpy.time.Time()):
@@ -493,19 +517,19 @@ def main():
 
 
 def serve():
-    """Warm and waiting: /park/command {"id", "x", "y", "heading_deg", "pre", "tol_deg", "rolling"}.
-    The node is spun all the time, so the position and heading are fresh when a command comes."""
+    """Waiting: /park/command {"id", "x", "y", "heading_deg", "pre", "tol_deg", "rolling"}.
+    Odometry and TF are switched on per command (Straighten.wake/rest), about 0.1 s."""
     rclpy.init()
     node = rclpy.create_node('nav_park_server')
     _LOG['pub'] = node.create_publisher(String, 'park/log', 50)
     result_pub = node.create_publisher(String, 'park/result', 10)
     todo = []
     node.create_subscription(String, 'park/command', lambda m: todo.append(m.data), 10)
-    straighten = Straighten(node, 0.0, math.radians(6.0), LEG_MAX_OPEN_M, fresh_s=0.05)
+    straighten = Straighten(node, 0.0, math.radians(6.0), LEG_MAX_OPEN_M, fresh_s=0.05, lazy=True)
     node.get_logger().info('nav_park server: waiting on /park/command')
     try:
         while rclpy.ok():
-            rclpy.spin_once(node, timeout_sec=0.05)
+            rclpy.spin_once(node, timeout_sec=0.5)     # idle: only /park/command and the locks to hear
             if not todo:
                 continue
             try:
@@ -524,12 +548,14 @@ def serve():
             t0 = time.monotonic()
             straighten.person = False             # a new parking: whoever drove her last time is done
             try:
+                straighten.wake()
                 ok, line = park(straighten, float(cmd.get('x', 0.0)), float(cmd.get('y', 0.0)),
                                 math.radians(float(cmd.get('heading_deg', 0.0))), float(cmd.get('pre', 1.2)),
                                 math.radians(float(cmd.get('tol_deg', 6.0))), bool(cmd.get('rolling', False)))
             except Exception as exc:  # noqa: BLE001 - a failed parking must not take the server down
                 ok, line = False, f'parking failed: {type(exc).__name__}: {exc}'
             finally:
+                straighten.rest()
                 fcntl.flock(lock, fcntl.LOCK_UN)
                 lock.close()
             say('parked' if ok else 'the last leg did not succeed')
