@@ -171,7 +171,7 @@ def main(args=None):
 
     launches = subprocess.run(['pgrep', '-fc', '^/usr/bin/python3 /opt/ros/jazzy/bin/ros2 launch jetnano_navigation navigation.launch.py'],
                               capture_output=True, text=True).stdout.strip() or '0'
-    containers = subprocess.run(['pgrep', '-fc', '^/opt/ros/jazzy/lib/rclcpp_components/component_container_isolated'],
+    containers = subprocess.run(['pgrep', '-fc', '^/opt/ros/jazzy/lib/rclcpp_components/component_container_isolated .*__node:=nav2_container'],
                                 capture_output=True, text=True).stdout.strip() or '0'
     nl, nc = int(launches), int(containers)
     if nl == 0 and nc == 0:

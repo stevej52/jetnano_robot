@@ -22,7 +22,7 @@ export ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-7}
 export FASTRTPS_DEFAULT_PROFILES_FILE=${FASTRTPS_DEFAULT_PROFILES_FILE:-/etc/jetnano/fastdds_udp_only.xml}
 UNIT=jetnano-nav2.service
 LAUNCH_RE='^/usr/bin/python3 /opt/ros/jazzy/bin/ros2 launch jetnano_navigation navigation.launch.py'
-CONTAINER_RE='^/opt/ros/jazzy/lib/rclcpp_components/component_container_isolated'
+CONTAINER_RE='^/opt/ros/jazzy/lib/rclcpp_components/component_container_isolated .*__node:=nav2_container'
 HELPER_RE='^/usr/bin/python3 /home/jeston/ros2_ws/install/jetnano_navigation/lib/jetnano_navigation/(nav_helper|battery_home|nav_translator|mission|nav_park)( |$)'
 launches()   { pgrep -f "$LAUNCH_RE"; }
 containers() { pgrep -f "$CONTAINER_RE"; }

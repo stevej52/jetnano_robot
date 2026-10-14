@@ -67,7 +67,7 @@ G=$(timeout 5 ros2 lifecycle get /collision_guard 2>/dev/null | tail -1)
 [[ "$G" == active* ]] && ok "collision guard active" || bad "collision guard: ${G:-unknown}"
 
 NL=$(pgrep -fc '^/usr/bin/python3 /opt/ros/jazzy/bin/ros2 launch jetnano_navigation navigation.launch.py')
-NC=$(pgrep -fc '^/opt/ros/jazzy/lib/rclcpp_components/component_container_isolated')
+NC=$(pgrep -fc '^/opt/ros/jazzy/lib/rclcpp_components/component_container_isolated .*__node:=nav2_container')
 if [ "$NL" -eq 0 ] && [ "$NC" -eq 0 ]; then bad "Nav2 not running (nav2_ctl.sh start)"
 elif [ "$NL" -gt 1 ] || [ "$NC" -gt 1 ]; then bad "more than one Nav2 ($NL launch, $NC container): nav2_ctl.sh stop, then start"
 elif timeout 6 ros2 service call /lifecycle_manager_navigation/is_active std_srvs/srv/Trigger 2>/dev/null | grep -q "success=True"; then ok "one Nav2, active"
