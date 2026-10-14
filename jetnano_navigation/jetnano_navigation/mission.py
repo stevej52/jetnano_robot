@@ -290,7 +290,10 @@ class Mission(QuietNode):
         why = f'a person took the wheel ({topic})'
         self.say(mission, f'{why}: mission cancelled, nothing resumes')
         self.held = None                             # held by the gate or not: it must not resume on its own
+        self.queued = None                           # nor does a command that was waiting to replace it
         if mission['run'] is not None:
+            if getattr(mission['run'], 'phase', None) == 'parking':
+                self._stop_parking(mission)
             mission['run'].abandon(why)              # finished; the next tick reports it
         else:
             self._cancel(why)
@@ -306,6 +309,7 @@ class Mission(QuietNode):
             self._publish_status()
         elif do == 'cancel':
             self.held = None
+            self.queued = None                       # a replacement still waiting for the old cancel: dropped too
             self._cancel('cancelled on request')
         elif do == 'resume':
             self._resume('on request')
@@ -401,7 +405,17 @@ class Mission(QuietNode):
             self.get_logger().info(f'{mission["do"]} {mission["id"]}: Nav2 confirmed the cancel; held ({self.held["why"]})')
             self._publish_status()
             return
-        self._finish(mission, STATUS_NAMES.get(status, str(status)), '')
+        # our own cancel's reason (a timeout, a request, a replacement) goes with the result (review 2026-10-13)
+        note = mission.get('cancel_why', '') if status == GoalStatus.STATUS_CANCELED else ''
+        self._finish(mission, STATUS_NAMES.get(status, str(status)), note)
+
+    def _stop_parking(self, mission):
+        """The lap has been handed to the parking server: stop it too (review 2026-10-13: a cancel
+        or a new command during the final park ended the route while the parking carried on).
+        The server treats it as its stop-for-good; its Nav2 leg (nav_goal) is cancelled here."""
+        self.park_pub.publish(String(data=json.dumps({'do': 'cancel', 'id': mission.get('id', '')})))
+        if self.cancel_all and self.cancel_all[0].service_is_ready():
+            self.cancel_all[0].call_async(CancelGoal.Request())     # navigate_to_pose: the leg nav_park runs
 
     def _finish(self, mission, outcome, note, line=None):
         fb = mission.get('feedback') or {}
@@ -425,11 +439,14 @@ class Mission(QuietNode):
         mission = self.active
         if mission is None:
             return
+        mission['cancel_why'] = why
         if mission['run'] is not None:
             if self.held is not None and self.held['mission'] is mission:
                 mission['run'].hold()
                 mission['phase'] = mission['run'].phase
             else:
+                if getattr(mission['run'], 'phase', None) == 'parking':
+                    self._stop_parking(mission)
                 mission['run'].abandon(why)
             return
         if mission.get('handle') is None:

@@ -524,8 +524,22 @@ def serve():
     _LOG['pub'] = node.create_publisher(String, 'park/log', 50)
     result_pub = node.create_publisher(String, 'park/result', 10)
     todo = []
-    node.create_subscription(String, 'park/command', lambda m: todo.append(m.data), 10)
     straighten = Straighten(node, 0.0, math.radians(6.0), LEG_MAX_OPEN_M, fresh_s=0.05, lazy=True)
+
+    def on_command(m):
+        # {"do": "cancel"} from the mission controller (review 2026-10-13): the parking stops for good,
+        # as when a person takes the wheel; it is heard while a parking runs (its moves spin this node)
+        try:
+            d = json.loads(m.data)
+        except ValueError:
+            d = {}
+        if isinstance(d, dict) and d.get('do') == 'cancel':
+            if not straighten.person:
+                straighten.person = True
+                say('parking cancelled by the mission controller')
+            return
+        todo.append(m.data)
+    node.create_subscription(String, 'park/command', on_command, 10)
     node.get_logger().info('nav_park server: waiting on /park/command')
     try:
         while rclpy.ok():

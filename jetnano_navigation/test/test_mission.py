@@ -67,3 +67,54 @@ def test_a_person_driving_ends_the_mission_for_good():
     mission.Mission._on_person(fake2, 'cmd_vel_teleop', turn)
     assert cancelled == ['a person took the wheel (cmd_vel_teleop)']
     mission.Mission._on_person(SimpleNamespace(active=None, held=None), 'cmd_vel_web', knob)   # idle: nothing
+
+
+# ---- review of 2026-10-13 (an outside AI read mission.py; the findings that held) ----
+
+def test_a_cancel_also_drops_a_command_waiting_to_replace_the_mission():
+    from types import SimpleNamespace
+    from std_msgs.msg import String
+    cancelled = []
+    fake = SimpleNamespace(held=None, queued={'do': 'route'}, _cancel=cancelled.append)
+    mission.Mission._on_command(fake, String(data='{"do": "cancel"}'))
+    assert fake.queued is None and cancelled == ['cancelled on request']
+
+
+def test_a_person_taking_over_drops_the_queued_command_and_stops_the_parking():
+    from types import SimpleNamespace
+    from geometry_msgs.msg import Twist
+    abandoned, stopped = [], []
+    m = {'run': SimpleNamespace(phase='parking', abandon=abandoned.append), 'id': 'x1'}
+    fake = SimpleNamespace(active=m, held=None, queued={'do': 'goal'}, say=lambda mi, line: None,
+                           _stop_parking=stopped.append)
+    knob = Twist()
+    knob.linear.x = 0.3
+    mission.Mission._on_person(fake, 'cmd_vel_web', knob)
+    assert fake.queued is None and stopped == [m] and len(abandoned) == 1
+
+
+def test_a_cancel_during_the_parking_stops_the_parking_too():
+    from types import SimpleNamespace
+    abandoned, stopped = [], []
+    m = {'run': SimpleNamespace(phase='parking', abandon=abandoned.append), 'id': 'x2'}
+    fake = SimpleNamespace(active=m, held=None, _stop_parking=stopped.append)
+    mission.Mission._cancel(fake, 'cancelled on request')
+    assert stopped == [m] and abandoned == ['cancelled on request'] and m['cancel_why'] == 'cancelled on request'
+    m2 = {'run': SimpleNamespace(phase='driving', abandon=abandoned.append), 'id': 'x3'}
+    fake2 = SimpleNamespace(active=m2, held=None, _stop_parking=stopped.append)
+    mission.Mission._cancel(fake2, 'replaced by a new command')
+    assert len(stopped) == 1, 'only a parking is told to stop'
+
+
+def test_a_cancelled_goal_reports_why():
+    from types import SimpleNamespace
+    from action_msgs.msg import GoalStatus
+    finished = []
+    m = {'cancel_why': 'timeout after 45 s'}
+    fake = SimpleNamespace(active=m, held=None, _finish=lambda mi, outcome, note: finished.append((outcome, note)))
+    fut = SimpleNamespace(result=lambda: SimpleNamespace(status=GoalStatus.STATUS_CANCELED))
+    mission.Mission._on_result(fake, m, fut)
+    assert finished == [('CANCELED', 'timeout after 45 s')]
+    fut2 = SimpleNamespace(result=lambda: SimpleNamespace(status=GoalStatus.STATUS_SUCCEEDED))
+    mission.Mission._on_result(fake, m, fut2)
+    assert finished[-1] == ('SUCCEEDED', ''), 'a success carries no cancel reason'
