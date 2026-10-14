@@ -52,7 +52,10 @@ done
 # corridor north of the vacuum corner (costmap 0 at x 6.85-6.95). She ran up it at x 7.05-7.10, so turning
 # north her right side lay on the vacuum block's padding at (6.91, -7.17), where waypoint 8 is dropped: the
 # planner said "Start occupied" and Nav2 stopped her 0.6 s at the stretch swap.
-LAP="2.95 -2.40 -90  3.00 -3.40 -90  1.2 -4.4 180  -0.45 -5.6 -90  1.5 -7.3 0  4.5 -7.5 0  6.5 -7.7 20  6.92 -6.5 90  5.54 -5.49 180  3.14 -4.33 110  3.00 -1.95 90  0.85 -0.81 134"
+# Drive 61: x 6.92 alone widened her line (vacuum 26 cm, was 15-17) but the drop circle (0.7 m) still met
+# her path at (6.89, -7.17) - same "Start occupied". So waypoint 8 also goes north, -6.5 -> -6.10 (open floor
+# north of y -5.9; she ran up to ~-6.1 before turning anyway): dropped at y ~-6.8, rear ~9 cm off the padding.
+LAP="2.95 -2.40 -90  3.00 -3.40 -90  1.2 -4.4 180  -0.45 -5.6 -90  1.5 -7.3 0  4.5 -7.5 0  6.5 -7.7 20  6.92 -6.10 90  5.54 -5.49 180  3.14 -4.33 110  3.00 -1.95 90  0.85 -0.81 134"
 ROUTE="${*:-$LAP}"
 
 D="$HOME/audit/$(date +%F)/drive$N"
