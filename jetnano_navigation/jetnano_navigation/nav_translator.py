@@ -95,7 +95,12 @@ class NavTranslator(Node):
         # 0.04 -> 0.08 2026-10-09: with lock_speed_loss she held the asked speed up to 0.7 lock
         # (drive 54) but made only 0.63-0.74 of it at 0.7-0.95 lock and crawl speeds (0.18-0.22
         # m/s), where the table is flattest and a fixed add-on counts most.
-        self.lock_boost = float(self.declare_parameter('lock_throttle_boost', 0.08).value)
+        # 0.08 -> 0.04 again 2026-10-13 (drive 55, Steve chose it): at 0.08 she held 0.25 m/s in
+        # hard turns instead of 0.16, and the tyres slid out: hard-left curvature 1.29 -> 0.82 1/m
+        # (radius 0.78 -> 1.22 m). At lap speed more steering does not turn her tighter (~1 1/m
+        # from 0.8 lock up, less at full lock); only speed does. She swung wide south of the
+        # island into a wall's margin and Nav2 said "start occupied" for 20 s.
+        self.lock_boost = float(self.declare_parameter('lock_throttle_boost', 0.04).value)
         # ... and the speed table asked for more as the wheels turn: 1/scrub_factor (2026-10-09)
         self.lock_loss = float(self.declare_parameter('lock_speed_loss', 0.35).value)
         # steering added to every command: where she actually goes straight. Drives 52-54
