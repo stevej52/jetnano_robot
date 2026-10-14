@@ -32,6 +32,16 @@ from rclpy.qos import DurabilityPolicy, QoSProfile
 from std_msgs.msg import String
 
 
+def controller_listening(node, topic='/mission/command', controller='mission'):
+    """Is the mission controller itself subscribed (not just sensor_sleep)?"""
+    return any(i.node_name == controller for i in node.get_subscriptions_info_by_topic(topic))
+
+
+def taken(status, mid):
+    """Has the controller's status shown our command (its id)?"""
+    return bool(status) and status.get('id') == mid
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if not argv:
@@ -96,14 +106,30 @@ def main(argv=None):
     n.create_subscription(String, 'mission/result', on_result, 10)
     n.create_subscription(String, 'mission/log', on_log, 50)
     pub = n.create_publisher(String, 'mission/command', 10)
+    # Wait for the mission controller itself, not just any listener: sensor_sleep listens here
+    # too, and drive 58 (2026-10-14) sent its route the moment sensor_sleep matched - the
+    # controller had not, missed it (volatile), and mission_cmd waited 4 min on an idle robot.
     end = time.monotonic() + 5.0
-    while pub.get_subscription_count() == 0 and time.monotonic() < end:
+    while not controller_listening(n) and time.monotonic() < end:
         rclpy.spin_once(n, timeout_sec=0.1)
-    if pub.get_subscription_count() == 0:
+    if not controller_listening(n):
         print('no mission controller is listening (is Nav2 up? navigation.launch.py starts it)', flush=True)
         return 3
+    end = time.monotonic() + 0.5                     # matched: let the reliable handshake finish
+    while time.monotonic() < end:
+        rclpy.spin_once(n, timeout_sec=0.05)
     pub.publish(String(data=json.dumps(cmd)))
     print(f'-> {json.dumps(cmd)}', flush=True)
+    if do in ('goal', 'route'):
+        # The controller does not de-duplicate ids, so send again only if it is still idle
+        # without ours: then the first one was lost.
+        end = time.monotonic() + 3.0
+        while time.monotonic() < end and not taken(got['status'], mid) and got['result'] is None:
+            rclpy.spin_once(n, timeout_sec=0.1)
+        s = got['status'] or {}
+        if not taken(s, mid) and got['result'] is None and s.get('mission') == 'idle':
+            print('   the controller did not take it in 3 s: sending again', flush=True)
+            pub.publish(String(data=json.dumps(cmd)))
     if do in ('cancel', 'resume', 'status'):
         end = time.monotonic() + 2.0
         while time.monotonic() < end:
