@@ -209,6 +209,10 @@ controller_server:
 local_costmap:
   local_costmap:
     ros__parameters:
+      # 0.3 (default) -> 0.5 2026-10-14: the controller transforms each new path's end pose with
+      # THIS tolerance; drive 62 failed "Failed to transform end pose to global frame" 2 ms into
+      # its first goal - the same goal-start TF lag as the controller's 0.2 -> 0.5 (drives 57, 59)
+      transform_tolerance: 0.5
       # as often as the controller steers (20 Hz), so it never works from a map more than
       # 50 ms old; nvblox's grid comes at 40 Hz, the lidar at 7.9. Bench, no goal, nvblox
       # layer on (2026-09-27): whole navigation stack 111 % of a core at 5 Hz, 112 % at 10,
@@ -275,6 +279,7 @@ local_costmap:
 global_costmap:
   global_costmap:
     ros__parameters:
+      transform_tolerance: 0.5   # 0.3 (default) -> 0.5 2026-10-14, as the local costmap's (the planner's start pose)
       update_frequency: 1.0
       publish_frequency: 1.0
       global_frame: map
