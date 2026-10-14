@@ -81,7 +81,7 @@ def test_lowsoon_is_the_first_three_notes():
 
 
 def test_new_moods_are_made_and_have_english():
-    for mood in ('uhoh', 'beeps', 'lowbat', 'lowsoon'):
+    for mood in ('uhoh', 'beeps', 'lowbat', 'lowsoon', 'inmyway'):
         assert mood in voice.MOODS and mood in voice.ENGLISH
         assert np.isfinite(voice.MOODS[mood](0.0)).all()
 

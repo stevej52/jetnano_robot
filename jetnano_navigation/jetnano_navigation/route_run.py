@@ -61,6 +61,8 @@ STALL_GAIN_M = 0.25     # (house-tour sim 2026-10-05: Nav2 can loop on recoverie
 STILL_M = 0.05          # not moved this far = standing still
 STILL_S = 3.0           # standing still this long with the route live -> pictures
 SNAPS_MAX = 6
+IN_MY_WAY_TRIES = (1, 4)  # detour refusals that get "Hey! You're in my way!" (voice loaded only)
+IN_MY_WAY_GAP_S = 15.0  # ... at most this often
 # a bump (2026-10-06, drives 43-46: the chair, the robot vacuum - pushed 3-4 times in a row): the
 # motion check stops her when she pushes without moving; the spot she pushed at goes on the
 # planner's map as a small box (grid_to_points, 10 min) and the route carries on round it
@@ -104,6 +106,7 @@ class RouteRun:
         self.still = {'pose': None, 'since': None, 'snapped': False}
         self.snaps = {'pending': None, 'why': '', 'n': 0}
         self.last_line = 0.0
+        self.last_in_my_way = -1e9
         self.cmds = []                    # (throttle, steer) the driver got, for the result line
         self.locked_during = False
         # the parking after the lap (2026-10-04): handed over 0.4 m before the lap's end, rolling,
@@ -626,6 +629,11 @@ class RouteRun:
                      f'- cancelling (try {self.detours} of {DETOUR_TRIES})')
             if self.detours == 1:
                 self._snap(f'detour at {p[0]:+.2f}, {p[1]:+.2f}')
+            # "Hey! You're in my way!" (Steve, 2026-10-14: Diane sat in the corridor, drive 63) - on
+            # the 1st and 4th refusal, at most every IN_MY_WAY_GAP_S; heard only with the voice loaded
+            if self.detours in IN_MY_WAY_TRIES and now - self.last_in_my_way >= IN_MY_WAY_GAP_S:
+                self.last_in_my_way = now
+                self.n.mood('inmyway')
             if self.detours >= DETOUR_TRIES:
                 self.say('the way stays blocked: the rescue takes over')
                 self.detours = 0

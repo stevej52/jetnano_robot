@@ -146,6 +146,9 @@ class Node:
     def speak(self, text):
         self.spoken.append(text)
 
+    def mood(self, name):
+        self.moods = getattr(self, 'moods', []) + [name]
+
     def load_voice(self):
         self.voice_loads += 1
 
@@ -236,6 +239,39 @@ def test_detour_cancels_waits_and_resends_the_rest(monkeypatch):
     run.tick(time.monotonic(), False, [])
     assert len(n.through.sent) == 2 and run.phase == 'driving'
     assert len(n.through.sent[1][0].poses) == 3      # the same stretch, all three still to go
+
+
+def test_a_blocked_way_says_in_my_way_on_the_first_and_fourth_refusal(monkeypatch):
+    """Drive 63: Diane sat in the corridor; Steve: "beep ... Hey! You're in my way!"."""
+    monkeypatch.setattr(route_run, 'DETOUR_WAIT_S', 0.0)
+    n, run, said = make()
+    t = time.monotonic()
+    run.tick(t, False, [])
+    for k in range(1, 6):                            # five refusals, ~5.5 s apart as on the floor
+        goal, h, fb_cb = n.through.sent[-1]
+        fb_cb(feedback(h, 0.5, 0.0, 30.0, 3))
+        t += 5.5
+        run.tick(t, False, [])
+        assert run.detours == k
+        h.result_fut.finish(result(6))
+        run.tick(t, False, [])
+    assert n.moods == ['inmyway', 'inmyway']         # 1st and 4th (16.5 s apart), not 2nd/3rd/5th
+
+
+def test_in_my_way_waits_its_gap(monkeypatch):
+    monkeypatch.setattr(route_run, 'DETOUR_WAIT_S', 0.0)
+    monkeypatch.setattr(route_run, 'IN_MY_WAY_GAP_S', 60.0)
+    n, run, said = make()
+    t = time.monotonic()
+    run.tick(t, False, [])
+    for k in range(4):
+        goal, h, fb_cb = n.through.sent[-1]
+        fb_cb(feedback(h, 0.5, 0.0, 30.0, 3))
+        t += 5.5
+        run.tick(t, False, [])
+        h.result_fut.finish(result(6))
+        run.tick(t, False, [])
+    assert n.moods == ['inmyway']                    # the 4th came 16.5 s later: inside the gap
 
 
 def test_gate_hold_and_resume_send_what_is_left():

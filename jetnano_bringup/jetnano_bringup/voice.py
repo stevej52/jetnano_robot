@@ -52,6 +52,9 @@ different. The moods and where the sounds node uses them:
               then a longer one a third down, wobbling      memory low, Wi-Fi lost (the watchdog)
     beeps     beep-beep-beep, the three high beeps that     whatever the uh-oh was is back
               end "on"                                      (the watchdog)
+    inmyway   "HEY! - you're-in-my-WAY!": a bright yelp     her way is blocked (the mission's detour
+              up, then four quick beeps and a long one      guard; Steve 2026-10-14, after Diane sat
+              falling                                       in the corridor on drive 63)
 
 ENGLISH below is what each mood means in words: the sounds node says that
 instead in English mode, and listen uses it for "Rosie, in English".
@@ -92,6 +95,7 @@ ENGLISH = {
     'nope': ["No."],
     'uhoh': ["Uh oh."],
     'beeps': ["It's back."],
+    'inmyway': ["Hey! You're in my way!"],
     'lowbat': ["My battery is low.", "I need a charge."],
     'lowsoon': ["My battery is getting low.", "I could use a charge soon."],
 }
@@ -385,11 +389,28 @@ def nope(j):
                                 bright=0.3)])
 
 
+def inmyway(j):
+    """"Hey! You're in my way!" (Steve, 2026-10-14: "super beeps that say ..."): the phrase's
+    rhythm in beeps - a bright yelp up for "HEY!", a breath, four quick beeps for "you're in
+    my", and a long "WAY!" falling with a wobble. Brighter, cleaner and faster than her chatter,
+    so it reads as a call, not a remark."""
+    k = 2 ** (j / 12)
+
+    def blip(f, s):
+        return tone(flat(BASE * k * f), s, vibrato_depth=0.0, bright=0.9, decay=0.5)
+    return np.concatenate([
+        tone(glide(BASE * k * 1.5, BASE * k * 2.0, 0.4), 0.18, vibrato_depth=0.0, bright=0.9, decay=0.4),
+        rest(0.12),
+        blip(1.26, 0.075), rest(0.02), blip(1.12, 0.065), rest(0.02), blip(1.5, 0.075), rest(0.025),
+        tone(glide(BASE * k * 2.0, BASE * k * 1.33, 1.4), 0.34, vibrato_hz=7.0, vibrato_depth=0.03,
+             bright=0.9, decay=0.6)])
+
+
 MOODS = {'hello': hello, 'ok': ok, 'no': no, 'alarm': alarm, 'sad': sad,
          'happy': happy, 'curious': curious, 'sleepy': sleepy, 'hm': hm, 'huh': huh,
          'bye': bye, 'chat': lambda j: chat(random.randrange(4, 9), j), 'laugh': laugh, 'on': on, 'off': off,
          'story': lambda j: story(3, j), 'boop': boop, 'yes': yes, 'nope': nope,
-         'uhoh': uhoh, 'beeps': beeps, 'lowbat': lowbat, 'lowsoon': lowsoon}
+         'uhoh': uhoh, 'beeps': beeps, 'lowbat': lowbat, 'lowsoon': lowsoon, 'inmyway': inmyway}
 
 
 def write_wav(path, samples, volume=0.6):

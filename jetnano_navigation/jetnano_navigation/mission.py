@@ -122,6 +122,7 @@ class Mission(QuietNode):
         self.ask_cli = self.create_client(Trigger, '/nav_helper/ask')
         self.helper_params = self.create_client(SetParameters, '/nav_helper/set_parameters')
         self.speak_pub = self.create_publisher(String, 'speak', 10)
+        self.mood_pub = self.create_publisher(String, 'say', 10)        # a mood for the sounds node
         # where she bumped into something (route_run): grid_to_points keeps it on the planner's map
         self.bump_pub = self.create_publisher(PointStamped, 'bump', 10)
         # the parking server (nav_park --serve): a lap's end is handed to it, rolling
@@ -222,6 +223,12 @@ class Mission(QuietNode):
         """Her voice, if the voice stack is loaded (load_voice() asks for it; ~15 s to come up)."""
         self.get_logger().info(f'says: {text}')
         self.speak_pub.publish(String(data=text))
+
+    def mood(self, name):
+        """One of her sounds (voice.MOODS), if the voice stack is loaded - nobody plays it otherwise,
+        and the sounds node's quiet mode and mute still hold."""
+        self.get_logger().info(f'sound: {name}')
+        self.mood_pub.publish(String(data=name))
 
     def load_voice(self):
         """Load the voice stack for the rescue's words (as meet does), off the executor thread:
