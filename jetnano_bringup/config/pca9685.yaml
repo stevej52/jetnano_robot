@@ -86,14 +86,16 @@
       # nav_translator's steer_trim -0.20 put it there for Nav2 only. And the
       # front servo HUNTS at exactly 81 - the buzz after every stop: by her mic
       # 7-10 dB at 81 seven times out of seven, 3.8-4.5 (the room) at 1, 2, 3, 4
-      # and 6 deg right and at 84.7 after a left or a right turn. timeout below
-      # brought every stop, by any driver, back to 81. steer_trim is 0 now.
+      # and 6 deg right and at 84.7 after a left or a right turn (bench, no driving).
+      # timeout below brings every stop, by any driver, back to home. steer_trim is 0
+      # now. After a real drive (57) 84.7 buzzes too when the wheels come back from
+      # the left: stop_settle (0.6 s past it on the right, then back) quiets that.
       home: 84.7
       home_on_start: true
       # On carpet the tyres wind up and the servo chatters holding them. The
       # driver can do one +-relax_deg wiggle relax_after_s after settling, but
       # by her own mic (2026-09-27) no fixed wiggle cures it every time, so it
-      # is off. (The chatter was home 81 itself, see above.)
+      # is off. (See above: home and stop_settle.)
       relax_deg: 0.0
       relax_after_s: 0.7
       # full lock 2 deg in from 40 / 125 (Steve, 2026-10-09): 42.7 deg left, 38.3 right of home

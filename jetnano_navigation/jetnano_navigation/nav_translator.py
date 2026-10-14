@@ -111,7 +111,7 @@ class NavTranslator(Node):
         # while the plan ran down the middle.
         # -0.20 -> 0 on 2026-10-14: the servos' homes moved there instead (pca9685.yaml, front
         # 81 -> 84.7, rear 87 -> 83.3), so every driver goes straight at 0 and every stop rests
-        # off the front servo's hunting spot at 81 (the buzz). Nav2's angles are unchanged.
+        # off the front servo's hunting spot at 81 (one buzz). Nav2's angles are unchanged.
         self.steer_trim = float(self.declare_parameter('steer_trim', 0.0).value)
         self.steer = 0.0
         self.trim = 0.0

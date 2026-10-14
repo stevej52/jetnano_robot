@@ -91,9 +91,8 @@ def generate_launch_description():
             'cliff', default_value='false',
             description='also feed the guard the cliff sensors (sensors.launch.py use_cliff:=true)'),
         DeclareLaunchArgument(
-            'stop_settle', default_value='false',
-            description='after every stop, steer past centre and back (off since the 2026-10-14 '
-                        'home move cured the buzz)'),
+            'stop_settle', default_value='true',
+            description='after every stop, steer past centre on the quiet side and back (the buzz)'),
         DeclareLaunchArgument(
             'i2c_bus', default_value='7',
             description='I2C bus the PCA9685 is on. Was 1 on the Jetson Nano; '
@@ -130,8 +129,8 @@ def generate_launch_description():
 
         # After every stop, past centre on the steering's quiet side and back: the front
         # servo buzzes when it centres from the other side (stop_settle.py, 2026-10-09).
-        # Off by default since 2026-10-14: the buzz was the front servo hunting at home 81
-        # itself, and every stop went back there; home is 84.7 now (pca9685.yaml).
+        # 2026-10-14: switched off in the morning (home 81 hunted at rest, home moved to 84.7)
+        # and back on after drive 57: from the left, 84.7 buzzes too; 0.6 s past it cures it.
         Node(
             condition=IfCondition(PythonExpression([
                 "'", LaunchConfiguration('stop_settle'), "' == 'true' and '", simulate, "' != 'true'"])),
@@ -141,6 +140,9 @@ def generate_launch_description():
             respawn=True,
             respawn_delay=3.0,
             output='screen',
+            # its one line per stop reached the journal minutes late (2026-10-14), so drive
+            # 56's "only its startup line" meant nothing: line-buffer it, as Nav2 does
+            additional_env={'RCUTILS_LOGGING_BUFFERED_STREAM': '1', 'PYTHONUNBUFFERED': '1'},
         ),
 
         # The fast safety watchers in one C++ process (2026-09-27: the three
