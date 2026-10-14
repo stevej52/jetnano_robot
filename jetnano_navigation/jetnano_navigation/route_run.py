@@ -120,6 +120,8 @@ class RouteRun:
         self.via_first = False            # the stretch in hand starts with a via point, not a waypoint
         self.skipped = []                 # waypoint numbers the rescue gave up on
         self.rescue_return = None         # the rescue phase to go back to after a gate hold
+        self.held_at = None               # when that hold began (the rescue's deadlines wait it out)
+        self.rescue_after_hold = False    # a hold arrived while the rescue's own cancel was in flight
         self.bumps = 0
 
     # ---------------------------------------------------------------- start --
@@ -171,9 +173,15 @@ class RouteRun:
 
     # ------------------------------------------------------------- stretches --
 
-    def send(self, stretch):
-        """A stretch (or what is left of one) to Nav2; a goal already running is preempted."""
-        self.stretch = list(stretch)
+    def send(self, stretch, via=None):
+        """A stretch (or what is left of one) to Nav2; a goal already running is preempted.
+        via: the stretch starts with Claude's via point. None = a resend of what was left: the
+        via point is still first if she had not reached it (the same stretch, whole)."""
+        stretch = list(stretch)
+        if via is None:
+            via = self.via_first and bool(stretch) and len(stretch) == len(self.stretch) and stretch[0] == self.stretch[0]
+        self.via_first = via
+        self.stretch = stretch
         self.fb.update(left=len(self.stretch), goal=None, dist=float('nan'))   # no stale distance (drive 15)
         self.best_dist, self.best_t = float('inf'), time.monotonic()           # a fresh stretch: a fresh stall clock
         self.phase = 'sending'
@@ -244,6 +252,22 @@ class RouteRun:
         left = self.fb['left']
         return self.stretch[len(self.stretch) - left:] if 0 < left <= len(self.stretch) else list(self.stretch)
 
+    def _left(self):
+        """remaining() without Claude's via point while she has not reached it: the rescue counts,
+        numbers and skips ROUTE waypoints. (Review 2026-10-13: _skip dropped the unreached via point
+        instead of the blocked waypoint, numbered it one too low, and left via_first set, so the next
+        waypoint she passed went unrecorded.)"""
+        rem = self.remaining()
+        if self.via_first and rem and len(rem) == len(self.stretch):
+            return rem[1:]
+        return rem
+
+    def _waypoint_passed(self):
+        """A route waypoint is behind her: the next blockage gets a fresh retrace, and the detour
+        guard counts per waypoint, not across the lap (review 2026-10-13)."""
+        self.rescue['retraced'] = False
+        self.detours = 0
+
     def on_feedback(self, f):
         if self.fb['goal'] is None or bytes(f.goal_id.uuid) != self.fb['goal']:
             return                   # the stretch before, preempted: its last words do not count
@@ -259,6 +283,7 @@ class RouteRun:
             num = self.done_before + len(self.stretch) - self.fb['left']
             self.passed.append((num, time.monotonic() - self.t0))
             self.say(f'{time.monotonic() - self.t0:5.1f} s  passed waypoint {num}')
+            self._waypoint_passed()
 
     def on_result(self, handle, fut):
         if self.done or handle is not self.handle:
@@ -286,6 +311,7 @@ class RouteRun:
                 num = self.done_before + len(self.stretch)
                 self.passed.append((num, time.monotonic() - self.t0))
                 self.say(f'{time.monotonic() - self.t0:5.1f} s  reached waypoint {num}')
+                self._waypoint_passed()
                 self.done_before += len(self.stretch)
                 self.k += 1
                 self.handle = None
@@ -344,7 +370,7 @@ class RouteRun:
     def _rescue(self, why):
         """Nav2 could not get there: the next step of the rescue, from where she stands."""
         r = self.rescue
-        remaining = self.remaining()
+        remaining = self._left()          # an unreached via point is dropped: it did not get her through
         if not remaining:
             return self.finish('ABORTED', why)
         num = self.done_before + len(self.stretch) - len(remaining) + 1
@@ -388,7 +414,7 @@ class RouteRun:
         except ValueError:
             out = {'error': msg}
         advice = out.get('advice')
-        remaining = self.pending or self.remaining()
+        remaining = self.pending or self._left()
         if not advice:
             self.say(f'rescue: no usable advice ({out.get("error") or "unreadable answer"}); pictures in {out.get("dir", "?")}')
             return self._skip(remaining, 'no advice')
@@ -408,9 +434,8 @@ class RouteRun:
             nx, ny, _ = remaining[0]
             self.say(f'rescue: going via ({vx:+.2f}, {vy:+.2f})')
             self.done_before += len(self.stretch) - len(remaining)
-            self.send([(vx, vy, math.atan2(ny - vy, nx - vx))] + remaining)
+            self.send([(vx, vy, math.atan2(ny - vy, nx - vx))] + remaining, via=True)
             self.done_before -= 1                                   # the via point is not a waypoint
-            self.via_first = True
         elif action == 'retrace':
             self.n.set_retrace(float(advice.get('retrace_m') or RETRACE_M))
             self.rescue['future'] = self.n.retrace_cli.call_async(Trigger.Request()) if self.n.retrace_cli.service_is_ready() else None
@@ -450,7 +475,7 @@ class RouteRun:
             elif now >= self.deadline:
                 r['future'] = None
                 self.say(f'rescue: no answer in {ASK_WAIT_S:.0f} s')
-                self._skip(self.pending or self.remaining(), 'no answer')
+                self._skip(self.pending or self._left(), 'no answer')
         elif self.phase == 'rescue wait':
             if now >= self.deadline:
                 pending, self.pending = self.pending, None
@@ -466,6 +491,10 @@ class RouteRun:
             self.phase = 'held' if why == 'hold' else 'detour wait'
             self.deadline = time.monotonic() + DETOUR_WAIT_S
             return
+        if why == 'hold' and self.after_cancel == 'rescue':
+            # the gate's hold arrived while the rescue's cancel was in flight: hold now, rescue on
+            # resume (it used to turn into a plain resend, and the rescue waited another stall)
+            self.rescue_after_hold = True
         self.after_cancel = why
         self.phase = 'cancelling'
         self.handle.cancel_goal_async()
@@ -477,6 +506,7 @@ class RouteRun:
             return self.finish('REFUSED', 'the safety gate stopped her before the start')
         if self.phase.startswith('rescue'):               # nothing of Nav2's runs; the mux lock holds her
             self.rescue_return, self.phase = self.phase, 'held'
+            self.held_at = time.monotonic()
             self.say('rescue paused: the safety gate holds her')
             return
         self._cancel_then('hold', self.remaining())
@@ -484,8 +514,17 @@ class RouteRun:
     def resume(self):
         if self.phase == 'held' and self.rescue_return:
             self.phase, self.rescue_return = self.rescue_return, None
+            # the back-out and Claude's answer get the time the hold took from them (review
+            # 2026-10-13); a wait does not: she was held still, which is waiting
+            if self.phase in ('rescue retrace', 'rescue ask') and self.deadline is not None and self.held_at is not None:
+                self.deadline += time.monotonic() - self.held_at
+            self.held_at = None
             self.say(f'rescue resumes ({self.phase})')
             return
+        if self.phase == 'held' and self.rescue_after_hold:
+            self.rescue_after_hold = False
+            self.pending = None
+            return self._rescue('the way stayed blocked')
         if self.phase == 'held' and self.pending:
             self.done_before += len(self.stretch) - len(self.pending)
             self.send(self.pending)

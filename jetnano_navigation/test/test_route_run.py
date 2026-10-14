@@ -463,3 +463,115 @@ def test_a_bump_while_reversing_is_marked_behind_and_too_many_end_the_route(monk
         run.tick(time.monotonic(), False, [])
     assert n.bumps[0] == (-0.4, 0.0)                           # behind her: she faced +x
     assert run.done and run.outcome == 'ABORTED' and 'bumped' in run.line
+
+
+# ---- review of 2026-10-13 (an outside AI read route_run.py; these are the findings that held) ----
+
+def _to_via(n, run):
+    """The rescue sequence up to Claude's via point being sent: sent[2] = [via, wp2, wp3]."""
+    import json
+    from action_msgs.msg import GoalStatus
+    run.tick(time.monotonic(), False, [])
+    goal, h1, fb_cb = n.through.sent[0]
+    fb_cb(feedback(h1, 2.0, 0.0, 6.0, 2))                # waypoint 1 passed
+    h1.result_fut.finish(result(GoalStatus.STATUS_ABORTED))
+    n.retrace_cli.calls[0].finish(Reply(True, 'backed out'))
+    run.tick(time.monotonic(), False, [])
+    n.through.sent[1][1].result_fut.finish(result(GoalStatus.STATUS_ABORTED))
+    advice = {'advice': {'what': 'a chair', 'action': 'via', 'x': 1.5, 'y': 1.5, 'why': 'round it', 'say': ''}}
+    n.ask_cli.calls[0].finish(Reply(True, json.dumps(advice)))
+    run.tick(time.monotonic(), False, [])
+    assert len(n.through.sent) == 3 and run.via_first
+
+
+def test_skip_before_the_via_point_skips_the_blocked_waypoint_not_the_via_point():
+    import json
+    from action_msgs.msg import GoalStatus
+    n, run, said = make()
+    _to_via(n, run)
+    n.through.sent[2][1].result_fut.finish(result(GoalStatus.STATUS_ABORTED))   # aborted short of the via point
+    assert run.phase == 'rescue ask'                     # retrace already used on this waypoint
+    n.ask_cli.calls[1].finish(Reply(True, json.dumps({'advice': {'what': 'a wall', 'action': 'give_up', 'why': '', 'say': ''}})))
+    run.tick(time.monotonic(), False, [])
+    assert any('skipping waypoint 2' in s for s in said), said[-3:]
+    assert [p.pose.position.y for p in n.through.sent[3][0].poses] == [3.0] and \
+        [p.pose.position.x for p in n.through.sent[3][0].poses] == [0.0], 'on to waypoint 3, not back to 2'
+    assert not run.via_first
+    n.through.sent[3][1].result_fut.finish(result(GoalStatus.STATUS_SUCCEEDED))
+    assert any('reached waypoint 3' in s for s in said) and run.skipped == [2]
+
+
+def test_a_resend_before_the_via_point_keeps_it_and_its_flag(monkeypatch):
+    monkeypatch.setattr(route_run, 'DETOUR_WAIT_S', 0.0)
+    n, run, said = make()
+    _to_via(n, run)
+    goal3, h3, fb3 = n.through.sent[2]
+    run.hold()                                            # the gate, before the via point
+    h3.result_fut.finish(result(6))
+    run.resume()
+    xs = [(round(p.pose.position.x, 1), round(p.pose.position.y, 1)) for p in n.through.sent[3][0].poses]
+    assert xs == [(1.5, 1.5), (3.0, 3.0), (0.0, 3.0)] and run.via_first
+    goal4, h4, fb4 = n.through.sent[3]
+    fb4(feedback(h4, 1.5, 1.5, 4.0, 2))                   # the via point: not a waypoint
+    fb4(feedback(h4, 3.0, 3.0, 2.0, 1))
+    assert [num for num, _ in run.passed] == [1, 2]
+
+
+def test_a_successful_retrace_does_not_use_up_the_next_waypoints_retrace():
+    from action_msgs.msg import GoalStatus
+    n, run, said = make()
+    run.tick(time.monotonic(), False, [])
+    goal, h1, fb_cb = n.through.sent[0]
+    fb_cb(feedback(h1, 2.0, 0.0, 6.0, 2))                # waypoint 1 passed
+    h1.result_fut.finish(result(GoalStatus.STATUS_ABORTED))
+    n.retrace_cli.calls[0].finish(Reply(True, 'backed out'))
+    run.tick(time.monotonic(), False, [])
+    goal2, h2, fb2 = n.through.sent[1]
+    fb2(feedback(h2, 3.0, 3.0, 3.0, 1))                   # the retry worked: waypoint 2 passed
+    h2.result_fut.finish(result(GoalStatus.STATUS_ABORTED))   # stuck again, short of waypoint 3
+    assert run.phase == 'rescue retrace' and len(n.retrace_cli.calls) == 2, 'a fresh retrace, not straight to Claude'
+
+
+def test_the_detour_count_starts_again_at_each_waypoint(monkeypatch):
+    monkeypatch.setattr(route_run, 'DETOUR_WAIT_S', 0.0)
+    n, run, said = make()
+    run.tick(time.monotonic(), False, [])
+    goal, h1, fb_cb = n.through.sent[0]
+    fb_cb(feedback(h1, 0.5, 0.0, 30.0, 3))
+    run.tick(time.monotonic() + 1.5, False, [])
+    assert run.detours == 1
+    h1.result_fut.finish(result(6))
+    run.tick(time.monotonic() + 3.0, False, [])
+    goal2, h2, fb2 = n.through.sent[1]
+    fb2(feedback(h2, 3.0, 0.2, 5.0, 2))                   # waypoint 1 passed
+    assert run.detours == 0
+
+
+def test_the_rescue_deadlines_wait_out_a_gate_hold():
+    from action_msgs.msg import GoalStatus
+    n, run, said = make()
+    run.tick(time.monotonic(), False, [])
+    n.through.sent[0][1].result_fut.finish(result(GoalStatus.STATUS_ABORTED))
+    assert run.phase == 'rescue retrace'
+    run.hold()
+    run.deadline -= 70.0                                  # as if the hold had lasted 70 s ...
+    run.held_at -= 70.0
+    run.resume()
+    run.tick(time.monotonic(), False, [])
+    assert run.phase == 'rescue retrace' and len(n.through.sent) == 1, 'the back-out still has its 60 s'
+
+
+def test_a_hold_during_the_rescues_own_cancel_still_rescues_on_resume():
+    n, run, said = make()
+    run.tick(time.monotonic(), False, [])
+    goal, h1, fb_cb = n.through.sent[0]
+    fb_cb(feedback(h1, 1.0, 0.0, 6.0, 3))
+    t = time.monotonic()
+    run.tick(t, False, [])                                # the stall clock starts at 6.0 m
+    run.tick(t + route_run.STALL_S + 1, False, [])        # no progress for a minute: the rescue's cancel
+    assert run.phase == 'cancelling' and run.after_cancel == 'rescue'
+    run.hold()                                            # the gate, before Nav2 confirmed
+    h1.result_fut.finish(result(6))
+    assert run.phase == 'held'
+    run.resume()
+    assert run.phase == 'rescue retrace', 'the rescue, not a plain resend'
