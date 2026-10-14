@@ -201,3 +201,18 @@ def test_the_lap_ends_at_the_arc_start():
     there, _, _, _ = nav_park.at_arc_start((2.0, -2.0, math.radians(135)), px, py, h)
     assert not there
     assert nav_park.at_arc_start(None, px, py, h)[0] is False
+
+
+def test_a_frozen_map_pose_is_no_pose():
+    """Review 2026-10-13: the reverse in steered by the latest map -> base_footprint even when
+    map -> odom had stopped updating (2026-09-30 had one): the safety gate does not watch it."""
+    from geometry_msgs.msg import TransformStamped
+    from jetnano_navigation.nav_park import STALE_TF_S, pose_of
+    ts = TransformStamped()
+    ts.header.stamp.sec, ts.header.stamp.nanosec = 1000, 0
+    ts.transform.translation.x, ts.transform.translation.y = 1.0, 2.0
+    ts.transform.rotation.w = 1.0
+    assert pose_of(ts, 1000.1) == (1.0, 2.0, 0.0)
+    assert pose_of(ts, 1000.0 + STALE_TF_S + 0.01) is None
+    ts.header.stamp.sec = 0                               # no stamp at all: not judged by age
+    assert pose_of(ts, 5000.0) == (1.0, 2.0, 0.0)

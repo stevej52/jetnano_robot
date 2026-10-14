@@ -85,6 +85,11 @@ REVERSE_GAIN, REVERSE_STEER_MAX = 4.0, 0.5 * STEER
 REVERSE_DONE_M = 0.05     # close enough to the spot
 REVERSE_SPEED_MPS = 0.1   # a crawl, for the timeout
 REVERSE_LOOKAHEAD_M = 0.3  # the tail aims at the point this far down the spot's line from her
+# The map pose (slam_toolbox's map -> odom at 50 Hz, the EKF's odom -> base) older than this is
+# frozen: a lookup at the latest time returns the last one forever, and the safety gate does not
+# watch map -> odom (2026-09-30 had a stale map -> odom). Reversing on it steers blind.
+STALE_TF_S = 0.5
+STALE_STOP_S = 2.0         # frozen this long during the reverse in: stop it
 
 
 _LOG = {'pub': None, 'id': ''}     # server mode: every line also goes to /park/log
@@ -154,6 +159,15 @@ def at_arc_start(here, px, py, heading):
         return False, px, py, 0.0
     qx, qy = arc_start(px, py, here[2], delta)
     return math.hypot(qx - here[0], qy - here[1]) <= AT_ARC_START_M, qx, qy, delta
+
+
+def pose_of(ts, now_s, max_age_s=STALE_TF_S):
+    """(x, y, heading) from a TransformStamped, or None when its stamp is more than max_age_s old."""
+    stamp = ts.header.stamp.sec + ts.header.stamp.nanosec * 1e-9
+    if stamp > 0 and now_s - stamp > max_age_s:
+        return None
+    t, q = ts.transform.translation, ts.transform.rotation
+    return t.x, t.y, math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
 
 
 def reverse_steer(err_rad):
@@ -294,12 +308,13 @@ class Straighten:
         self.spin(self.fresh if fresh_s is None else fresh_s)
         for _ in range(50):
             if self.buf.can_transform('map', 'base_footprint', rclpy.time.Time()):
-                tr = self.buf.lookup_transform('map', 'base_footprint', rclpy.time.Time()).transform
-                q = tr.rotation
-                return (tr.translation.x, tr.translation.y,
-                        math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z)))
+                ts = self.buf.lookup_transform('map', 'base_footprint', rclpy.time.Time())
+                return pose_of(ts, self.now_s())               # None when frozen: nothing to steer by
             self.spin(0.1)
         return None
+
+    def now_s(self):
+        return self.n.get_clock().now().nanoseconds * 1e-9
 
     def map_heading(self):
         pose = self.map_pose()
@@ -359,24 +374,34 @@ class Straighten:
     def reverse_in(self, x, y):
         """Reverse into (x, y) along the spot's line, the tail aimed down the line (step 3 of
         the plan). -> (metres from the spot, heading error in rad) at the end, or None at a
-        motion lock."""
+        motion lock or a frozen map pose (stop_why says which)."""
+        self.stop_why = ''
         pose = self.map_pose()
         if pose is None:
+            self.stop_why = 'no up-to-date map position'
             return None
         _, along0, _ = reverse_aim(pose[0], pose[1], pose[2], x, y, self.heading)
         timeout = abs(along0) / REVERSE_SPEED_MPS + 10.0
         t0 = time.time()
         least = along0
         m = Twist()
+        stale_since = None
         self.send(0.0, 0.0, 0.4)                      # wheels straight before moving
         while not self.lock and time.time() - t0 < timeout:
             self.spin(0.05)
             if not self.buf.can_transform('map', 'base_footprint', rclpy.time.Time()):
                 continue
-            tr = self.buf.lookup_transform('map', 'base_footprint', rclpy.time.Time()).transform
-            q = tr.rotation
-            px, py = tr.translation.x, tr.translation.y
-            h = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+            pose = pose_of(self.buf.lookup_transform('map', 'base_footprint', rclpy.time.Time()), self.now_s())
+            if pose is None:                          # the map pose froze: stand, and give up if it stays so
+                stale_since = stale_since or time.time()
+                self.pub.publish(Twist())
+                if time.time() - stale_since > STALE_STOP_S:
+                    self.stop_why = 'the map position stopped updating'
+                    say(f'   {self.stop_why}: stopping the reverse')
+                    break
+                continue
+            stale_since = None
+            px, py, h = pose
             steer, along, dist = reverse_aim(px, py, h, x, y, self.heading)
             if along <= REVERSE_DONE_M or dist <= REVERSE_DONE_M:
                 break
@@ -387,7 +412,7 @@ class Straighten:
             m.linear.x, m.angular.z = -THROTTLE_REV, steer
             self.pub.publish(m)
         self.send(0.0, 0.0, 0.5)                      # stop, wheels straight; let her settle
-        if self.lock:
+        if self.lock or self.stop_why:
             return None
         pose = self.map_pose(0.3)
         if pose is None:
@@ -457,7 +482,7 @@ def park(straighten, x, y, h, pre, tol, rolling=False):
     say('-- reversing in')
     end = straighten.reverse_in(x, y)
     if end is None:
-        return False, 'the motion lock stopped the reverse in'
+        return False, f'the reverse in stopped: {getattr(straighten, "stop_why", "") or "the motion lock"}'
     line = f'ended {end[0] * 100:.0f} cm from the spot, heading off by {math.degrees(-end[1]):+.0f} deg'
     say('   ' + line)
     ok = end[0] <= 0.25
