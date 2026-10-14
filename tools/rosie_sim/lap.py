@@ -22,7 +22,7 @@ from std_msgs.msg import String
 
 D = os.path.dirname(os.path.abspath(__file__))
 LAP = [(2.94, -3.48, -90), (1.2, -4.4, 180), (-0.45, -5.6, -90), (1.5, -7.3, 0), (4.5, -7.5, 0),
-       (6.5, -7.7, 20), (7.05, -6.5, 90), (5.54, -5.49, 180), (3.14, -4.33, 110), (0.85, -0.81, 134)]
+       (6.5, -7.7, 20), (6.92, -6.5, 90), (5.54, -5.49, 180), (3.14, -4.33, 110), (0.85, -0.81, 134)]
 if os.environ.get('LAP'):                 # drive.sh's form: "x y h  x y h ..."
     v = [float(t) for t in os.environ['LAP'].split()]
     LAP = [tuple(v[i:i + 3]) for i in range(0, len(v), 3)]

@@ -48,7 +48,11 @@ done
 # Drive 50: out 13 cm from the curtain, but BACK 2.3 cm from the chair: the tree drops a waypoint as passed
 # 0.7 m before it (RemovePassedGoals radius), so (3.10, -2.45) went at y ~-3.15 and she cut for home across
 # the chair. The return point is now past the corridor's end, (3.00, -1.95).
-LAP="2.95 -2.40 -90  3.00 -3.40 -90  1.2 -4.4 180  -0.45 -5.6 -90  1.5 -7.3 0  4.5 -7.5 0  6.5 -7.7 20  7.05 -6.5 90  5.54 -5.49 180  3.14 -4.33 110  3.00 -1.95 90  0.85 -0.81 134"
+# 2026-10-14 (drives 59-60, Steve OK): waypoint 8 (7.05, -6.5) -> (6.92, -6.5), the cheapest line of the
+# corridor north of the vacuum corner (costmap 0 at x 6.85-6.95). She ran up it at x 7.05-7.10, so turning
+# north her right side lay on the vacuum block's padding at (6.91, -7.17), where waypoint 8 is dropped: the
+# planner said "Start occupied" and Nav2 stopped her 0.6 s at the stretch swap.
+LAP="2.95 -2.40 -90  3.00 -3.40 -90  1.2 -4.4 180  -0.45 -5.6 -90  1.5 -7.3 0  4.5 -7.5 0  6.5 -7.7 20  6.92 -6.5 90  5.54 -5.49 180  3.14 -4.33 110  3.00 -1.95 90  0.85 -0.81 134"
 ROUTE="${*:-$LAP}"
 
 D="$HOME/audit/$(date +%F)/drive$N"
