@@ -183,7 +183,7 @@ def main():
     params = node.create_client(GetParameters, '/pca9685/get_parameters')
     threading.Thread(target=rclpy.spin, args=(node,), daemon=True).start()
 
-    home = {'steering': 81.0, 'rear_steering': 87.0}      # capture.py's, if pca9685 does not say
+    home = {'steering': 84.7, 'rear_steering': 83.3}      # pca9685.yaml's, if pca9685 does not say
     if not params.wait_for_service(timeout_sec=3.0):
         print('pca9685 not answering: is the robot stack up?')
         return 1

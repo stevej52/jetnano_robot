@@ -81,15 +81,22 @@
       # and +3.7 deg/m on two runs, backward +2.0. The remaining scatter is play
       # in the steering links (the same setting reads +-4 deg/m run to run) and
       # the rug edge; tightening the linkage is the real fix.
-      home: 81.0
+      # 81 -> 84.7 on 2026-10-14 (Steve chose it): three laps on 2026-10-09 (drives
+      # 52-54, steering held) found her straight at angular.z -0.20 = 84.7, and
+      # nav_translator's steer_trim -0.20 put it there for Nav2 only. And the
+      # front servo HUNTS at exactly 81 - the buzz after every stop: by her mic
+      # 7-10 dB at 81 seven times out of seven, 3.8-4.5 (the room) at 1, 2, 3, 4
+      # and 6 deg right and at 84.7 after a left or a right turn. timeout below
+      # brought every stop, by any driver, back to 81. steer_trim is 0 now.
+      home: 84.7
       home_on_start: true
       # On carpet the tyres wind up and the servo chatters holding them. The
       # driver can do one +-relax_deg wiggle relax_after_s after settling, but
       # by her own mic (2026-09-27) no fixed wiggle cures it every time, so it
-      # is off and the settle node listens and wiggles until it is quiet.
+      # is off. (The chatter was home 81 itself, see above.)
       relax_deg: 0.0
       relax_after_s: 0.7
-      # full lock 2 deg in from 40 / 125 (Steve, 2026-10-09): 39 deg left, 42 right of home
+      # full lock 2 deg in from 40 / 125 (Steve, 2026-10-09): 42.7 deg left, 38.3 right of home
       min_limit: 42.0          # measured: 45 reaches cleanly, no binding
       max_limit: 123.0         # measured: 120 reaches cleanly, no binding
       timeout: 0.5
@@ -99,9 +106,9 @@
 
     rear_steering:
       channel: 2
-      home: 87.0               # mirrored about the front centre: rear = 168 - front (trim, see steering)
+      home: 83.3               # mirrored about the front centre: rear = 168 - front (was 87, see steering)
       home_on_start: true
-      relax_deg: 0.0           # see steering: the settle node does this by ear
+      relax_deg: 0.0           # see steering
       relax_after_s: 0.7
       min_limit: 45.0          # 2 deg in from 43 / 128 (Steve, 2026-10-09), as the front
       max_limit: 126.0

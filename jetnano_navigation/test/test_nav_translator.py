@@ -16,7 +16,7 @@ def test_turning_asks_the_table_for_more_throttle():
 
 
 def test_steering_trim_is_added_within_lock():
-    """Drives 52-54: she goes straight at -0.20, not 0."""
+    """Drives 52-54 needed -0.20 (now in pca9685.yaml's homes); a trim still stays within lock."""
     from types import SimpleNamespace
     from jetnano_navigation.nav_translator import NavTranslator
     n = SimpleNamespace(max_steer=2.4, steer_trim=-0.20, steer=0.0)

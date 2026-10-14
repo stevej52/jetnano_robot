@@ -91,6 +91,10 @@ def generate_launch_description():
             'cliff', default_value='false',
             description='also feed the guard the cliff sensors (sensors.launch.py use_cliff:=true)'),
         DeclareLaunchArgument(
+            'stop_settle', default_value='false',
+            description='after every stop, steer past centre and back (off since the 2026-10-14 '
+                        'home move cured the buzz)'),
+        DeclareLaunchArgument(
             'i2c_bus', default_value='7',
             description='I2C bus the PCA9685 is on. Was 1 on the Jetson Nano; '
                         'check with i2cdetect -l and i2cdetect -y -r <bus>'),
@@ -126,8 +130,11 @@ def generate_launch_description():
 
         # After every stop, past centre on the steering's quiet side and back: the front
         # servo buzzes when it centres from the other side (stop_settle.py, 2026-10-09).
+        # Off by default since 2026-10-14: the buzz was the front servo hunting at home 81
+        # itself, and every stop went back there; home is 84.7 now (pca9685.yaml).
         Node(
-            condition=UnlessCondition(simulate),
+            condition=IfCondition(PythonExpression([
+                "'", LaunchConfiguration('stop_settle'), "' == 'true' and '", simulate, "' != 'true'"])),
             package='jetnano_bringup',
             executable='stop_settle',
             name='stop_settle',
