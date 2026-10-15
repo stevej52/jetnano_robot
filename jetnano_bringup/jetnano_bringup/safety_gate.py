@@ -39,7 +39,9 @@ locks stay as defence in depth; this is the one that decides and explains.
 
 STOP on the page or the joystick is a HARD all-stop (Steve, 2026-10-15: "emergency stop should
 be a hard all-stop"). Besides the mux lock, this node sends /pca9685/output_enable false: the
-servo driver blanks every channel, stops the pin-7 heartbeat, and the XIAO opens the relay on
+servo driver puts the ESC at neutral for 0.25 s ("Obviously put the esc to neutral first"),
+ignores every command from then on, blanks every channel, stops the pin-7 heartbeat, and the
+XIAO opens the relay on
 the board's output enable (docs/relay-watchdog.md) - no signal reaches the ESC or the steering
 servos, whatever any node commands. The outputs come back only when EVERY hard STOP is released
 (GO on the page does not undo the joystick's STOP), and the driver brings the throttle back at
