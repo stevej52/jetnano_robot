@@ -31,7 +31,9 @@ zero for a moment and then goes quiet, so twist_mux lets Nav2 drive again
 driver's own 0.5 s timeout is the last line of defence.
 
 STOP raises the ``e_stop_web`` lock, which blocks everything including Nav2,
-and stays raised until GO is pressed on the page. The joystick has its own
+and stays raised until GO is pressed on the page. It is a HARD stop (2026-10-15): the
+safety gate also cuts the servo board's outputs through the relay until every STOP is
+released (safety_gate.py). The joystick has its own
 lock (``e_stop_joy``), so neither can cancel the other (review, 2026-09-26). Speeds are fractions of full throttle, like the joystick's.
 
 The page also shows what the collision guard (drive.launch.py) did with the

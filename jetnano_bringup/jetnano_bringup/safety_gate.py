@@ -36,6 +36,14 @@ This node reads what the others already publish and keeps one state machine:
 It raises the mux lock e_stop_gate (twist_mux.yaml) while inhibited or stopped, publishes
 /speed_limit while degraded, and the page and predrive read /safety/state. The older
 locks stay as defence in depth; this is the one that decides and explains.
+
+STOP on the page or the joystick is a HARD all-stop (Steve, 2026-10-15: "emergency stop should
+be a hard all-stop"). Besides the mux lock, this node sends /pca9685/output_enable false: the
+servo driver blanks every channel, stops the pin-7 heartbeat, and the XIAO opens the relay on
+the board's output enable (docs/relay-watchdog.md) - no signal reaches the ESC or the steering
+servos, whatever any node commands. The outputs come back only when EVERY hard STOP is released
+(GO on the page does not undo the joystick's STOP), and the driver brings the throttle back at
+neutral. The battery and motion-check locks stay software stops.
 """
 
 import json
@@ -54,6 +62,19 @@ DEGRADED_SPEED_PCT = 50.0
 GRACE_S = 120.0
 LOCKS = (('e_stop_web', 'STOP on the page'), ('e_stop_joy', 'STOP on the joystick'),
          ('e_stop', 'battery stop'), ('e_stop_motion', 'motion check'))
+HARD_STOP_LOCKS = ('e_stop_web', 'e_stop_joy')      # these also cut the servo board's outputs
+
+
+def hard_outputs(hard, was_hard, first, now, last_pub):
+    """What to send on /pca9685/output_enable this tick: False, True or None (nothing).
+
+    False when a hard STOP starts and again every second while it holds, so a restarted driver
+    hears it. True once when the last one is released, and once at the start (a gate restarted
+    mid-STOP must not leave the outputs cut for good). Never a stream of True: that would undo
+    anyone else's OFF."""
+    if hard:
+        return False if (not was_hard or first or now - last_pub >= 1.0) else None
+    return True if (was_hard or first) else None
 
 
 def decide(now, inp):
@@ -157,6 +178,11 @@ class SafetyGate(QuietNode):
         self.started = self.since
         self.tilt_at = self.guard_flow_at = self.watchdog_at = None
         self.last_lock_pub = 0.0
+        self.declare_parameter('hard_stop_locks', list(HARD_STOP_LOCKS))
+        known = {key for key, _ in LOCKS}
+        self.hard_keys = [k for k in self.get_parameter('hard_stop_locks').value if k in known]
+        self.hard, self.hard_first, self.last_hard_pub = False, True, 0.0
+        self.outputs_pub = self.create_publisher(Bool, '/pca9685/output_enable', 10)
         # The streams' ages come from topic_watch (C++) on watchdog/fresh, 5 times a second: the
         # age of the last message and how far its stamp was behind ROS time on arrival, so a
         # stream that keeps arriving with a frozen stamp is as stale as one that stopped (review
@@ -258,8 +284,23 @@ class SafetyGate(QuietNode):
         lag = lag if lag == lag and 0.0 < lag < 60.0 else 0.0     # nan, negative, absurd: arrival only
         return age + (now - self.fresh_at) + lag
 
+    def _hard_stop(self, now):
+        """The hard all-stop: the servo board's outputs follow the STOP buttons (see the top)."""
+        hard = any(self.locks.get(k, False) for k in self.hard_keys)
+        out = hard_outputs(hard, self.hard, self.hard_first, now, self.last_hard_pub)
+        if out is not None:
+            self.outputs_pub.publish(Bool(data=out))
+            self.last_hard_pub = now
+        if hard and not self.hard:
+            who = ', '.join(n for k, n in LOCKS if k in self.hard_keys and self.locks.get(k))
+            self.get_logger().warning(f'hard stop: servo board outputs CUT ({who})')
+        elif self.hard and not hard:
+            self.get_logger().info('hard stop released: servo board outputs back on (throttle at neutral)')
+        self.hard, self.hard_first = hard, False
+
     def _tick(self):
         now = time.monotonic()
+        self._hard_stop(now)
         state, reasons, speed = decide(now, self._facts(now))
         changed = state != self.state or reasons != self.reasons
         if state != self.state:

@@ -1,5 +1,7 @@
 """safety_gate.decide: the one decision, without a robot."""
-from jetnano_bringup.safety_gate import DEGRADED_SPEED_PCT, decide
+from types import SimpleNamespace
+
+from jetnano_bringup.safety_gate import DEGRADED_SPEED_PCT, SafetyGate, decide, hard_outputs
 
 OK = {'scan_age': 0.1, 'odom_age': 0.01, 'vo_age': 0.02, 'battery': {'level': 'ok', 'volts': 12.1},
       'where': 'placed', 'tilt': 'armed -> safe: level', 'guard_flow': 'ok', 'camera': 'ok', 'watchdog': []}
@@ -98,3 +100,55 @@ def test_silence_is_not_health_after_the_grace():
                           ({'tilt': 'off -> off: tilt guard switched off'}, 'tilt guard switched off')):
         state, reasons, speed = decide(0, {**UP, **change})
         assert state == 'degraded' and speed == DEGRADED_SPEED_PCT and any(words in r for r in reasons), change
+
+
+def test_hard_stop_sends_off_then_repeats_then_on_once():
+    """STOP is a hard all-stop (2026-10-15): /pca9685/output_enable false, again every second."""
+    assert hard_outputs(False, False, True, 0.0, 0.0) is True      # the start: on, once
+    assert hard_outputs(False, False, False, 0.2, 0.0) is None     # never a stream of True
+    assert hard_outputs(True, False, False, 5.0, 0.0) is False     # STOP pressed: cut
+    assert hard_outputs(True, True, False, 5.5, 5.0) is None
+    assert hard_outputs(True, True, False, 6.0, 5.0) is False      # held: repeated every second
+    assert hard_outputs(False, True, False, 7.0, 6.0) is True      # GO: back on, once
+    assert hard_outputs(True, False, True, 0.0, 0.0) is False      # started mid-STOP: cut at once
+
+
+class _Pub:
+    def __init__(self):
+        self.sent = []
+
+    def publish(self, m):
+        self.sent.append(m.data)
+
+
+class _Log:
+    def warning(self, *a):
+        pass
+
+    def info(self, *a):
+        pass
+
+
+def test_go_on_the_page_does_not_undo_the_joysticks_stop():
+    g = SimpleNamespace(locks={}, hard_keys=['e_stop_web', 'e_stop_joy'], hard=False, hard_first=False,
+                        last_hard_pub=0.0, outputs_pub=_Pub(), get_logger=lambda: _Log())
+    tick = lambda now: SafetyGate._hard_stop(g, now)            # noqa: E731
+    g.locks['e_stop_web'] = True
+    tick(1.0)
+    g.locks['e_stop_joy'] = True
+    tick(1.2)
+    g.locks['e_stop_web'] = False                               # GO on the page
+    tick(1.4)
+    assert g.outputs_pub.sent == [False], 'the joystick still holds STOP: outputs stay cut'
+    g.locks['e_stop_joy'] = False
+    tick(1.6)
+    assert g.outputs_pub.sent == [False, True]
+
+
+def test_battery_and_motion_check_stay_software_stops():
+    g = SimpleNamespace(locks={'e_stop': True, 'e_stop_motion': True}, hard_keys=['e_stop_web', 'e_stop_joy'],
+                        hard=False, hard_first=False, last_hard_pub=0.0, outputs_pub=_Pub(),
+                        get_logger=lambda: _Log())
+    SafetyGate._hard_stop(g, 1.0)
+    assert g.outputs_pub.sent == []
+
