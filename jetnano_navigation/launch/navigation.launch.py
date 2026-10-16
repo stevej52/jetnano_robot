@@ -51,8 +51,9 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription, Shutdown
-from launch.conditions import IfCondition
+from launch.actions import (DeclareLaunchArgument, ExecuteProcess, GroupAction, IncludeLaunchDescription,
+                            Shutdown)
+from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node, SetRemap
@@ -213,6 +214,17 @@ def generate_launch_description():
             SetRemap(src='/cmd_vel', dst='/cmd_vel_nav_raw'),
             SetRemap(src='/cmd_vel_smoothed', dst='/cmd_vel_nav_smoothed'),
 
+            # Wake the sensors as Nav2 starts (2026-10-15): with the lidar resting, slam_toolbox's map->odom
+            # is stamped at its last scan and the global costmap cannot activate ("extrapolation into the
+            # past") - a Nav2 restarted while she slept (nav2_ctl, or the unit after a crash) stayed
+            # inactive. Any drive command wakes them too; this needs no driver. Bounded: no sensor_sleep,
+            # no hang.
+            ExecuteProcess(
+                condition=UnlessCondition(LaunchConfiguration('use_sim_time')),
+                cmd=['timeout', '20', 'ros2', 'service', 'call', '/sensor_sleep/wake', 'std_srvs/srv/Trigger', '{}'],
+                output='log',
+            ),
+
             # composition:=true: the container nav2_bringup's own bringup_launch.py
             # would start; navigation_launch.py then loads every server into it (the
             # remaps above reach them through the load requests)
@@ -228,6 +240,12 @@ def generate_launch_description():
                 on_exit=[Shutdown(reason='the Nav2 container exited')],
                 parameters=[params_file, {'autostart': ParameterValue(
                     LaunchConfiguration('autostart'), value_type=bool)}],
+                # 2026-10-15: while sensor_sleep rests the lidar, slam_toolbox's map->odom keeps the
+                # stamp of its last scan, and 10 s later every map->base_link lookup fails - the
+                # global costmap logged that once a second for as long as she slept (3600 lines an
+                # hour). The callers report real failures themselves (the controller's "Failed to
+                # transform end pose", the planner's start pose), so the helper's own line goes.
+                arguments=['--ros-args', '--log-level', 'transformPoseInTargetFrame:=fatal'],
                 output='screen',
             ),
             IncludeLaunchDescription(
