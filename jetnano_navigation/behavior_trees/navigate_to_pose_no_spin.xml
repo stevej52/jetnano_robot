@@ -53,6 +53,14 @@
         </Fallback>
         <ReactiveFallback name="RecoveryFallback">
           <GoalUpdated/>
+          <!-- START_OCCUPIED: her outline on an obstacle's padding (she swung wide, drives 55 and 59-61).
+               Back off 15 cm at once and replan, instead of the round robin's clear, then 5 s wait,
+               then back-up (drive 55's island: 20 s). If even that is refused, the round robin as before.
+               2026-10-14, Steve: "backing off by herself". -->
+          <Sequence name="StartOccupiedBackOff">
+            <AreErrorCodesPresent error_code="{compute_path_error_code}" error_codes_to_check="205;305"/>
+            <BackUp backup_dist="0.15" backup_speed="0.10" error_code_id="{backup_code_id}"/>
+          </Sequence>
           <RoundRobin name="RecoveryActions">
             <Sequence name="ClearingActions">
               <ClearEntireCostmap name="ClearLocalCostmap-Subtree" service_name="local_costmap/clear_entirely_local_costmap"/>
