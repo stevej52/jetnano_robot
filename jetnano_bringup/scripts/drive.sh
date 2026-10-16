@@ -125,6 +125,8 @@ echo "== route  $(date +%T)"
 # in route.log as "park: ..."
 PARKARG=""
 [ "$PARK" = 1 ] && PARKARG="--park 0 0 0"
+# the computer's view of the first 15 s (2026-10-15: Nav2's TF listener lags as a goal starts)
+"$S/goal_start_profile.sh" "$D/start_profile" 15 > /dev/null 2>&1 &
 timeout 700 ros2 run jetnano_navigation mission_cmd route $ROUTE --timeout 300 $PARKARG > "$D/route.log" 2>&1
 RC=$?
 grep -v "^\[WARN\]" "$D/route.log" | grep -E "^result|passed waypoint|stretches|moved|refus|clear|battery|timeout|nobody|handing over" | sed 's/^/   /'
