@@ -18,7 +18,10 @@ def generate_launch_description():
     return LaunchDescription([
         ExecuteProcess(cmd=['python3', f'{D}/rosie_sim.py', '--ros-args', '-p', 'speed:=' + os.environ.get('SIM_SPEED', '3.0'), '-p', 'map:=' + os.environ.get('PHYS_MAP', f'{D}/map/home.yaml'),
                                     '-p', 'low_map:=' + os.environ.get('LOW_MAP', 'none'),
-                                    '-p', 'range_noise:=' + os.environ.get('RANGE_NOISE', '0.0')], output='screen'),
+                                    '-p', 'range_noise:=' + os.environ.get('RANGE_NOISE', '0.0'),
+                                    '-p', 'grip:=' + ('true' if os.environ.get('GRIP') == '1' else 'false'),
+                                    '-p', 'turn_cap:=' + ('true' if os.environ.get('TURN_CAP') == '1' else 'false')],
+                     output='screen'),
     ] + ([ExecuteProcess(cmd=['python3', f'{D}/getout.py', '--ros-args', '-p', 'use_sim_time:=true'], output='screen')]
          if os.environ.get('GETOUT') == '1' else []) + (
         [ExecuteProcess(cmd=['python3', '-c', 'from jetnano_navigation.nav_helper import main; main()',

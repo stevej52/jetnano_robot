@@ -35,6 +35,35 @@ K_RATE = 8.0            # 1/m per s: the steering servos' slew
 HALF_L, HALF_W = 0.222, 0.148   # her body (footprint without padding)
 LIDAR_X = -0.005
 CMD_STALE = 0.5         # s of sim time without a command = stop
+# 2026-10-14 (param grip): the tightest curve she holds at a speed, (m/s, 1/m), linear between, her
+# full lock below the first. Measured on drives 55 and 59-62: above ~1 m radius she turns as asked,
+# tighter only slower - at cruise she made 72 % of a 0.96 m radius. Without it the sim car turned
+# at 0.4 m at any speed and could not show her swinging wide.
+GRIP = [(0.12, 1.67), (0.19, 1.3), (0.25, 1.0), (0.44, 0.6)]
+# (param turn_cap) nav_translator's TURN_SPEED_CAP, mirrored: the translator is not in the sim's loop
+TURN_SPEED_CAP = [(0.6, 0.44), (1.0, 0.25), (1.3, 0.19), (1.67, 0.12)]
+
+
+def grip_k(v):
+    """The tightest curvature (1/m) she holds at speed v (m/s); None below the table: full lock."""
+    v = abs(v)
+    if v <= GRIP[0][0]:
+        return None
+    for (v0, k0), (v1, k1) in zip(GRIP, GRIP[1:]):
+        if v <= v1:
+            return k0 + (k1 - k0) * (v - v0) / (v1 - v0)
+    return GRIP[-1][1]
+
+
+def turn_speed_cap(k):
+    """The translator's cap: the highest speed for |k|; None = no cap."""
+    k = abs(k)
+    if k <= TURN_SPEED_CAP[0][0]:
+        return None
+    for (k0, v0), (k1, v1) in zip(TURN_SPEED_CAP, TURN_SPEED_CAP[1:]):
+        if k <= k1:
+            return v0 + (v1 - v0) * (k - k0) / (k1 - k0)
+    return TURN_SPEED_CAP[-1][1]
 
 
 class Sim(Node):
@@ -62,6 +91,8 @@ class Sim(Node):
             self.body_blocked |= limg == 0
         # lidar range noise (m, 1 sigma); the A1M8 is about 1 % at the ranges that matter
         self.range_noise = float(self.declare_parameter('range_noise', 0.0).value)
+        self.grip = bool(self.declare_parameter('grip', False).value)
+        self.turn_cap = bool(self.declare_parameter('turn_cap', False).value)
         self.rng = np.random.default_rng(7)
         self.v = self.k = 0.0
         self.cmd = (0.0, 0.0, -1e9)
@@ -133,6 +164,10 @@ class Sim(Node):
         vc, wc, at = self.cmd
         if self.t - at > CMD_STALE:
             vc, wc = 0.0, 0.0
+        if self.turn_cap and abs(vc) > 0.01:
+            cap = turn_speed_cap(wc / vc)
+            if cap is not None and abs(vc) > cap:
+                vc, wc = math.copysign(cap, vc), wc * cap / abs(vc)       # the same curve, slower
         self.v += (vc - self.v) * min(1.0, dt / TAU_V)
         if abs(vc) < 0.02 and abs(self.v) < 0.03:
             self.v = 0.0
@@ -143,6 +178,10 @@ class Sim(Node):
         else:
             kc = self.k
         kc = max(-1.0 / R_RIGHT, min(1.0 / R_LEFT, kc))
+        if self.grip:
+            kg = grip_k(self.v)
+            if kg is not None:
+                kc = max(-kg, min(kg, kc))          # faster than the tyres hold: she swings wide
         dk = max(-K_RATE * dt, min(K_RATE * dt, kc - self.k))
         self.k += dk
         dth = self.v * self.k * dt
