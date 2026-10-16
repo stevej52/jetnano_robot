@@ -12,8 +12,9 @@
 # transform tolerances (0.5 s) hide it; this is to find it. Into OUT_DIR, side by side:
 #   top.txt           every core's load and the busiest processes, 4 times a second
 #   nav2_threads.txt  the Nav2 container's threads, 4 times a second
-#   nav2.perf.data    perf samples with call stacks - only where perf works (not on her
-#                     6.8.12-tegra kernel: no linux-tools for it; the thread names name DDS's)
+#   nav2.perf.data    perf samples with call stacks. /usr/bin/perf refuses her 6.8.12-tegra kernel
+#                     (no linux-tools for it), but the generic linux-tools build under /usr/lib runs
+#                     (it profiled the camera container on 2026-10-12): that one is used.
 # Line them up with the drive's journal ("extrapolation", "invalid source") by time.
 OUT=${1:?OUT_DIR}
 SECS=${2:-15}
@@ -26,8 +27,9 @@ top -1 -b -d 0.25 -n "$N" -w 200 -o %CPU | awk '/^top -/{c=0} {if (c++ < 28) pri
 if [ -n "$PID" ]; then
     echo "nav2 container pid $PID" >> "$OUT/started"
     top -H -b -d 0.25 -n "$N" -w 200 -o %CPU -p "$PID" | awk '/^top -/{c=0} {if (c++ < 20) print}' > "$OUT/nav2_threads.txt" 2>&1 &
-    if sudo -n perf --version > /dev/null 2>&1; then
-        sudo -n perf record -q -F 199 -g -p "$PID" -o "$OUT/nav2.perf.data" -- sleep "$SECS" > "$OUT/perf.log" 2>&1 &
+    PERF=$(ls -d /usr/lib/linux-tools-*/perf 2>/dev/null | sort -V | tail -1)
+    if [ -n "$PERF" ] && sudo -n "$PERF" --version > /dev/null 2>&1; then
+        sudo -n "$PERF" record -q -F 199 -g -p "$PID" -o "$OUT/nav2.perf.data" -- sleep "$SECS" > "$OUT/perf.log" 2>&1 &
     fi
 else
     echo "no Nav2 container running" >> "$OUT/started"
