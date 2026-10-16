@@ -60,27 +60,6 @@ def throttle_for(speed, table):
     return t0 + (t1 - t0) * (v - v0) / (v1 - v0)
 
 
-# The fastest she can go and still turn as tight as asked: (|curvature| 1/m, m/s) pairs, linear
-# between them, the last speed beyond the last point, no cap before the first. Measured 2026-10-14
-# (drives 59-62, 2210 samples of asked vs achieved curvature): above ~1 m radius she turns as
-# asked; tighter, she does not at any speed she drives - at cruise (0.38+ m/s) she made 78 % of a
-# 1.35 m radius, 72 % of 0.96 m, 33 % of 0.8 m; at 0.22-0.38 m/s 52-55 % of 0.6-0.8 m. Drive 55:
-# 0.25 m/s holds a 1 m radius, 0.19 a 0.77 m, 0.12 a 0.6 m (drive 54: 1.66 1/m at 0.10-0.20).
-# Swinging wide is what put her on padding ("Start occupied", drives 55, 59-61).
-TURN_SPEED_CAP = [(0.6, 0.44), (1.0, 0.25), (1.3, 0.19), (1.67, 0.12)]
-
-
-def turn_speed_cap(curvature, table):
-    """The highest speed (m/s) at which she still turns at |curvature| 1/m; None: no cap."""
-    k = abs(curvature)
-    if not table or k <= table[0][0]:
-        return None
-    for (k0, v0), (k1, v1) in zip(table, table[1:]):
-        if k <= k1:
-            return v0 + (v1 - v0) * (k - k0) / (k1 - k0)
-    return table[-1][1]
-
-
 def scrub_factor(lock, loss):
     """Her speed at this much of full lock (0..1) over her speed going straight, same throttle.
     Four-wheel steering with no differential scrubs all four tyres in a turn (Steve heard it,
@@ -134,10 +113,6 @@ class NavTranslator(Node):
         # 81 -> 84.7, rear 87 -> 83.3), so every driver goes straight at 0 and every stop rests
         # off the front servo's hunting spot at 81 (one buzz). Nav2's angles are unchanged.
         self.steer_trim = float(self.declare_parameter('steer_trim', 0.0).value)
-        # slow for turns tighter than she can hold at speed (TURN_SPEED_CAP; [] turns it off):
-        # flattened [k0, v0, k1, v1, ...]
-        flat = list(self.declare_parameter('turn_speed_cap', [x for p in TURN_SPEED_CAP for x in p]).value)
-        self.turn_cap = [(float(flat[i]), float(flat[i + 1])) for i in range(0, len(flat) - 1, 2)]
         self.steer = 0.0
         self.trim = 0.0
         self.measured = 0.0
@@ -180,10 +155,6 @@ class NavTranslator(Node):
             self.measured = deserialize_message(self._odom_raw, Odometry).twist.twist.linear.x
         # steering: the planned curve, whatever the speed
         curvature = w / v
-        # speed: no faster than she can hold that curve (she swung wide where Nav2 asked tighter)
-        cap = turn_speed_cap(curvature, self.turn_cap)
-        if cap is not None and abs(v) > cap:
-            v = math.copysign(cap, v)
         steer = curvature / (self.gain_left if curvature > 0 else self.gain_right)
         steer = max(-self.max_steer, min(self.max_steer, steer))
         step = self.max_steer_rate * (dt if dt > 0 else 0.05)

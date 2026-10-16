@@ -199,8 +199,15 @@ controller_server:
       # turn - drive 51 took the corridor's north end at 0.44 m/s on a 0.34 m arc and the fast (0.50 m) stop
       # zone, a straight box, clipped the curtain she was steering away from (2.9 s stop). Real-time sim
       # (world from drive 51's lidar): 0.90 finished 6/6 laps 75-107 s, 0.30 3/5 (both fails at the vacuum box).
-      regulated_linear_scaling_min_radius: 0.90
-      regulated_linear_scaling_min_speed: 0.18   # her crawl
+      # 0.90 -> 1.76 and the floor 0.18 -> 0.12 on 2026-10-14 (Steve: the tight-turn speed cap): her grip,
+      # measured on drives 55 and 59-62, holds a 1 m radius at 0.25 m/s, 0.77 m at 0.19, 0.6 m at 0.12, and
+      # at cruise only 72 % of 0.96 m - she swung wide onto padding ("Start occupied") and into corrections.
+      # 0.44 x radius / 1.76 is that table (0.25 at 1 m, 0.19 at 0.77, 0.15 at 0.6). Done HERE, not after Nav2:
+      # a cap in nav_translator (36eb70a, reverted) left Nav2 and the collision monitor asking 0.24 while she
+      # crept, and the sim (tools/rosie_sim GRIP=1) held her 95 s at dining N in 2 of 3 laps. Here, sim with
+      # grip, 6 laps: 6/6, 94-101 s (no slowing 88-97), monitor stops <= 3.4 s, chair 18-26 cm (1.9-12.7).
+      regulated_linear_scaling_min_radius: 1.76
+      regulated_linear_scaling_min_speed: 0.12   # her crawl in tight turns
       use_cost_regulated_linear_velocity_scaling: true
       max_angular_accel: 2.0
       min_approach_linear_velocity: 0.08
