@@ -50,6 +50,7 @@ from std_msgs.msg import Empty, String
 
 MODEL_DIR = os.path.expanduser('~/voice/models')
 LEAD_S, TAIL_S = 0.25, 0.10      # the USB speaker swallows its first 80 ms (voice.py)
+SERVER_CHECK_S = 5.0             # how often the voice server is checked, in the background
 
 
 def write_wav(path: str, samples, rate: int, volume: float = 0.8, tail_s: float = TAIL_S, lead_s: float = LEAD_S) -> None:
@@ -101,8 +102,12 @@ class Speak(Node):
         self.tts_url = str(p('tts_url')).rstrip('/')
         self.tts_voice = str(p('tts_voice'))
         self.server_down_until = 0.0
+        self.server_ok = None            # the voice server's last background check (None: not checked yet)
+        self._ver = ''
         self.cache = os.path.expanduser(str(p('cache_dir')))
         os.makedirs(self.cache, exist_ok=True)
+        if self.tts_url:
+            threading.Thread(target=self._watch_server, daemon=True, name='speak-server').start()
         t0 = time.monotonic()
         self.tts = make_tts(os.path.expanduser(str(p('model_dir'))), self.voice, int(p('threads')))
         self.say_pub = self.create_publisher(String, 'say', 10)
@@ -181,24 +186,37 @@ class Speak(Node):
                     self._say(mood)
 
     def _server_up(self) -> bool:
-        return bool(self.tts_url) and time.monotonic() >= self.server_down_until
+        return bool(self.tts_url) and self.server_ok is True and time.monotonic() >= self.server_down_until
+
+    def _watch_server(self) -> None:
+        """"H2 is off" mode (2026-10-18): the voice server is checked here, every SERVER_CHECK_S, and
+        never on the way to saying something. With H2-Host off after the 2026-10-16 power cuts, each
+        reply after a 30 s window waited 3.2-3.6 s for the network to give up before her own voice
+        spoke. Now a reply uses the server only while its last check passed; each switch is logged."""
+        while rclpy.ok():
+            ok, ver = False, ''
+            try:
+                with urllib.request.urlopen(self.tts_url + '/health', timeout=1.0) as r:
+                    ok = r.status == 200
+                    ver = str(json.load(r).get('respell', ''))
+            except Exception:  # noqa: BLE001 - off, unreachable, slow: her own voice carries on
+                pass
+            if ok:
+                self._ver = ver
+            if ok != self.server_ok:
+                self.get_logger().info(f'voice server {self.tts_url}: '
+                                       + ('answers - the server voice' if ok else 'off - my own voice until it answers'))
+            self.server_ok = ok
+            time.sleep(SERVER_CHECK_S)
 
     def _server_version(self) -> str:
-        """The server's spelling version (its /health 'respell'), asked at most every 30 s: a changed
+        """The server's spelling version (its /health 'respell', from the last check): a changed
         pronunciation on the server must not play from the robot's cache."""
-        now = time.monotonic()
-        if now - getattr(self, '_ver_at', 0.0) > 30.0:
-            try:
-                with urllib.request.urlopen(self.tts_url + '/health', timeout=2.0) as r:
-                    self._ver = str(json.load(r).get('respell', ''))
-            except Exception:  # noqa: BLE001
-                self._ver = ''
-            self._ver_at = now
-        return getattr(self, '_ver', '')
+        return self._ver
 
     def _server(self, line: str):
         """(samples, rate) from the voice server, or (None, 0) - then Piper does it, and the server
-        is not asked again for 30 s."""
+        is not asked again for 30 s (it answered its check but failed this: not to be trusted yet)."""
         try:
             req = urllib.request.Request(self.tts_url + '/tts', data=json.dumps({'text': line, 'voice': self.tts_voice, 'speed': self.speed}).encode(),
                                          headers={'Content-Type': 'application/json'})
