@@ -220,6 +220,19 @@ def _plain(text: str) -> str:
     return re.sub(r'[^a-z]', '', text.lower())
 
 
+def _unrepeat(sent: str, said: str) -> str:
+    """The first sentence without what she already said out loud at its start, or the last word of it.
+    2026-10-18, Diane: "The way I see it," then the answer "The way I see it, she's probably..." - the
+    old check compared only the lead-in's last word ("it,") with the whole clause."""
+    words = re.findall(r"[a-z']+", said.lower())
+    if not words:
+        return sent.strip()
+    m = re.match(r"\W*" + r"\W+".join(re.escape(w) for w in words) + r"(?![a-z'])[\s,.;:!?-]*", sent, re.I)
+    if m:
+        return sent[m.end():].strip()
+    return '' if _plain(sent) == _plain(words[-1]) else sent.strip()
+
+
 def sentences(buf: str, clause: bool = False):
     """Split off complete sentences; returns (list of sentences, remainder). With clause,
     the first one may end at a comma, semicolon, colon or dash instead, once it has
@@ -763,8 +776,10 @@ class Brain(Node):
             for sent in done:
                 if check and not spoke and UNSURE.search(sent):
                     return full, first, 'unsure'
-                if not spoke and said and _plain(sent) == _plain(said.split()[-1] if said.endswith(',') else said):
-                    continue                 # it repeated what she already said out loud ("Me?" "Me?")
+                if not spoke and said:
+                    sent = _unrepeat(sent, said)
+                    if not sent:
+                        continue             # it repeated what she already said out loud ("Me?" "Me?")
                 self._out(sent)
                 spoke = True
         rest = buf.strip()
@@ -774,6 +789,8 @@ class Brain(Node):
                 return full, first, 'think' if m.group(1).lower() == 'think' else 'passed'
             if UNSURE.search(rest):
                 return full, first, 'unsure'
+        if not spoke and said:
+            rest = _unrepeat(rest, said)
         if not self._stopped and rest:
             self._out(rest)
         return full, first, None
