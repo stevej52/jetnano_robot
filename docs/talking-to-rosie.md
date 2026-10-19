@@ -135,6 +135,7 @@ is knowing who is in the room. The first voice she learns is Steve's.
 | Say | She does |
 |---|---|
 | "Rosie, learn my voice" | asks for a few sentences, then remembers the voice (the first voice learned is the owner's; anyone after that is asked their name) |
+| "Rosie, this is Linda" (or "It's Linda", "Linda here") | that voice is Linda for this conversation, before or without a voice lesson; once Linda has done "learn my voice" she is recognised by voice, even on the TALK button (see voice-tuning.md) |
 | "Rosie, who am I?" / "do you know my voice?" | "That's you, Steve. I'm 80 percent sure." |
 | "Rosie, forget my voice" | forgets it |
 
