@@ -215,7 +215,11 @@ HEALTH_WORDS = ('how are you', 'how you doing', 'you doing', 'how is it going', 
 REPORT_WORDS = ('status report', 'full status', 'full report', 'system status', 'systems report', 'diagnostics',
                 'status')
 HOW_AM_I = ('How am I?', 'Me?', 'How do I feel?')
-JOKE_WORDS = ('joke', 'funny', 'make me laugh')
+# Only a request for one (2026-10-18: "Oh, that's funny" and "You think I'm a joke?" both got
+# "You're a joke" from Diane's chat; Steve: only real requests)
+JOKE_WORDS = ('tell me a joke', 'tell us a joke', 'tell a joke', 'say a joke', 'know any jokes', 'know a joke',
+              'got any jokes', 'got a joke', 'have any jokes', 'say something funny', 'tell me something funny',
+              'make me laugh', 'make us laugh')
 # "Rosie, think hard about ...": straight to Claude with full thinking (brain.py).
 THINK_WORDS = ('think hard', 'think about it', 'think about this', 'think about that', 'think it over',
                'think it through', 'think this through', 'think that through', 'think carefully', 'really think',
