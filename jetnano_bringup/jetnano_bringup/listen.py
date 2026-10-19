@@ -580,6 +580,13 @@ def _node_main(args):
             self.declare_parameter('hold_name_s', 2.5)              # just "Rosie" - and then?
             self.declare_parameter('min_speech_s', 0.3)
             self.declare_parameter('max_speech_s', 30.0)            # 10 cut long sentences in two
+            # Speech-to-text while they are still talking (2026-10-18). It used to start only when a
+            # stretch of talk ended, ~0.19 s per second of it: after 30 s of Linda, 6 s of silence
+            # before the brain even had her words (87 s -> 16 s on 10-15). Now every early_chunk_s of
+            # talk is cut at its quietest moment (between words) and decoded while she goes on; at
+            # the end only the last few seconds are left.
+            self.declare_parameter('early_asr', True)
+            self.declare_parameter('early_chunk_s', 4.0)
             # Barge-in (Steve, 2026-09-29): someone talking over her stops her. Her own voice
             # sets off both detectors - the chip's speech flag came on 2.4 s into a line of hers
             # and stayed on - but the chip also says which way it came from: her own voice read
@@ -639,6 +646,10 @@ def _node_main(args):
             # Steve: "any woman's voice can be Diane for now. Not too many women here" - a high
             # voice is Diane; one that is only clearly not his (a man) is a guest
             self.declare_parameter('fun_woman', "Diane, Steve's wife")
+            # Who a learned voice is to Steve, for the brain ("Name=relation;..."). 2026-10-18: Linda,
+            # Diane's mother, talks with her a lot; once she has said "Rosie, learn my voice", her
+            # voice is Linda even in Diane mode. Names not listed get fun_relation.
+            self.declare_parameter('voice_relations', "Linda=Diane's mother, Steve's mother-in-law;Diane=Steve's wife")
             self.declare_parameter('fun_unknown', 'not Steve - a guest whose name you do not know')
             self.declare_parameter('voice_actions', False)            # see ROBOT_ACTIONS
             self.declare_parameter('voice_match', speaker.MATCH)         # cosine: confidently that person
@@ -675,6 +686,19 @@ def _node_main(args):
             # 2026-09-29); at most the last 8 s of speech (4 s dropped his print 0.96 -> 0.78).
             self.who_pool = concurrent.futures.ThreadPoolExecutor(1, thread_name_prefix='listen-who')
             self.who_max = 8 * 16000
+            # every speech-to-text runs here, one at a time: the pieces decoded while they talk and the rest
+            self.asr_pool = concurrent.futures.ThreadPoolExecutor(1, thread_name_prefix='listen-asr')
+            self.early_asr = bool(p('early_asr'))
+            self.early_chunk = int(float(p('early_chunk_s')) * 16000)
+            self.tape = collections.deque()     # (absolute index, window): the last ~2 min fed to the VAD
+            self.early_cut = None               # absolute index where the next early piece starts; None: not cutting
+            self.early = []                     # (start, end, future): pieces decoded while they talked
+            self.relations = {}
+            for item in str(p('voice_relations')).split(';'):
+                name, _, rel = item.partition('=')
+                if name.strip() and rel.strip():
+                    self.relations[name.strip().lower()] = rel.strip()
+            self.this_is = None                 # ("Linda", voice print, time): "Rosie, this is Linda"
             self.hold_maybe = float(p('hold_maybe_s'))
             self.hold_unfinished = float(p('hold_unfinished_s'))
             self.hold_name = float(p('hold_name_s'))
@@ -941,8 +965,11 @@ def _node_main(args):
                     window = buf[:self.window]
                     self.vad.accept_waveform(window)
                     buf = buf[self.window:]
+                    self.tape.append((fed, window))
                     fed += len(window)
                     history = np.concatenate([history, window])[-32000:]
+                while len(self.tape) > 4000:              # ~2 min of 32 ms windows
+                    self.tape.popleft()
                 active = self.vad.is_speech_detected()
                 self._barge_check(active)
                 if active != self.active:
@@ -950,14 +977,31 @@ def _node_main(args):
                     flag = self._Bool()
                     flag.data = active
                     self.active_pub.publish(flag)
+                    # early speech-to-text: from a little before the VAD noticed them, but never her own
+                    # voice or its echo (what trim_own cuts off), and not while she talks
+                    self.early_cut = None
+                    if active and self.early_asr and self.tape and not self.speaking and not self.voice_off:
+                        clean = fed - int((time.monotonic() - self.speaking_ended - self.echo_guard) * 16000)
+                        self.early_cut = max(fed - int(0.8 * 16000), clean, self.tape[0][0])
+                if self.early_cut is not None:
+                    if self.speaking:
+                        self.early_cut = None                 # she started talking: not a clean stretch
+                    elif fed - self.early_cut >= self.early_chunk:
+                        cut = self._quiet_point(fed - 16000, fed)
+                        audio = self._tape_slice(self.early_cut, cut)
+                        self.early.append((self.early_cut, cut, self.asr_pool.submit(transcribe, self.recognizer, audio)))
+                        del self.early[:-60]
+                        self.early_cut = cut
                 while not self.vad.empty():
                     seg = self.vad.front
                     samples = np.array(seg.samples, dtype=np.float32)
                     self.vad.pop()
                     first = fed - len(history)            # absolute index of history[0]
                     i0, i1 = max(int(seg.start) - pre, first) - first, int(seg.start) - first
+                    span = [int(seg.start), int(seg.start) + len(samples)]   # absolute, for the early pieces
                     if 0 <= i0 < i1 <= len(history):
                         samples = np.concatenate([history[i0:i1], samples])
+                        span[0] -= i1 - i0
                     # did this start while she was talking? then it is mostly her
                     started = time.monotonic() - len(samples) / 16000.0 - self.min_silence
                     overlapped = self.speaking or started < self.speaking_ended + self.echo_guard
@@ -972,10 +1016,11 @@ def _node_main(args):
                             self.get_logger().info(f'trimmed {cut / 16000:.1f} s of her own voice off the front')
                             samples = samples[cut:]
                             started += cut / 16000.0
+                            span[0] += cut
                             overlapped = False
                     self.busy_since = time.monotonic()
                     try:
-                        self._utterance(samples, overlapped, started)
+                        self._utterance(samples, overlapped, started, span=tuple(span))
                     finally:
                         self.busy_since = None
                 if self.turn is not None and not active and time.monotonic() >= self.turn['until']:
@@ -983,7 +1028,53 @@ def _node_main(args):
 
         # ------------------------------------------------------------ words --
 
-        def _utterance(self, samples: np.ndarray, overlapped: bool, started: float = None) -> None:
+        def _tape_slice(self, a: int, b: int) -> np.ndarray:
+            """The audio fed to the VAD from absolute index a to b."""
+            parts = [(s, w) for s, w in self.tape if s + len(w) > a and s < b]
+            if not parts:
+                return np.zeros(0, dtype=np.float32)
+            x = np.concatenate([w for _, w in parts])
+            return x[max(a - parts[0][0], 0):b - parts[0][0]]
+
+        def _quiet_point(self, a: int, b: int) -> int:
+            """The quietest 20 ms between a and b (absolute): between words, where a cut harms no word."""
+            x = self._tape_slice(a, b)
+            n = len(x) // 320
+            if n < 2:
+                return b
+            rms = np.sqrt(np.mean(x[:n * 320].reshape(n, 320) ** 2, axis=1))
+            return max(a, b - len(x)) + int(np.argmin(rms)) * 320 + 160
+
+        def _asr(self, samples: np.ndarray) -> str:
+            return self.asr_pool.submit(transcribe, self.recognizer, samples).result()
+
+        def _decode(self, samples: np.ndarray, span) -> tuple:
+            """The words of one stretch of speech, using the pieces decoded while it was being said:
+            only what came after the last of them is decoded now. -> (text, pieces used)."""
+            if span is None or not self.early:
+                return self._asr(samples), 0
+            f0, f1 = span
+            end = f1 + 8000                     # a piece may run on into the VAD's closing silence
+            mine = [p for p in self.early if p[1] > f0 and p[0] < f1]
+            self.early = [p for p in self.early if p[1] > end]          # a stretch still going on keeps its own
+            used = [p for p in mine if p[1] <= end]
+            # all inside this stretch (give or take the pre-roll), else the whole of it as before
+            if not used or len(used) != len(mine) or used[0][0] < f0 - int(0.6 * 16000):
+                return self._asr(samples), 0
+            texts = []
+            if used[0][0] - f0 > int(0.3 * 16000):
+                texts.append(self._asr(samples[:used[0][0] - f0]))
+            try:
+                texts += [p[2].result(timeout=30.0) for p in used]
+            except Exception as exc:      # noqa: BLE001 - never lose the words over a piece
+                self.get_logger().warning(f'early speech-to-text: {exc}')
+                return self._asr(samples), 0
+            tail = samples[min(used[-1][1] - f0, len(samples)):]
+            if len(tail) > 1600:
+                texts.append(self._asr(tail))
+            return ' '.join(t for t in texts if t).strip(), len(used)
+
+        def _utterance(self, samples: np.ndarray, overlapped: bool, started: float = None, span=None) -> None:
             seconds = len(samples) / 16000.0
             started = time.monotonic() - seconds if started is None else started
             barged = overlapped and self.barged_at >= started - 0.5     # this is who she stopped for
@@ -994,7 +1085,7 @@ def _node_main(args):
             if self.voice_off:
                 if seconds > 3.5:
                     return                  # the code word is short; a TV evening need not all be transcribed
-                text = transcribe(self.recognizer, samples)
+                text = self._asr(samples)
                 if text and code_word(text) == 'on':
                     self._voice(True, text)
                 elif text:
@@ -1010,8 +1101,11 @@ def _node_main(args):
                 done = self.turn_pool.submit(self.turn_model.complete, audio)
             who_f = self.who_pool.submit(self._who, samples[-self.who_max:])
             t0 = time.monotonic()
-            text = transcribe(self.recognizer, samples)
+            text, early = self._decode(samples, span)
             took = time.monotonic() - t0
+            if early:
+                self.get_logger().info(f'speech-to-text while they talked: {early} piece(s) of {seconds:.1f} s, '
+                                       f'{took:.2f} s left at the end')
             if not text:
                 self.get_logger().info(f'speech with no words ({seconds:.1f} s at {db:.0f} dBFS)')
                 return
@@ -1126,6 +1220,7 @@ def _node_main(args):
             if why == 'his voice trailed off' and action == 'chat' and self._would_ask_brain(said, t['who']):
                 self.turn_ids += 1
                 t['spec'] = self.turn_ids              # the brain thinks meanwhile; nothing is said yet
+                self._this_is(said, t['who'])
                 self.terse = self._owner_speaking(t['who']) and not diane_mode()
                 self.fun_name = None if self.terse else self._fun(t['who'])
                 self._ask_brain(said, who=t['who'], hold=t['spec'])
@@ -1252,6 +1347,7 @@ def _node_main(args):
                     self._okay()
                     self.last_heard = now
                     return
+            self._this_is(text, who)
             self.terse = self._owner_speaking(who) and not diane_mode()
             self.fun_name = None if self.terse else self._fun(who)
             # Diane mode (the TALK button): the conversation is open, name or no name
@@ -1389,15 +1485,19 @@ def _node_main(args):
             (not_owner_below). Never a voice that might be him - except in Diane mode (the
             TALK button), when it is Diane whoever is talking."""
             if diane_mode():
-                return self.fun_woman
+                # 2026-10-18: a voice she has learned (Linda) is that person, else Diane as before
+                return self._named(who) or self.fun_woman
             if (who is None or who.name is None or self.voices is None or not self.voices.has(self.owner)
                     or self._owner_speaking(who)):
                 return None
+            named = self._named(who)
+            if named:
+                return named
             if who.name.lower() != self.owner.lower():             # nearest someone she has learned
                 if self.fun_voices and who.name.lower() not in self.fun_voices:
                     return None
                 if who.confident or who.score >= self.voices.same:
-                    return f'{who.name}, {self.fun_relation}'
+                    return f'{who.name}, {self._relation(who.name)}'
             if who.seconds < speaker.SURE_SECONDS:
                 return None                                       # too short to be sure it is not him
             owner = self._owner_score(who)
@@ -1408,6 +1508,41 @@ def _node_main(args):
                                        + ('): Diane, the fun personality' if woman else '): a guest, the fun personality'))
                 return self.fun_woman if woman else self.fun_unknown
             return None
+
+        def _relation(self, name: str) -> str:
+            return self.relations.get(name.lower(), self.fun_relation)
+
+        def _named(self, who):
+            """"Linda, Diane's mother" when the voice is surely someone she has learned who is not
+            Steve, or the voice that just said "Rosie, this is Linda"; else None."""
+            if who is None or who.emb is None or self.voices is None:
+                return None
+            if who.confident and who.name.lower() != self.owner.lower():
+                return f'{who.name}, {self._relation(who.name)}'
+            if self.this_is is not None:
+                name, emb, at = self.this_is
+                if time.monotonic() - at > 3600.0:
+                    self.this_is = None
+                elif (who.seconds >= 1.0 and not self._owner_speaking(who)
+                      and self.voices.cosine(who.emb, emb) >= self.voices.same):
+                    return f'{name}, {self._relation(name)}'
+            return None
+
+        def _this_is(self, text: str, who) -> bool:
+            """"Rosie, this is Linda" / "It's Linda" / "Linda here": that voice is Linda for this
+            conversation, before (or without) a voice lesson. True if it was that."""
+            t = normalize(text)
+            greet = rf"(?:(?:hey|hi|hello|ok|okay) )?(?:{NAME} )?(?:(?:hey|hi|hello) )?"
+            m = (re.fullmatch(greet + rf"(?:this is|it is|it's|its|i am|i'm|im) (\w+)(?: here)?(?: {NAME})?", t)
+                 or re.fullmatch(greet + rf"(\w+) here(?: {NAME})?", t))
+            if not m or who is None or who.emb is None:
+                return False
+            name = m.group(1).lower()
+            if name not in self.relations or name == self.owner.lower():
+                return False
+            self.this_is = (name.capitalize(), who.emb, time.monotonic())
+            self.get_logger().info(f'"{text}": this voice is {name.capitalize()} for this conversation')
+            return True
 
         def _owner_score(self, who) -> float:
             """How much like the owner this print is, whoever it was nearest."""
@@ -1486,7 +1621,9 @@ def _node_main(args):
                 return
             until = time.monotonic() + 60.0
             audio = [who.audio]
-            if who.confident:
+            # 2026-10-18: a woman's voice the print takes for Steve's (it does, on this mic) must never
+            # be added to HIS print: she is a new voice, asked her name (Linda's lesson)
+            if who.confident and not (who.name.lower() == self.owner.lower() and self._high_voice(who)):
                 self.enrol = {'name': who.name, 'embs': [who.emb], 'first': who.emb, 'until': until, 'target': 4,
                               'audio': audio}
                 self._speak(f'I know your voice, {who.name}. Say a few more sentences and I will know it even better.')
