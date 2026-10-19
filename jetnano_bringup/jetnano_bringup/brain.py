@@ -220,6 +220,12 @@ def _plain(text: str) -> str:
     return re.sub(r'[^a-z]', '', text.lower())
 
 
+# Steve, 2026-10-18: "change all the ha's to something else that means the same thing, but it sounds
+# funny when it says ha". A laugh on its own is her laugh sound; "Ha, ..." opening a sentence is dropped.
+LAUGH = re.compile(r"^\W*(?:ha+h?(?:[\s,-]*ha+h?)*|hee(?:[\s,-]*hee)*|lol)\W*$", re.I)
+LAUGH_OPENING = re.compile(r"^\W*ha+h?(?:[\s,-]*ha+h?)*[!,.]+\s+", re.I)
+
+
 def _unrepeat(sent: str, said: str) -> str:
     """The first sentence without what she already said out loud at its start, or the last word of it.
     2026-10-18, Diane: "The way I see it," then the answer "The way I see it, she's probably..." - the
@@ -691,7 +697,12 @@ class Brain(Node):
             if p in NO_WORDS:
                 self._sound('nope')
                 return
-        self._say(sent)
+        if LAUGH.match(sent):
+            self._say('[laugh]')        # through speak, so it plays after the words before it
+            return
+        sent = LAUGH_OPENING.sub('', sent)
+        if sent:
+            self._say(sent)
 
     def _plainly(self, chatty: str, terse: str) -> str:
         """A fixed line, in the voice for whoever is listening."""
