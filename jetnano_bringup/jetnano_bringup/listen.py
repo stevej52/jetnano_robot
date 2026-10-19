@@ -654,6 +654,14 @@ def _node_main(args):
             # Diane's mother, talks with her a lot; once she has said "Rosie, learn my voice", her
             # voice is Linda even in Diane mode. Names not listed get fun_relation.
             self.declare_parameter('voice_relations', "Linda=Diane's mother, Steve's mother-in-law;Diane=Steve's wife")
+            # Steve, 2026-10-18: "Linda is never going to do the voice lesson. So when you're talking to
+            # someone who's not me ... just ask, is this Diane? ... If you get a no, then you'll probably get a
+            # name ... if they don't give you a name, then you can just ask and assume that you're talking to
+            # that person from then on." A voice she cannot name is asked once; the answer names that voice
+            # for the visit (session_voice_s after it last spoke), matched at session_match or better.
+            self.declare_parameter('ask_who', True)
+            self.declare_parameter('session_match', 0.5)
+            self.declare_parameter('session_voice_s', 3600.0)
             self.declare_parameter('fun_unknown', 'not Steve - a guest whose name you do not know')
             self.declare_parameter('voice_actions', False)            # see ROBOT_ACTIONS
             self.declare_parameter('voice_match', speaker.MATCH)         # cosine: confidently that person
@@ -702,7 +710,14 @@ def _node_main(args):
                 name, _, rel = item.partition('=')
                 if name.strip() and rel.strip():
                     self.relations[name.strip().lower()] = rel.strip()
-            self.this_is = None                 # ("Linda", voice print, time): "Rosie, this is Linda"
+            self.session_voices = []            # [name, voice print, last heard]: named this visit (asked, or "this is Linda")
+            self.last_named = None              # (label, time): who spoke last, for a reply too short to print
+            self.whois = None                   # she asked "Is this Diane?" / "Who am I talking to?": the question
+            self.whois_skip = []                # (voice print, until): voices that gave no name, not asked again yet
+            self.next_lead = ''                 # "Hi, Linda!" as the lead-in of the next answer
+            self.ask_who = bool(p('ask_who'))
+            self.session_match = float(p('session_match'))
+            self.session_voice_s = float(p('session_voice_s'))
             self.hold_maybe = float(p('hold_maybe_s'))
             self.hold_unfinished = float(p('hold_unfinished_s'))
             self.hold_name = float(p('hold_name_s'))
@@ -1041,13 +1056,24 @@ def _node_main(args):
             return x[max(a - parts[0][0], 0):b - parts[0][0]]
 
         def _quiet_point(self, a: int, b: int) -> int:
-            """The quietest 20 ms between a and b (absolute): between words, where a cut harms no word."""
+            """The middle of the quietest 100 ms between a and b (absolute): between words, where a cut
+            harms no word. (20 ms found the silent closure inside "happy" and left "P." behind.)"""
             x = self._tape_slice(a, b)
             n = len(x) // 320
-            if n < 2:
+            if n < 6:
                 return b
             rms = np.sqrt(np.mean(x[:n * 320].reshape(n, 320) ** 2, axis=1))
-            return max(a, b - len(x)) + int(np.argmin(rms)) * 320 + 160
+            smooth = np.convolve(rms, np.ones(5) / 5.0, mode='valid')     # 5 frames = 100 ms
+            return max(a, b - len(x)) + (int(np.argmin(smooth)) + 2) * 320 + 160
+
+        @staticmethod
+        def _has_voice(part: np.ndarray, whole: np.ndarray) -> bool:
+            """Is there speech in part, or only the quiet after it? Its loudest 20 ms against the
+            stretch's own speaking level (90th percentile of its 20 ms frames)."""
+            def frames(x):
+                n = len(x) // 320
+                return np.sqrt(np.mean(x[:n * 320].reshape(n, 320) ** 2, axis=1)) if n else np.zeros(1)
+            return float(np.max(frames(part))) >= 0.15 * float(np.percentile(frames(whole), 90))
 
         def _asr(self, samples: np.ndarray) -> str:
             return self.asr_pool.submit(transcribe, self.recognizer, samples).result()
@@ -1074,8 +1100,10 @@ def _node_main(args):
                 self.get_logger().warning(f'early speech-to-text: {exc}')
                 return self._asr(samples), 0
             tail = samples[min(used[-1][1] - f0, len(samples)):]
-            if len(tail) > 1600:
-                texts.append(self._asr(tail))
+            if len(tail) > 1600 and self._has_voice(tail, samples):
+                last = self._asr(tail)
+                if len(re.sub(r'[^A-Za-z]', '', last)) > 1:          # "P.": a scrap of the last word
+                    texts.append(last)
             return ' '.join(t for t in texts if t).strip(), len(used)
 
         def _utterance(self, samples: np.ndarray, overlapped: bool, started: float = None, span=None) -> None:
@@ -1221,7 +1249,8 @@ def _node_main(args):
                                    + (f', done {p:.2f}' if p is not None else '') + ')')
             if re.search(rf'\b{NAME}\b', words) or self.enrol or self.offer_until or self.pending:
                 self._partial(said, hold)             # for her: the iPad shows she is still listening
-            if why == 'his voice trailed off' and action == 'chat' and self._would_ask_brain(said, t['who']):
+            if (why == 'his voice trailed off' and action == 'chat' and self._would_ask_brain(said, t['who'])
+                    and self.whois is None and not self._would_ask_who(t['who'])):
                 self.turn_ids += 1
                 t['spec'] = self.turn_ids              # the brain thinks meanwhile; nothing is said yet
                 self._this_is(said, t['who'])
@@ -1287,6 +1316,7 @@ def _node_main(args):
             return bool(diane_mode() or re.search(rf'\b{NAME}\b', normalize(said)) or self.enrol
                         or (self.offer_until and now < self.offer_until)
                         or (self.pending and now < self.pending_until)
+                        or (self.whois is not None and now < self.whois['until'])
                         or (self.open_chat and self.mode == 'chat'))
 
         def _heard_out(self, text: str, mine: bool) -> None:
@@ -1351,6 +1381,10 @@ def _node_main(args):
                     self._okay()
                     self.last_heard = now
                     return
+            if self.whois is not None:                       # "Is this Diane?" - is this the answer?
+                if now < self.whois['until'] and self._whois_answer(text, who):
+                    return
+                self.whois = None
             self._this_is(text, who)
             self.terse = self._owner_speaking(who) and not diane_mode()
             self.fun_name = None if self.terse else self._fun(who)
@@ -1373,6 +1407,8 @@ def _node_main(args):
                 self._publish_state()
             if action:
                 self.last_heard = now
+            if action == 'chat' and self._ask_who(text, seconds, db, who):
+                return
             if action == 'quiet':
                 self._stop()
                 self._say('ok')
@@ -1514,23 +1550,43 @@ def _node_main(args):
             return None
 
         def _relation(self, name: str) -> str:
-            return self.relations.get(name.lower(), self.fun_relation)
+            return self.relations.get(name.lower(), 'a guest of Steve and Diane')
 
         def _named(self, who):
             """"Linda, Diane's mother" when the voice is surely someone she has learned who is not
             Steve, or the voice that just said "Rosie, this is Linda"; else None."""
             if who is None or who.emb is None or self.voices is None:
                 return None
+            now = time.monotonic()
             if who.confident and who.name.lower() != self.owner.lower():
-                return f'{who.name}, {self._relation(who.name)}'
-            if self.this_is is not None:
-                name, emb, at = self.this_is
-                if time.monotonic() - at > 3600.0:
-                    self.this_is = None
-                elif (who.seconds >= 1.0 and not self._owner_speaking(who)
-                      and self.voices.cosine(who.emb, emb) >= self.voices.same):
-                    return f'{name}, {self._relation(name)}'
-            return None
+                self.last_named = (f'{who.name}, {self._relation(who.name)}', now)
+                return self.last_named[0]
+            self.session_voices = [v for v in self.session_voices if now - v[2] < self.session_voice_s]
+            if not self.session_voices or self._owner_speaking(who):
+                return None
+            if who.seconds < speaker.SURE_SECONDS:
+                # "yes" is too short to print: whoever was talking a moment ago
+                return self.last_named[0] if self.last_named and now - self.last_named[1] < 60.0 else None
+            per = {}                             # each person's best print against this voice
+            for v in self.session_voices:
+                c = self.voices.cosine(who.emb, v[1])
+                if c > per.get(v[0], (-1.0, None))[0]:
+                    per[v[0]] = (c, v)
+            ranked = sorted(per.items(), key=lambda kv: -kv[1][0])
+            name, (score, best) = ranked[0]
+            if score < self.session_match:
+                return None
+            last = self.last_named[0].split(',')[0] if self.last_named and now - self.last_named[1] < 120.0 else None
+            if len(ranked) > 1 and score - ranked[1][1][0] < 0.05 and last in (ranked[0][0], ranked[1][0]):
+                name, (score, best) = last, per[last]           # too close to call: who was just talking
+            for v in self.session_voices:
+                if v[0] == name:
+                    v[2] = now                   # still talking: the visit goes on
+            if (score >= self.session_match + 0.1 and sum(v[0] == name for v in self.session_voices) < 8
+                    and not any(v[1] is who.emb for v in self.session_voices)):
+                self.session_voices.append([name, who.emb, now])   # a sure one: one more print of them
+            self.last_named = (f'{name}, {self._relation(name)}', now)
+            return self.last_named[0]
 
         def _this_is(self, text: str, who) -> bool:
             """"Rosie, this is Linda" / "It's Linda" / "Linda here": that voice is Linda for this
@@ -1544,8 +1600,74 @@ def _node_main(args):
             name = m.group(1).lower()
             if name not in self.relations or name == self.owner.lower():
                 return False
-            self.this_is = (name.capitalize(), who.emb, time.monotonic())
+            self.session_voices.append([name.capitalize(), who.emb, time.monotonic()])
             self.get_logger().info(f'"{text}": this voice is {name.capitalize()} for this conversation')
+            return True
+
+        def _would_ask_who(self, who) -> bool:
+            """A voice that is not Steve's and that she cannot name: she asks who it is."""
+            if (not self.ask_who or self.whois is not None or who is None or who.emb is None or self.voices is None
+                    or who.seconds < speaker.SURE_SECONDS or self._owner_speaking(who) or self._named(who)):
+                return False
+            now = time.monotonic()
+            self.whois_skip = [(e, u) for e, u in self.whois_skip if now < u]
+            return not any(self.voices.cosine(who.emb, e) >= self.session_match for e, _ in self.whois_skip)
+
+        def _ask_who(self, text: str, seconds: float, db, who) -> bool:
+            """"Is this Diane?" (a woman's voice) or "Who am I talking to?"; what they said is answered
+            once she knows. True if she asked."""
+            if not self._would_ask_who(who):
+                return False
+            woman = self._high_voice(who)
+            self.whois = {'text': text, 'seconds': seconds, 'db': db, 'who': who, 'embs': [who.emb],
+                          'stage': 'diane?' if woman else 'name?', 'until': time.monotonic() + 30.0}
+            question = 'Is this Diane?' if woman else 'Who am I talking to?'
+            near = max(((self.voices.cosine(who.emb, v[1]), v[0]) for v in self.session_voices), default=None)
+            self.get_logger().info(f'a voice she cannot name ({who.label}'
+                                   + (f'; nearest this visit {near[1]} {near[0]:.2f}' if near else '') + f'): asks "{question}"')
+            self._speak(question)
+            return True
+
+        def _whois_answer(self, text: str, who) -> bool:
+            """The answer to her "Is this Diane?" / "Who am I talking to?". A name (or yes = Diane): that voice
+            is that person from now on, and what they first said is answered. A bare no: she asks the name.
+            Anything else: she stops asking that voice for a while. True if it was an answer."""
+            w = self.whois
+            t = normalize(text)
+            not_a_name = NOT_NAMES | {'her', 'his', 'not', 'fine', 'good', 'well', 'done', 'here', NAME}
+            m = re.search(r"\b(?:this is|it is|it's|its|i am|i'm|im|my name is|my name's|name is|call me)\s+([a-z]+)", t)
+            name = m.group(1) if m and m.group(1) not in not_a_name and len(m.group(1)) > 1 else None
+            if name is None:
+                known = [n for n in self.relations if re.search(rf'\b{n}\b', t)]
+                if known and len(t.split()) <= 6:
+                    name = known[0]
+            if name is None and w['stage'] == 'diane?':
+                if _has(t, YES) and not _has(t, NO):
+                    name = 'diane'
+                elif _has(t, NO):
+                    w['stage'], w['until'] = 'name?', time.monotonic() + 30.0
+                    self.get_logger().info(f'"{text}": not Diane - asks the name')
+                    self._speak('Oh, sorry! Who am I talking to?')
+                    return True
+            elif name is None:
+                words = NAME_PREFIX.sub('', t).strip().split(' ') if t else []
+                if 0 < len(words) <= 3 and len(words[0]) > 1 and words[0] not in not_a_name:
+                    name = words[0]
+            self.whois = None
+            if name is None:
+                self.get_logger().info(f'"{text}": no name - she stops asking that voice for 10 minutes')
+                self.whois_skip.append((w['embs'][0], time.monotonic() + 600.0))
+                return False                          # just talk: handled as before
+            name = name.capitalize()
+            if (who is not None and who.emb is not None and who.seconds >= speaker.SURE_SECONDS
+                    and not self._owner_speaking(who) and self.voices.cosine(who.emb, w['embs'][0]) >= self.session_match):
+                w['embs'].append(who.emb)              # the same voice answered: a second print of it
+            now = time.monotonic()
+            for e in w['embs']:
+                self.session_voices.append([name, e, now])
+            self.get_logger().info(f'"{text}": that voice is {name} for this visit')
+            self.next_lead = f'Hi, {name}!'
+            self._understand(w['text'], w['seconds'], 0.0, w['db'], w['who'])
             return True
 
         def _owner_score(self, who) -> float:
@@ -1573,6 +1695,8 @@ def _node_main(args):
             Mapping is the owner's alone once she knows his voice."""
             if who is not None and who.emb is not None:
                 addressed = re.search(rf'\b{NAME}\b', normalize(text)) is not None
+                if diane_mode() and (self._named(who) or self._would_ask_who(who)):
+                    addressed = True             # Linda and Diane take turns: both are talking to her (or asked who)
                 if addressed or self.mode != 'chat' or self.chat_voice is None:
                     self.chat_voice = who.emb
                 elif who.seconds >= 2.0 and self.voices.cosine(who.emb, self.chat_voice) < self.voices.same:
@@ -1888,6 +2012,8 @@ def _node_main(args):
             # Steve gets no lead-in at all; nor does an answer thought out ahead (hold:
             # the brain keeps it until brain/turn says go - he may not be done yet)
             lead = '' if think or self.terse or hold is not None else lead_in(text, self.last_opener)
+            if self.next_lead and not self.terse:
+                lead, self.next_lead = self.next_lead, ''
             if lead:
                 self._speak(lead)
                 self.last_opener = lead if lead in LEAD_OPENERS else self.last_opener

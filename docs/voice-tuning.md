@@ -26,10 +26,21 @@ shows something better.
   `turn_sure_p` 0.8, holds `hold_maybe_s` 2.0, `hold_unfinished_s` 20.0, `hold_name_s` 2.5.
 - Speech recogniser: Parakeet TDT 0.6B v2 int8, 2 threads (`asr` parakeet).
 - `JOKE_WORDS` only real requests ("tell me a joke", "say something funny"), not any "funny".
-- Voices: `voice_relations` "Linda=Diane's mother, Steve's mother-in-law;Diane=Steve's wife". In Diane
-  mode (the TALK button) a voice she has learned is that person, anyone else is Diane. "Rosie, this
-  is Linda" names the voice for the conversation (an hour). A woman's voice the print takes for
-  Steve's is never added to his print in a voice lesson.
+- Voices: `voice_relations` "Linda=Diane's mother, Steve's mother-in-law;Diane=Steve's wife". A
+  woman's voice the print takes for Steve's is never added to his print in a voice lesson.
+- **Who is this?** (`ask_who` true, Steve 2026-10-19: Linda will never do a voice lesson). A voice
+  that is not Steve's and that she cannot name gets "Is this Diane?" (a woman's voice) or "Who am I
+  talking to?"; what they said is kept and answered once she knows. "Yes" = Diane; "No, this is
+  Linda" = Linda; a bare "No" gets "Oh, sorry! Who am I talking to?". Then "Hi, Linda!" and her first
+  words are answered as Linda. That voice is that person for the visit (`session_voice_s` 3600 after
+  it last spoke), matched at `session_match` 0.5 or better, with more prints added as she talks; a
+  close call between two people stays with whoever just spoke; a reply too short to print ("yes") is
+  whoever spoke in the last minute. No name given: that voice is not asked again for 10 minutes.
+  "Rosie, this is Linda" does the same without being asked. In Diane mode a named (or not yet asked)
+  voice is in the conversation without saying "Rosie".
+- Test voices: two Kokoro voices are NOT a fair test of telling people apart (CAM++ scores them
+  0.27-0.90 against each other); Steve's real clips score 0.62-0.84 among themselves and 0.2-0.34
+  against them. The real Diane-vs-Linda separation is still to be seen live.
 
 ### Brain (`brain.py`)
 - **Cache-friendly prompt for the local model**: the system prompt holds only what does not change
