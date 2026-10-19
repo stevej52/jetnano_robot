@@ -206,6 +206,10 @@ NO_WORDS = {'no', 'nope', 'negative', 'incorrect', 'nosir', 'noitisnot', 'noitsn
 # conversation again (~1.5 ms a token: seconds, with someone who talks in long stretches).
 FACTS = "\n\nRight now: {facts}"
 LOCAL_NOTE = "\n\n[Not said out loud - for you only.{who} Right now: {facts}{lead_in}]"
+# In that note LEAD_IN's examples were taken as words to say (2026-10-18, Diane: "Dodgers. They lost again..."),
+# so the local model gets it plainly, with no example.
+LOCAL_LEAD_IN = (' You have already begun your answer out loud with "{lead_in}" - carry straight on from those '
+                 'words as one remark, without repeating them.')
 WHO = "\nYou are talking with {who}."
 LEAD_IN = """\n\nYou have already said out loud: "{lead_in}" Pick up mid-thought from there so it reads as one \
 natural remark. Do not repeat those words and do not start with the same word: after "Dodgers." begin with \
@@ -833,7 +837,7 @@ class Brain(Node):
             elif backend == 'local':
                 check = self.hand_over
                 note = LOCAL_NOTE.format(who=WHO.format(who=speaker).rstrip() if speaker else '', facts=self._facts(),
-                                         lead_in=LEAD_IN.format(lead_in=lead_in).rstrip() if lead_in else '')
+                                         lead_in=LOCAL_LEAD_IN.format(lead_in=lead_in) if lead_in else '')
                 local_messages = list(self.memory) + [{'role': 'user', 'content': text + note}]
                 full, first, reason = self._run('local', self._local_system(block, check), local_messages, check,
                                                 said=lead_in)
