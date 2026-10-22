@@ -68,6 +68,25 @@ shows something better.
   the way to speaking; it switches both ways by itself and logs each switch once.
 - `lead_s` 0.08, `pause_s` 0.2, every short line cached in `~/voice/tts_cache`.
 
+## Security: the cloud rules (Codex 2026-10-19, merged 2026-10-21)
+Steve had Codex harden the local Qwen model ("an open Chinese AI on my network"). On Rosie that left
+rules for what may go to Claude; kept, with the parts that broke her undone:
+- **Kept:** listen signs the exact words someone said (HMAC with `/etc/rosie-cloud/caller.key`,
+  root:jeston 640) and the brain sends Claude only signed words plus Claude's own earlier answers -
+  never the local model's output or memory. Single-use permits, 120 s, bound to the words and the brain's
+  epoch; Claude only at `https://api.anthropic.com/v1/messages` (no proxy, no redirect); "keep this
+  private" / "local only" / "no cloud" keeps a question local; strict checks on every brain ask;
+  picture uploads to Claude OFF (the stuck-rescue `brain/look`); the brain's endpoints hard-coded.
+  The rules module is `/opt/rosie-cloud/cloud_policy.py` (root-owned; robot-environment
+  `system/rosie-cloud`, `install_rosie_cloud.sh`). Missing or not root-owned: no Claude at all.
+- **Undone (they broke her):** Claude got a generic prompt instead of Rosie's (no Linda, no household,
+  long markdown answers) - now her own fixed prompt, which no model writes; thinking ahead was off - back,
+  held asks are signed and Claude still waits for "go"; the words were gone from her own logs - back;
+  brain.py / listen.py and the package folders were made root-owned, so builds failed - back to jeston;
+  a missing rules module crashed the brain at import (tests on H2) - now it fails closed.
+- Tested 2026-10-21 (voice unloaded): a signed question went to Claude and came back short, to Linda by
+  name; a held one went after "go"; an UNSIGNED one stayed local.
+
 ## Known limits
 - Steve Memory's background analysis shares the JEDIPC model; when it is busy a reply can take
   2-4 s to start (seen once, switching from Linda to Diane).

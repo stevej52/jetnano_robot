@@ -24,7 +24,7 @@ starts talking on the first one; the whole of it goes out on
 ``brain/answer``. A lead-in is what listen already said out loud before
 asking ("The Dodgers."): the model continues from it so the join is seamless.
 
-Two backends, ``backend`` = auto | local | claude:
+Historical behavior; automatic cloud use now additionally requires a bound caller permit:
   local   llama.cpp's server on the PC upstairs (``local_url``; Qwen 2.5 14B
           on the Radeon, robot-environment ``scripts/jedipc_brain.md``): free,
           private, fastest. Used whenever it answers ``/health``.
@@ -68,6 +68,31 @@ import threading
 import time
 import urllib.error
 import urllib.request
+
+import importlib.util as _cloud_import
+from pathlib import Path as _CloudPath
+import stat as _cloud_stat
+
+
+def _load_cloud_policy():
+    """The cloud rules (Codex, 2026-10-19): a root-owned module, /opt/rosie-cloud/cloud_policy.py
+    (robot-environment system/rosie-cloud). Missing or not protected: no Claude at all (fail
+    closed) - but no crash either, so the tests and the simulator, which have no such module, run."""
+    path = _CloudPath('/opt/rosie-cloud/cloud_policy.py')
+    try:
+        for parent in (path,) + tuple(path.parents):
+            info = parent.lstat()
+            if info.st_uid != 0 or info.st_mode & 0o022 or _cloud_stat.S_ISLNK(info.st_mode):
+                raise PermissionError('Unprotected cloud enforcement module')
+        spec = _cloud_import.spec_from_file_location('_rosie_protected_cloud_policy', path)
+        module = _cloud_import.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module, ''
+    except Exception as exc:  # noqa: BLE001
+        return None, f'{type(exc).__name__}: {exc}'
+
+
+_cloud_policy, _cloud_problem = _load_cloud_policy()
 
 import rclpy
 from rclpy.node import Node
@@ -317,22 +342,23 @@ class Brain(Node):
         self.declare_parameter('location', '')
         self.declare_parameter('spend_file', os.path.expanduser('~/voice/brain_spend.json'))
         p = lambda n: self.get_parameter(n).value  # noqa: E731
-        self.backend = str(p('backend'))
-        self.hand_over = bool(p('hand_over'))
-        self.local_url = str(p('local_url')).rstrip('/')
+        self.backend = 'auto'
+        self.hand_over = True
+        self.cloud_boundary = _cloud_policy.CloudBoundary() if _cloud_policy is not None else None
+        self.local_url = 'http://192.168.1.137:8090'  # existing interface until coordinated TLS switch
         self.local_model = str(p('local_model'))
         self.local_timeout = float(p('local_timeout_s'))
-        self.model = str(p('model'))
+        self.model = 'claude-opus-5-5'  # existing provider model; protected code controls destination
         self.max_tokens = int(p('max_tokens'))
-        self.effort_quick = str(p('effort_quick'))
-        self.effort_think = str(p('effort_think'))
-        self.max_tokens_quick = int(p('max_tokens_quick'))
-        self.max_tokens_think = int(p('max_tokens_think'))
+        self.effort_quick = 'low'
+        self.effort_think = 'high'
+        self.max_tokens_quick = max(1, min(int(p('max_tokens_quick')), 2000))
+        self.max_tokens_think = max(1, min(int(p('max_tokens_think')), 12000))
         self.timeout = float(p('timeout_s'))
         self.timeout_think = float(p('timeout_think_s'))
         self.bridge_after = float(p('bridge_after_s'))
         self._bridge_n = 0
-        self.budget = float(p('daily_budget_cents'))
+        self.budget = max(0.0, min(float(p('daily_budget_cents')), 200.0))
         self.price_in = float(p('price_in_per_million'))
         self.price_out = float(p('price_out_per_million'))
         self.memory = collections.deque(maxlen=int(p('memory_turns')) * 2)
@@ -374,14 +400,25 @@ class Brain(Node):
 
         key = os.environ.get('ANTHROPIC_API_KEY', '').strip()
         self.client = None
-        if key and self.backend in ('auto', 'claude'):
+        if key and self.cloud_boundary is not None and self.cloud_boundary.authority.enabled():
             import anthropic
-            self.client = anthropic.Anthropic(api_key=key, timeout=self.timeout_think, max_retries=1)
+            import httpx2
+            transport = httpx2.Client(verify=True, trust_env=False, follow_redirects=False,
+                                      event_hooks={'request': [_cloud_policy.restrict_provider_request]})
+            self.client = anthropic.Anthropic(api_key=key, timeout=self.timeout_think, max_retries=0,
+                base_url='https://api.anthropic.com', http_client=transport)
             self.get_logger().info(f'{self.model}, budget {self.budget:.0f} cents a day, '
                                    f'spent today {self._spent():.1f}')
         elif self.backend in ('auto', 'claude'):
             self.get_logger().warning('no ANTHROPIC_API_KEY in the environment: no Claude '
                                       '(put it in /etc/default/jetnano-robot)')
+        self.cloud_epoch_pub = self.create_publisher(
+            String, 'brain/cloud_epoch', QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
+        epoch = String()
+        epoch.data = self.cloud_boundary.epoch if self.cloud_boundary is not None else ''
+        if self.cloud_boundary is None:
+            self.get_logger().warning(f'no Claude: the cloud rules are not usable ({_cloud_problem})')
+        self.cloud_epoch_pub.publish(epoch)
         self.local_up = self.backend in ('auto', 'local') and self._local_ok()
         self.get_logger().info(f'local model at {self.local_url}: {"up" if self.local_up else "not answering"}')
         self.ready = None
@@ -423,7 +460,7 @@ class Brain(Node):
     def _pick(self):
         if self.local_up and self.backend in ('auto', 'local'):
             return 'local'
-        if self.client is not None and self.backend in ('auto', 'claude'):
+        if self._claude_ok():
             return 'claude'
         return None
 
@@ -431,6 +468,15 @@ class Brain(Node):
         """Opus 5.5: thinking is always on, effort sets how much. Text is
         yielded as it comes; a thinking block that runs longer than
         bridge_after_s with no words yet gets "Give me a moment" said."""
+        # Enforce caller authority at the final send (Codex, 2026-10-19): the messages are only the
+        # signed words someone said and Claude's own earlier answers - never the local model's output
+        # or memory. The system prompt is Rosie's own fixed text (persona, the household, who is
+        # talking, Linda's care rules, the time, her lead-in): written here, not by any model.
+        # (2026-10-21: with Codex's generic prompt, Claude no longer knew it was talking to Linda.)
+        if self._stopped or not self._await_go():
+            raise PermissionError('Cloud turn was canceled')
+        _, messages = self.cloud_boundary.take_payload()
+        cloud_reply = []
         self._thought = False
         bridged = [think]                    # the think path said it already
         timer = None
@@ -456,6 +502,7 @@ class Brain(Node):
                         timer.start()
                 elif event.type == 'content_block_delta' and event.delta.type == 'text_delta':
                     bridged[0] = True        # words are coming: no bridge needed
+                    cloud_reply.append(event.delta.text)
                     yield event.delta.text
             if timer is not None:
                 timer.cancel()
@@ -463,6 +510,7 @@ class Brain(Node):
         if final is not None:
             self._usage = (final.usage.input_tokens, final.usage.output_tokens)
             self._stop_reason = final.stop_reason
+            self.cloud_boundary.record_cloud_reply(''.join(cloud_reply))
 
     def _bridge(self) -> str:
         self._bridge_n += 1
@@ -494,7 +542,7 @@ class Brain(Node):
             self.get_logger().info(f'read ahead: {timings.get("prompt_n", "?")} new + {timings.get("cache_n", "?")} '
                                    f'cached tokens in {time.monotonic() - t0:.2f} s')
         except Exception as exc:  # noqa: BLE001 - only a head start
-            self.get_logger().info(f'read ahead: {type(exc).__name__}: {str(exc)[:80]}')
+            self.get_logger().info(f'read ahead unavailable: {type(exc).__name__}')
 
     def _stream_local(self, system: str, messages: list):
         body = json.dumps({'model': self.local_model, 'stream': True, 'max_tokens': self.max_tokens,
@@ -560,7 +608,9 @@ class Brain(Node):
                 req = json.loads(raw)
             except ValueError:
                 continue
-            rid = str(req.get('id', ''))
+            if not isinstance(req, dict):
+                continue
+            rid = str(req.get('id', ''))[:128]
             try:
                 answer = {'id': rid, 'text': self._look(req)}
             except Exception as exc:  # noqa: BLE001 - the asker must hear back either way
@@ -571,38 +621,9 @@ class Brain(Node):
             self.look_pub.publish(out)
 
     def _look(self, req: dict) -> str:
-        """One question about some pictures, to Claude; the answer's text."""
-        import base64
-        if self.client is None:
-            raise RuntimeError('no Claude (no key, or backend local)')
-        if self._spent() >= self.budget:
-            raise RuntimeError(f'the day\'s budget ({self.budget:.0f} cents) is spent')
-        content = []
-        for img in req.get('images', [])[:12]:
-            path = str(img.get('path', ''))
-            media = self.LOOK_MEDIA.get(os.path.splitext(path)[1].lower())
-            if media is None or not os.path.isfile(path) or os.path.getsize(path) > 4_000_000:
-                raise ValueError(f'unusable image {path!r}')
-            if img.get('label'):
-                content.append({'type': 'text', 'text': str(img['label'])})
-            with open(path, 'rb') as fh:
-                data = base64.standard_b64encode(fh.read()).decode('ascii')
-            content.append({'type': 'image', 'source': {'type': 'base64', 'media_type': media, 'data': data}})
-        content.append({'type': 'text', 'text': str(req.get('prompt', ''))})
-        t0 = time.monotonic()
-        with self.client.messages.stream(
-                model=self.model, system=str(req.get('system', '')),
-                messages=[{'role': 'user', 'content': content}],
-                max_tokens=int(req.get('max_tokens', 4000)),
-                output_config={'effort': str(req.get('effort', 'medium'))},
-                timeout=self.timeout_think) as stream:
-            final = stream.get_final_message()
-        text = ''.join(b.text for b in final.content if getattr(b, 'type', '') == 'text').strip()
-        cents = self._add_spend(final.usage.input_tokens, final.usage.output_tokens)
-        self.get_logger().info(f'look {req.get("id", "")}: {len(req.get("images", []))} picture(s), '
-                               f'{final.usage.input_tokens} in / {final.usage.output_tokens} out, '
-                               f'{time.monotonic() - t0:.1f} s, {cents:.1f} cents today: "{text[:120]}"')
-        return text
+        # No supplied path, approval text, or model output can authorize a file
+        # read or paid external transfer through this local inference client.
+        raise PermissionError('Cloud image transfers are disabled in the local Qwen process')
 
     # ------------------------------------------------------------- spend --
 
@@ -711,11 +732,27 @@ class Brain(Node):
     def _work(self) -> None:
         while rclpy.ok():
             raw = self.queue.get()
+            if not isinstance(raw, str) or len(raw) > 32768:
+                continue
             try:
                 ask = json.loads(raw) if raw.lstrip().startswith('{') else {'text': raw}
-            except ValueError:
-                ask = {'text': raw}
-            text = str(ask.get('text', '')).strip()
+            except (ValueError, RecursionError):
+                continue
+            if not isinstance(ask, dict) or not isinstance(ask.get('text'), str):
+                continue
+            if set(ask) - {'text', 'lead_in', 'think', 'terse', 'speaker', 'fun', 'hold', 'health', 'then_say', 'cloud_permit', 'local_only'}:
+                continue
+            requested_hold = ask.get('hold')
+            if requested_hold is not None and (type(requested_hold) is not int or not 0 <= requested_hold <= 2147483647):
+                continue
+            if self.cloud_boundary is not None:
+                self.cloud_boundary.begin(ask)
+            text = ask['text'].strip()
+            for k in ('speaker',):
+                if isinstance(ask.get(k), str):
+                    ask[k] = re.sub(r"[^A-Za-z ,'.-]", '', ask[k])[:80]
+            if isinstance(ask.get('fun'), dict) and isinstance(ask['fun'].get('who'), str):
+                ask['fun'] = {'who': re.sub(r"[^A-Za-z ,'.-]", '', ask['fun']['who'])[:80]}
             if text and ask.get('health'):
                 self._banter(text, str(ask.get('lead_in', '')).strip(), str(ask['health']),
                              str(ask.get('then_say', '')).strip())
@@ -745,7 +782,7 @@ class Brain(Node):
             try:
                 full, _first, _ = self._run('local', system, [{'role': 'user', 'content': text}], False, said=lead_in)
             except Exception as exc:      # noqa: BLE001
-                self.get_logger().warning(f'banter: {type(exc).__name__}: {str(exc)[:120]}')
+                self.get_logger().warning(f'banter unavailable: {type(exc).__name__}')
                 full = ''
         if not full.strip():
             how = 'plain'
@@ -763,7 +800,8 @@ class Brain(Node):
                                + (f' ({took:.1f} s of thinking)' if took else ''))
 
     def _claude_ok(self) -> bool:
-        return self.client is not None and self.backend in ('auto', 'claude') and self._spent() < self.budget
+        return (self.client is not None and self.cloud_boundary is not None and self.cloud_boundary.allowed()
+                and self._spent() < self.budget)
 
     def _run(self, backend: str, system: str, messages: list, check: bool, think: bool = False, said: str = ''):
         """Stream one answer, speaking sentence by sentence. With check, the
@@ -827,6 +865,8 @@ class Brain(Node):
             return
         if time.monotonic() - self.last_exchange > self.memory_timeout:
             self.memory.clear()
+            if self.cloud_boundary is not None:
+                self.cloud_boundary.history.clear()
         persona = PERSONA.format(place=self.place)
         fun_who = str(fun.get('who', 'not Steve')) if fun else ''
         block = (TERSE if self.terse else LINDA if fun_who.lower().startswith('linda')
@@ -840,12 +880,14 @@ class Brain(Node):
         handed, reason, direct = False, None, False
 
         def claude(heavy: bool, said: str):
-            """Opus, told what she has already said out loud."""
+            """Opus, told what she has already said out loud. The messages come from the cloud rules
+            at the final send (signed words + Claude's own earlier answers only); the system prompt is
+            Rosie's own fixed text, so Claude knows the household, who is talking and Linda's rules."""
             system = (persona + FACTS.format(facts=self._facts()) + who_line
                       + (LEAD_IN.format(lead_in=said) if said else ''))
             if heavy:
                 system += THINK_CARE
-            return self._run('claude', system, messages, False, think=heavy, said=said)
+            return self._run('claude', system, [], False, think=heavy, said=said)
 
         try:
             if think and self._claude_ok():            # "Rosie, think hard about ..."
@@ -898,7 +940,7 @@ class Brain(Node):
                 full = self._plainly("I'd rather not answer that one.", 'Declined.')
                 self._say(full)
         except Exception as exc:      # noqa: BLE001 - any trouble: say so, stay up
-            self.get_logger().warning(f'{backend}: {type(exc).__name__}: {str(exc)[:160]}')
+            self.get_logger().warning(f'{backend}: {type(exc).__name__}')
             if backend != 'local':
                 self._say(self._plainly("I can't reach my brain right now.", 'Brain unreachable.'))
                 return
@@ -914,7 +956,7 @@ class Brain(Node):
                 full, first, _ = claude(False, lead_in)
                 first = time.monotonic() - t0 if first is None else first
             except Exception as exc2:  # noqa: BLE001
-                self.get_logger().warning(f'claude: {type(exc2).__name__}: {str(exc2)[:160]}')
+                self.get_logger().warning(f'claude: {type(exc2).__name__}')
                 self._say(self._plainly("I can't reach my brain right now.", 'Brain unreachable.'))
                 return
         cents = self._add_spend(*self._usage) if backend == 'claude' else self._spent()
@@ -967,3 +1009,4 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
+

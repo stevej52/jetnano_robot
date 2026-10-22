@@ -537,6 +537,27 @@ def _node_main(args):
     from std_msgs.msg import Bool, Empty, Float32, Float32MultiArray, Int16MultiArray, String, UInt32
 
     from jetnano_bringup import news, speaker, turn, voice
+    import importlib.util as _cloud_import
+    from pathlib import Path as _CloudPath
+    import stat as _cloud_stat
+    # The cloud rules (Codex, 2026-10-19; brain.py _load_cloud_policy): missing or not protected ->
+    # she signs nothing, so nothing goes to Claude (fail closed), and she still hears and talks.
+    _cloud_path = _CloudPath('/opt/rosie-cloud/cloud_policy.py')
+    try:
+        for _cloud_parent in (_cloud_path,) + tuple(_cloud_path.parents):
+            _cloud_info = _cloud_parent.lstat()
+            if _cloud_info.st_uid != 0 or _cloud_info.st_mode & 0o022 or _cloud_stat.S_ISLNK(_cloud_info.st_mode):
+                raise PermissionError('Unprotected cloud enforcement module')
+        _cloud_spec = _cloud_import.spec_from_file_location('_rosie_protected_cloud_policy', _cloud_path)
+        _cloud_policy = _cloud_import.module_from_spec(_cloud_spec)
+        _cloud_spec.loader.exec_module(_cloud_policy)
+        Authority = _cloud_policy.Authority
+        is_local_only = _cloud_policy.is_local_only
+    except Exception:  # noqa: BLE001
+        Authority = None
+
+        def is_local_only(text):
+            return True
     from jetnano_bringup.health import Health
     from jetnano_bringup.voice import ENGLISH
 
@@ -787,6 +808,11 @@ def _node_main(args):
             self.say_pub = self.create_publisher(String, 'say', 10)
             self.speak_pub = self.create_publisher(String, 'speak', 10)
             self.stop_pub = self.create_publisher(Empty, 'sound/stop', 10)
+            self.cloud_authority = Authority() if Authority is not None else None
+            self.cloud_epoch = ''
+            self.cloud_epoch_sub = self.create_subscription(
+                String, 'brain/cloud_epoch', self._on_cloud_epoch,
+                QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL))
             self.ask_pub = self.create_publisher(String, 'brain/ask', 10)
             self.turn_pub = self.create_publisher(String, 'brain/turn', 10)     # go / drop a thought-ahead answer
             self.partial_pub = self.create_publisher(String, 'speech/partial', 10)   # "listening..." for the iPad
@@ -855,7 +881,8 @@ def _node_main(args):
             self._String, self._Bool, self._Empty = String, Bool, Empty
             self._Float32 = Float32
             self.heard_from = ''             # where the last sentence came from, for the log
-            threading.Thread(target=self._work, daemon=True, name='listen-asr').start()
+            self._asr_thread = threading.Thread(target=self._work, daemon=True, name='listen-asr')
+            self._asr_thread.start()
             self.get_logger().info(f'{p("asr")} ready in {time.monotonic() - t0:.1f} s; say "{NAME}" to her')
             self._publish_state()
 
@@ -1256,7 +1283,7 @@ def _node_main(args):
                 self._this_is(said, t['who'])
                 self.terse = self._owner_speaking(t['who']) and not diane_mode()
                 self.fun_name = None if self.terse else self._fun(t['who'])
-                self._ask_brain(said, who=t['who'], hold=t['spec'])
+                self._ask_brain(said, who=t['who'], hold=t['spec'], cloud_text=said)
 
         def _turn_end(self, why: str) -> None:
             t, self.turn = self.turn, None
@@ -1468,7 +1495,8 @@ def _node_main(args):
                 voice.write_wav(self.chat_file, voice.chat(n, rng=random))
                 self._say(self.chat_file)
             elif action == 'chat' and self._words() and self.brain_ready and _has(normalize(text), THINK_WORDS):
-                self._ask_brain(text, think=not self._guest(who), who=who)     # heavy thinking is the owner's
+                self._ask_brain(text, think=not self._guest(who), who=who,
+                                cloud_text=text if db is not None else None)     # heavy thinking is the owner's
             elif action == 'chat' and self._words() and self._guest(who) and _has(normalize(text),
                                                                                     REPORT_WORDS + SPEND_WORDS):
                 self._speak(f"That's between me and {self.owner}.")
@@ -1487,7 +1515,7 @@ def _node_main(args):
                 elif known_subject(text) or not self.brain_ready:
                     self._speak(english_reply(text, self.battery, health=self.health))
                 else:
-                    self._ask_brain(text, who=who)
+                    self._ask_brain(text, who=who, cloud_text=text if db is not None else None)
             elif action == 'chat':
                 t = normalize(text)
                 self.last_question, self.last_action = text, action
@@ -2007,7 +2035,11 @@ def _node_main(args):
                     self._speak(report.split('\n')[0] + '\nWant a full status report?')
             threading.Thread(target=run, daemon=True, name='listen-howami').start()
 
-        def _ask_brain(self, text: str, think: bool = False, who=None, hold: int = None) -> None:
+        def _on_cloud_epoch(self, msg) -> None:
+            value = str(msg.data)
+            self.cloud_epoch = value if re.fullmatch(r'[a-f0-9]{32}', value) else ''
+
+        def _ask_brain(self, text: str, think: bool = False, who=None, hold: int = None, cloud_text=None) -> None:
             # "think hard": the brain says "Give me a moment..." itself, no lead-in;
             # Steve gets no lead-in at all; nor does an answer thought out ahead (hold:
             # the brain keeps it until brain/turn says go - he may not be done yet)
@@ -2026,6 +2058,15 @@ def _node_main(args):
                 ask['fun'] = {'who': self.fun_name}
             if hold is not None:
                 ask['hold'] = hold
+            ask['local_only'] = is_local_only(text)
+            # Only words she heard may mint authority (Codex); typed and repeated asks do not. A held
+            # ask (thinking ahead) is signed too: the brain sends it on only after "go".
+            if (not ask['local_only'] and self.cloud_authority is not None and cloud_text == text
+                    and threading.current_thread() is self._asr_thread):
+                try:
+                    ask['cloud_permit'] = self.cloud_authority.issue(text, self.cloud_epoch, think=bool(think))
+                except Exception as exc:
+                    self.get_logger().warning(f'cloud authorization unavailable: {type(exc).__name__}')
             msg.data = json.dumps(ask)
             self.ask_pub.publish(msg)
 
