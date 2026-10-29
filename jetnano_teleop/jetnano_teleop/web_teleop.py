@@ -48,9 +48,11 @@ the robot's own network only.
 
 from __future__ import annotations
 
+import array
 import collections
 import json
 import os
+import queue
 import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -80,7 +82,7 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
 from sensor_msgs.msg import BatteryState
-from std_msgs.msg import Bool, Float64, String
+from std_msgs.msg import Bool, Float64, Int16MultiArray, String
 
 QUIET_FLAG = os.path.expanduser('~/voice/quiet')      # jetnano_bringup quiet.py / sounds.py
 DIANE_FLAG = os.path.expanduser('~/voice/diane')      # jetnano_bringup listen.py
@@ -111,6 +113,10 @@ def default_page() -> str:
 
 def default_dash() -> str:
     return os.path.join(os.path.dirname(default_page()), 'dash.html')
+
+
+def default_phone() -> str:
+    return os.path.join(os.path.dirname(default_page()), 'phone.html')
 
 
 class State:
@@ -172,6 +178,34 @@ def make_handler(node: 'WebTeleop'):
             except ValueError:
                 return {}
 
+        def _audio(self):
+            """What the mic hears, for the iPhone page's LISTEN: ears' speech channel
+            (/sound/audio, 16 kHz mono, 0.1 s chunks) as raw 16-bit little-endian PCM,
+            chunked, until the page lets go. Listen only - nothing goes back to the robot."""
+            if self.command == 'HEAD':
+                self._send(HTTPStatus.OK, b'', 'application/octet-stream')
+                return
+            q = node.audio_listen()
+            try:
+                self.send_response(HTTPStatus.OK)
+                self.send_header('Content-Type', 'application/octet-stream')
+                self.send_header('Cache-Control', 'no-store')
+                self.send_header('Transfer-Encoding', 'chunked')
+                self.send_header('X-Audio-Rate', '16000')
+                self.end_headers()
+                while True:
+                    try:
+                        data = q.get(timeout=2.0)
+                    except queue.Empty:
+                        data = bytes(2)      # one silent sample: finds a page that has gone
+                    self.wfile.write(b'%x\r\n%s\r\n' % (len(data), data))
+                    self.wfile.flush()
+            except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError, TimeoutError):
+                pass
+            finally:
+                node.audio_unlisten(q)
+                self.close_connection = True
+
         def log_message(self, fmt, *args):      # keep the console for real news
             node.get_logger().debug(fmt % args)
 
@@ -183,9 +217,14 @@ def make_handler(node: 'WebTeleop'):
                 self._send(HTTPStatus.OK, node.page, 'text/html; charset=utf-8')
             elif path in ('/dash', '/ipad', '/dash.html'):
                 self._send(HTTPStatus.OK, node.dash_page(), 'text/html; charset=utf-8')
+            elif path in ('/phone', '/iphone', '/phone.html'):
+                self._send(HTTPStatus.OK, node.phone_page(), 'text/html; charset=utf-8')
+            elif path == '/audio':
+                self._audio()
             elif path == '/dash/state':
                 snap = node.dash.snapshot(node.status()) if node.dash else {'error': 'no dashboard'}
                 snap['page_v'] = node.dash_page_version()     # the page reloads itself when it changes
+                snap['phone_v'] = node.phone_page_version()   # the same for the iPhone page
                 self._json(snap)
             elif path == '/dash/perf':
                 self._json({'reports': list(node.dash_perf)})
@@ -299,6 +338,9 @@ class WebTeleop(Node):
         # The iPad dashboard (Steve, 2026-09-27): /dash - cameras, sensors, everything
         # she knows, a STOP and no driving. Its data: dash.py.
         self.declare_parameter('dash_page', default_dash())
+        # The iPhone page (Steve, 2026-10-29): /phone - the pan-tilt camera on top with its
+        # controls under the thumb, a small radar, status, STOP and LISTEN (the mic, via /audio).
+        self.declare_parameter('phone_page', default_phone())
         # The pan-tilt from the dashboard (Steve, 2026-09-27: "hand pan and tilt ...
         # right next to the video feed"). View degrees -> servo degrees, as measured
         # 2026-09-26 (pca9685.yaml, motion_watch): pan 74.6 = dead ahead, higher =
@@ -390,6 +432,12 @@ class WebTeleop(Node):
         self._set_params = self.create_client(SetParameters, f'/{guard_node}/set_parameters')
         self._poll_future = None
         self.create_timer(3.0, self._poll_guard)
+
+        # LISTEN on the iPhone page: /sound/audio is followed only while a page listens
+        self._audio_lock = threading.Lock()
+        self._audio_qs = []
+        self._audio_sub = None
+        self.create_timer(1.0, self._audio_manage)
 
         self.dash = None
         self.dash_perf = collections.deque(maxlen=720)     # the pages' own reports, 2 h of them
@@ -573,6 +621,52 @@ class WebTeleop(Node):
     def dash_page(self) -> bytes:
         # read each time, so the page can be edited without a restart
         return self._read_page(str(self.get_parameter('dash_page').value))
+
+    def phone_page(self) -> bytes:
+        return self._read_page(str(self.get_parameter('phone_page').value))
+
+    def phone_page_version(self) -> float:
+        try:
+            return os.path.getmtime(str(self.get_parameter('phone_page').value))
+        except OSError:
+            return 0.0
+
+    def audio_listen(self) -> queue.Queue:
+        q = queue.Queue(maxsize=30)          # 3 s; a page further behind than that loses the oldest
+        with self._audio_lock:
+            self._audio_qs.append(q)
+        self.get_logger().info(f'LISTEN: a page is listening to the mic ({len(self._audio_qs)})')
+        return q
+
+    def audio_unlisten(self, q) -> None:
+        with self._audio_lock:
+            if q in self._audio_qs:
+                self._audio_qs.remove(q)
+        self.get_logger().info(f'LISTEN: a page stopped listening ({len(self._audio_qs)} left)')
+
+    def _audio_manage(self) -> None:
+        """Subscribe to the mic only while a page listens (the timer, so the executor owns it)."""
+        with self._audio_lock:
+            wanted = bool(self._audio_qs)
+        if wanted and self._audio_sub is None:
+            self._audio_sub = self.create_subscription(Int16MultiArray, 'sound/audio', self._on_audio, 10)
+        elif not wanted and self._audio_sub is not None:
+            self.destroy_subscription(self._audio_sub)
+            self._audio_sub = None
+
+    def _on_audio(self, msg) -> None:
+        data = array.array('h', msg.data).tobytes()
+        with self._audio_lock:
+            qs = list(self._audio_qs)
+        for q in qs:
+            try:
+                q.put_nowait(data)
+            except queue.Full:
+                try:
+                    q.get_nowait()
+                    q.put_nowait(data)
+                except (queue.Empty, queue.Full):
+                    pass
 
     def dash_page_version(self) -> float:
         try:

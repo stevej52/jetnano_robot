@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Rosie">
+<meta name="theme-color" content="#05070c">
+<title>Rosie · iPhone</title>
+<!--
+  Rosie's iPhone page (Steve, 2026-10-29): the iPad dashboard cut down for an iPhone 17
+  Pro Max. The pan-tilt camera first, its controls under the thumb, a small radar and
+  the status. LISTEN plays what her mic hears (web_teleop /audio, ears' speech channel).
+  No driving here (that is /); STOP raises the same e_stop_web lock as the other pages.
+  Served by jetnano_teleop web_teleop at http://<robot>:8081/phone (or /iphone).
+  Camera: jetnano_bringup csi_cameras (:8082) front.mjpg. Data: /dash/state, 4 times a second.
+  Add it to the iPhone's home screen for a full-screen app.
+-->
+<style>
+  :root {
+    --bg: #05070c; --panel: rgba(14, 20, 32, 0.85); --edge: rgba(94, 242, 255, 0.16);
+    --text: #d9e7f5; --dim: #7f93ab; --faint: #3b4a60;
+    --cyan: #5ef2ff; --green: #3dffa8; --amber: #ffc048; --red: #ff4d6d; --pink: #ff6bd6; --violet: #9b8cff;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.3 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    -webkit-user-select: none; user-select: none; overscroll-behavior: none; }
+  #app { display: flex; flex-direction: column; gap: 8px; min-height: 100vh; width: 100%; overflow-x: hidden;
+    padding: calc(env(safe-area-inset-top) + 4px) calc(env(safe-area-inset-right) + 8px)
+             calc(env(safe-area-inset-bottom) + 8px) calc(env(safe-area-inset-left) + 8px); }
+  .panel { position: relative; background: var(--panel); border: 1px solid var(--edge); border-radius: 14px; overflow: hidden; }
+
+  /* top bar: overall state, battery, STOP */
+  #bar { display: flex; align-items: center; gap: 8px; min-height: 44px; }
+  #overall { flex: 1; min-width: 0; font-weight: 700; font-size: 13px; letter-spacing: 0.06em; color: var(--green);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #overall.warn { color: var(--amber); } #overall.bad { color: var(--red); }
+  #hbat { font-family: var(--mono); font-size: 12px; color: var(--dim); white-space: nowrap; }
+  #drive { color: var(--dim); font-size: 12px; text-decoration: none; border: 1px solid var(--faint); border-radius: 10px; padding: 6px 8px; }
+  #stop { position: relative; overflow: hidden; height: 44px; min-width: 96px; padding: 0 14px; border: 0; border-radius: 12px;
+    background: var(--red); color: #fff; font-weight: 800; font-size: 16px; letter-spacing: 0.08em; }
+  #stop.stopped { background: #3a1018; color: var(--red); border: 2px solid var(--red); font-size: 11px; min-width: 132px; }
+  #stop .fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: rgba(61,255,168,0.35); }
+
+  /* the camera: full width, first thing on the page */
+  #cam { aspect-ratio: 4 / 3; background: #000; touch-action: none; }
+  #camimg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; opacity: 0; transition: opacity .3s; }
+  #nofeed { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--dim); font-size: 13px; }
+  #pantag { position: absolute; left: 8px; top: 8px; font: 600 11px var(--mono); color: var(--cyan);
+    background: rgba(5,7,12,0.65); padding: 3px 7px; border-radius: 8px; pointer-events: none; }
+  #camhint { position: absolute; right: 8px; bottom: 8px; font-size: 10px; color: rgba(217,231,245,0.55);
+    background: rgba(5,7,12,0.55); padding: 2px 6px; border-radius: 6px; pointer-events: none; }
+  #lost { display: none; position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); background: rgba(5,7,12,0.85);
+    color: var(--amber); font: 700 12px var(--mono); padding: 8px 12px; border-radius: 10px; border: 1px solid var(--amber); }
+
+  /* pan-tilt controls: a stick on the left, aim buttons on the right */
+  #look { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 10px; padding: 10px; align-items: center; }
+  #lookpad { position: relative; width: 150px; height: 150px; border-radius: 50%; touch-action: none;
+    background: radial-gradient(circle, rgba(94,242,255,0.10), rgba(94,242,255,0.02) 70%); border: 1px solid var(--edge); }
+  #lookpad .chev { position: absolute; color: rgba(94,242,255,0.45); font-size: 12px; }
+  #lookpad .u { top: 6px; left: 50%; transform: translateX(-50%); } #lookpad .d { bottom: 6px; left: 50%; transform: translateX(-50%); }
+  #lookpad .l { left: 8px; top: 50%; transform: translateY(-50%); } #lookpad .r { right: 8px; top: 50%; transform: translateY(-50%); }
+  #knob { position: absolute; left: 50%; top: 50%; width: 58px; height: 58px; margin: -29px 0 0 -29px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #9ff8ff, #2aa9c0); box-shadow: 0 0 18px rgba(94,242,255,0.5); pointer-events: none; }
+  #aim { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  #aim button, #listenrow button { height: 44px; border: 1px solid var(--edge); border-radius: 11px; background: rgba(94,242,255,0.07);
+    color: var(--text); font-weight: 700; font-size: 12px; padding: 0 2px; white-space: nowrap; overflow: hidden; }
+  #aim button:active, #listenrow button:active { background: rgba(94,242,255,0.25); }
+  #aim .ctr { color: var(--cyan); }
+
+  /* LISTEN */
+  #listenrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 0 10px 10px; }
+  #listen.on { background: rgba(61,255,168,0.18); border-color: var(--green); color: var(--green); }
+  #listen.wait { color: var(--amber); border-color: var(--amber); }
+  #gain { min-width: 58px; font-family: var(--mono); }
+  #micnote { grid-column: 1 / -1; font-size: 11px; color: var(--dim); display: flex; align-items: center; gap: 8px; }
+  .meter { flex: 1; height: 5px; border-radius: 3px; background: rgba(94,242,255,0.08); overflow: hidden; }
+  .meter i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, var(--green), var(--amber)); }
+
+  /* radar + status side by side */
+  #lower { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+  #radarp { aspect-ratio: 1; }
+  #radar { position: absolute; inset: 0; width: 100%; height: 100%; }
+  #tzoom { position: absolute; right: 6px; top: 6px; border: 1px solid var(--edge); background: rgba(5,7,12,0.6); color: var(--cyan);
+    font: 600 11px var(--mono); border-radius: 8px; padding: 4px 7px; }
+  #status { padding: 8px; display: flex; flex-direction: column; gap: 5px; }
+  .row { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-size: 12px; }
+  .row .k { color: var(--dim); display: flex; align-items: center; gap: 5px; }
+  .row .v { font-family: var(--mono); font-size: 12px; text-align: right; white-space: nowrap; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); display: inline-block; flex: none; }
+  .dot.ok { background: var(--green); } .dot.warn { background: var(--amber); } .dot.bad { background: var(--red); }
+  #badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+  .badge { font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 6px; background: rgba(94,242,255,0.08); color: var(--cyan); }
+  .badge.red { background: rgba(255,77,109,0.18); color: var(--red); } .badge.amber { background: rgba(255,192,72,0.15); color: var(--amber); }
+  .badge.green { background: rgba(61,255,168,0.12); color: var(--green); }
+
+  /* turned sideways: camera on the left, everything else beside it */
+  @media (orientation: landscape) {
+    #app { display: grid; grid-template-columns: 1.35fr 1fr; grid-template-rows: auto 1fr; height: 100vh; overflow: hidden; }
+    #bar { grid-column: 1 / -1; }
+    #cam { grid-row: 2; aspect-ratio: auto !important; height: 100%; }
+    #side { grid-row: 2; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+    #look { grid-template-columns: 120px minmax(0, 1fr); } #lookpad { width: 120px; height: 120px; }
+  }
+  @media (orientation: portrait) { #side { display: contents; } }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="bar">
+    <div id="overall" class="warn">connecting…</div>
+    <span id="hbat">—</span>
+    <a id="drive" href="/">DRIVE</a>
+    <button id="stop">STOP</button>
+  </div>
+
+  <section id="cam" class="panel">
+    <div id="nofeed">pan-tilt camera not streaming</div>
+    <img id="camimg" alt="">
+    <span id="pantag">PAN 0° · TILT 0°</span>
+    <span id="camhint">drag to aim · double-tap = ahead</span>
+    <div id="lost">NO ANSWER FROM ROSIE</div>
+  </section>
+
+  <div id="side">
+    <section class="panel">
+      <div id="look">
+        <div id="lookpad"><span class="chev u">▲</span><span class="chev d">▼</span><span class="chev l">◀</span><span class="chev r">▶</span><div id="knob"></div></div>
+        <div id="aim">
+          <button data-pan="60">◀ 60°</button><button data-tilt="15">▲ UP</button><button data-pan="-60">60° ▶</button>
+          <button data-pan="25">◀ 25°</button><button class="ctr" data-ahead="1">AHEAD</button><button data-pan="-25">25° ▶</button>
+          <button data-pan="105" data-abs="1">◀◀ FULL</button><button data-tilt="-15">▼ DOWN</button><button data-pan="-69" data-abs="1">FULL ▶▶</button>
+        </div>
+      </div>
+      <div id="listenrow">
+        <button id="listen">🎧 LISTEN</button>
+        <button id="gain">×2</button>
+        <div id="micnote"><span id="mictext">mic</span><div class="meter"><i id="lvlbar"></i></div></div>
+      </div>
+    </section>
+
+    <div id="lower">
+      <section id="radarp" class="panel"><canvas id="radar"></canvas><button id="tzoom">4 M</button></section>
+      <section id="status" class="panel">
+        <div class="row"><span class="k">Speed</span><span class="v" id="speed">—</span></div>
+        <div class="row"><span class="k">Heading</span><span class="v" id="heading">—</span></div>
+        <div class="row"><span class="k">Wi-Fi</span><span class="v" id="wifi">—</span></div>
+        <div class="row"><span class="k"><span class="dot" id="dcpu"></span>CPU · temp</span><span class="v" id="cpu">—</span></div>
+        <div id="streams"></div>
+        <div id="badges"></div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var host = location.hostname;
+  var $ = function (id) { return document.getElementById(id); };
+  var S = null;                 // the last /dash/state
+  var zoom = 4;                 // radar half-width in metres
+
+  function post(path, body) {
+    return fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+  }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function badge(text, cls) { return '<span class="badge ' + (cls || '') + '">' + esc(text) + '</span>'; }
+
+  // ----------------------------------------------------------------- camera
+  var img = $('camimg'), retry = null;
+  function camGo() { img.src = 'http://' + host + ':8082/front.mjpg?t=' + Date.now(); }
+  img.onload = function () {
+    img.style.opacity = 1; $('nofeed').style.display = 'none';
+    if (img.naturalWidth && img.naturalHeight) $('cam').style.aspectRatio = img.naturalWidth + ' / ' + img.naturalHeight;   // the box fits the picture
+  };
+  img.onerror = function () { img.style.opacity = 0; $('nofeed').style.display = 'flex'; clearTimeout(retry); retry = setTimeout(camGo, 2500); };
+  camGo();
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) camGo(); });
+
+  // ------------------------------------------------------------------- STOP
+  var stopBtn = $('stop'), holdT = null, holdStart = 0;
+  function stopped() { return S && S.page && S.page.e_stop; }
+  function paintStop() {
+    if (stopped()) { stopBtn.classList.add('stopped'); stopBtn.innerHTML = '<span class="fill" id="fill"></span>STOPPED · HOLD TO GO'; }
+    else { stopBtn.classList.remove('stopped'); stopBtn.textContent = 'STOP'; }
+  }
+  function press(e) {
+    e.preventDefault();
+    if (!stopped()) { post('/stop').then(poll); if (navigator.vibrate) navigator.vibrate(60); return; }
+    holdStart = performance.now();
+    holdT = setInterval(function () {
+      var f = Math.min(1, (performance.now() - holdStart) / 1200), fill = $('fill');
+      if (fill) fill.style.width = (f * 100) + '%';
+      if (f >= 1) { clearInterval(holdT); holdT = null; post('/go').then(poll); }
+    }, 30);
+  }
+  function release() { if (holdT) { clearInterval(holdT); holdT = null; var fill = $('fill'); if (fill) fill.style.width = 0; } }
+  stopBtn.addEventListener('touchstart', press, { passive: false });
+  stopBtn.addEventListener('mousedown', press);
+  ['touchend', 'touchcancel', 'mouseup', 'mouseleave'].forEach(function (ev) { stopBtn.addEventListener(ev, release); });
+
+  // --------------------------------------------------------------- pan-tilt
+  // view degrees: pan + = left, tilt + = up (web_teleop turns them into servo degrees)
+  var look = { pan: 0, tilt: 0 }, lookSent = 0, lookLocal = 0, pad = { x: 0, y: 0, held: false };
+  var LIM = { pan: [-69, 105], tilt: [-78, 78] };
+  function clampLook() { look.pan = Math.max(LIM.pan[0], Math.min(LIM.pan[1], look.pan)); look.tilt = Math.max(LIM.tilt[0], Math.min(LIM.tilt[1], look.tilt)); }
+  function paintLook() {
+    var p = Math.round(look.pan), t = Math.round(look.tilt);
+    $('pantag').textContent = 'PAN ' + (p === 0 ? '0°' : Math.abs(p) + '° ' + (p > 0 ? 'L' : 'R')) + ' · TILT ' + (t === 0 ? '0°' : Math.abs(t) + '° ' + (t > 0 ? 'UP' : 'DN'));
+  }
+  function sendLook(force) {
+    var now = performance.now(); lookLocal = now; clampLook(); paintLook();
+    if (!force && now - lookSent < 90) return;
+    lookSent = now;
+    post('/look', { pan: look.pan, tilt: look.tilt }).catch(function () {});
+  }
+  // the stick: further from the middle = faster
+  var padEl = $('lookpad'), knob = $('knob');
+  function padMove(e) {
+    var r = padEl.getBoundingClientRect(), rad = r.width / 2;
+    var x = (e.clientX - r.left - rad) / rad, y = (e.clientY - r.top - rad) / rad, m = Math.hypot(x, y);
+    if (m > 1) { x /= m; y /= m; }
+    pad.x = x; pad.y = y; knob.style.transform = 'translate(' + (x * rad * 0.62) + 'px,' + (y * rad * 0.62) + 'px)';
+  }
+  padEl.addEventListener('pointerdown', function (e) { e.preventDefault(); padEl.setPointerCapture(e.pointerId); pad.held = true; padMove(e); });
+  padEl.addEventListener('pointermove', function (e) { if (pad.held) padMove(e); });
+  function padUp() { pad.held = false; pad.x = pad.y = 0; knob.style.transform = ''; sendLook(true); }
+  padEl.addEventListener('pointerup', padUp); padEl.addEventListener('pointercancel', padUp);
+  var lastT = performance.now();
+  setInterval(function () {
+    var now = performance.now(), dt = (now - lastT) / 1000; lastT = now;
+    if (!pad.held) return;
+    function curve(v) { var a = Math.abs(v) < 0.12 ? 0 : v; return a * Math.abs(a); }     // fine near the middle
+    var dp = -curve(pad.x) * 75 * dt, dtl = -curve(pad.y) * 50 * dt;
+    if (dp || dtl) { look.pan += dp; look.tilt += dtl; sendLook(false); }
+  }, 40);
+  // the aim buttons: steps, or straight to a side
+  Array.prototype.forEach.call(document.querySelectorAll('#aim button'), function (b) {
+    b.addEventListener('click', function () {
+      var d = b.dataset;
+      if (d.ahead) { look.pan = 0; look.tilt = 0; }
+      else if (d.abs) { look.pan = +d.pan; }
+      else { if (d.pan) look.pan += +d.pan; if (d.tilt) look.tilt += +d.tilt; }
+      sendLook(true);
+    });
+  });
+  // drag the picture: the camera follows the finger; double-tap = straight ahead
+  var cam = $('cam'), drag = null, lastTap = 0;
+  cam.addEventListener('pointerdown', function (e) {
+    e.preventDefault(); cam.setPointerCapture(e.pointerId); drag = { x: e.clientX, y: e.clientY };
+    var now = performance.now(); if (now - lastTap < 320) { look.pan = 0; look.tilt = 0; sendLook(true); } lastTap = now;
+  });
+  cam.addEventListener('pointermove', function (e) {
+    if (!drag) return; var r = cam.getBoundingClientRect();
+    look.pan -= (e.clientX - drag.x) / r.width * 70; look.tilt -= (e.clientY - drag.y) / r.height * 40;
+    drag = { x: e.clientX, y: e.clientY }; sendLook(false);
+  });
+  function dragEnd() { if (drag) { drag = null; sendLook(true); } }
+  cam.addEventListener('pointerup', dragEnd); cam.addEventListener('pointercancel', dragEnd);
+
+  // ----------------------------------------------------------------- LISTEN
+  // /audio: ears' speech channel, raw 16-bit PCM at 16 kHz, played through Web Audio.
+  // iOS wants the audio started from a tap; audioSession 'playback' plays with the
+  // ring/silent switch on silent (iOS 17+).
+  var GAINS = [1, 2, 4, 8], gainIx = 1, actx = null, gainNode = null, reader = null, listening = false, nextT = 0, carry = null, heard = 0;
+  function paintListen(state) {
+    var b = $('listen');
+    b.className = state === 'on' ? 'on' : state === 'wait' ? 'wait' : '';
+    b.textContent = state === 'on' ? '🎧 LISTENING · TAP TO STOP' : state === 'wait' ? '🎧 CONNECTING…' : '🎧 LISTEN';
+  }
+  function playPcm(bytes) {
+    // two bytes a sample; keep an odd byte for the next piece
+    if (carry) { var j = new Uint8Array(carry.length + bytes.length); j.set(carry); j.set(bytes, carry.length); bytes = j; carry = null; }
+    if (bytes.length & 1) { carry = bytes.slice(bytes.length - 1); bytes = bytes.slice(0, bytes.length - 1); }
+    var n = bytes.length / 2; if (n < 2) return;
+    var dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.length);
+    var ratio = actx.sampleRate / 16000, m = Math.floor(n * ratio);
+    var buf = actx.createBuffer(1, m, actx.sampleRate), out = buf.getChannelData(0);
+    for (var i = 0; i < m; i++) {               // linear interpolation 16 kHz -> the phone's rate
+      var x = i / ratio, k = Math.floor(x), f = x - k;
+      var a = dv.getInt16(Math.min(k, n - 1) * 2, true), c = dv.getInt16(Math.min(k + 1, n - 1) * 2, true);
+      out[i] = (a + (c - a) * f) / 32768;
+    }
+    var src = actx.createBufferSource(); src.buffer = buf; src.connect(gainNode);
+    var now = actx.currentTime;
+    if (nextT < now + 0.05 || nextT > now + 1.2) nextT = now + 0.25;   // start, or catch up after a stall
+    src.start(nextT); nextT += buf.duration;
+    heard = performance.now();
+  }
+  function startListen() {
+    if (!actx) {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      actx = new AC(); gainNode = actx.createGain(); gainNode.connect(actx.destination);
+    }
+    try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) { /* older iOS */ }
+    actx.resume(); gainNode.gain.value = GAINS[gainIx];
+    listening = true; nextT = 0; carry = null; paintListen('wait');
+    fetch('/audio', { cache: 'no-store' }).then(function (r) {
+      if (!r.ok || !r.body) throw new Error('no stream');
+      reader = r.body.getReader();
+      function pump() {
+        return reader.read().then(function (res) {
+          if (res.done || !listening) return;
+          if (res.value && res.value.length > 4) { playPcm(res.value); paintListen('on'); }
+          return pump();
+        });
+      }
+      return pump();
+    }).catch(function () {}).then(function () {
+      reader = null;
+      if (listening) setTimeout(function () { if (listening) startListen(); }, 1500);   // dropped: try again
+    });
+  }
+  function stopListen() {
+    listening = false; paintListen('');
+    if (reader) { try { reader.cancel(); } catch (e) { /* gone already */ } reader = null; }
+    if (actx) actx.suspend();
+  }
+  $('listen').addEventListener('click', function () { if (listening) stopListen(); else startListen(); });
+  $('gain').addEventListener('click', function () {
+    gainIx = (gainIx + 1) % GAINS.length; this.textContent = '×' + GAINS[gainIx];
+    if (gainNode) gainNode.gain.value = GAINS[gainIx];
+  });
+  document.addEventListener('visibilitychange', function () { if (document.hidden && listening) stopListen(); });
+
+  // ----------------------------------------------------------------- render
+  var LABEL = { lidar: 'Lidar', vo: 'Visual odo', odometry: 'EKF', mic: 'Mic', battery: 'Battery' };
+  function render() {
+    if (!S) return;
+    var wd = S.watchdog || {}, sys = S.system || {}, page = S.page || {}, streams = wd.streams || {};
+    var probs = wd.problems || [], ov = $('overall');
+    ov.className = S.watchdog ? (probs.length ? 'bad' : (wd.grace ? 'warn' : '')) : 'warn';
+    ov.textContent = !S.watchdog ? 'watchdog quiet' : probs.length ? probs.length + ' problem' + (probs.length > 1 ? 's' : '') + ' · ' + probs[0]
+      : wd.grace ? 'starting up' : 'ALL SYSTEMS GO';
+    var b = page.battery;
+    $('hbat').textContent = b ? (b[1] != null ? b[1] + '% · ' : '') + b[0].toFixed(1) + ' V' : 'wall';
+    paintStop();
+    if (page.look && !pad.held && !drag && performance.now() - lookLocal > 1500) { look.pan = page.look[0]; look.tilt = page.look[1]; paintLook(); }
+
+    var m = S.motion;
+    $('speed').textContent = m ? m.speed.toFixed(2) + ' m/s' : '—';
+    $('heading').textContent = m ? ((m.heading + 360) % 360) + '°' : '—';
+    $('wifi').textContent = sys.wifi_dbm != null ? sys.wifi_dbm + ' dBm' : '—';
+    var t = sys.temps || {}, hot = Math.max.apply(null, Object.keys(t).map(function (k) { return t[k]; }).concat([0]));
+    $('cpu').textContent = (sys.cpu != null ? sys.cpu + ' %' : '—') + (hot ? ' · ' + hot.toFixed(0) + '°' : '');
+    $('dcpu').className = 'dot ' + (sys.cpu == null ? '' : sys.cpu > 85 || hot > 80 ? 'warn' : 'ok');
+
+    var html = '';
+    Object.keys(LABEL).forEach(function (k) {
+      var s = streams[k]; if (!s) return;
+      var cls = s.state === 'ok' ? (s.hz > 0 ? 'ok' : '') : (/start|grace|wait/.test(s.state) ? 'warn' : 'bad');
+      var v = s.hz > 0 ? s.hz.toFixed(s.hz < 10 ? 1 : 0) + ' Hz' : (s.state === 'ok' ? 'idle' : s.state);
+      html += '<div class="row"><span class="k"><span class="dot ' + cls + '"></span>' + LABEL[k] + '</span><span class="v">' + esc(v) + '</span></div>';
+    });
+    $('streams').innerHTML = html;
+
+    var locks = S.locks || {}, badges = [];
+    if (locks.e_stop_web) badges.push(badge('Web stop', 'red'));
+    if (locks.e_stop_joy) badges.push(badge('Stick stop', 'red'));
+    if (locks.e_stop) badges.push(badge('Battery stop', 'red'));
+    if (locks.e_stop_motion) badges.push(badge('Motion stop', 'red'));
+    if (page.guard === 'blocked') badges.push(badge('Blocked', 'red'));
+    else if (page.guard === 'slowed') badges.push(badge('Slowed', 'amber'));
+    if (page.guard_enabled === false) badges.push(badge('Guard OFF', 'red'));
+    $('badges').innerHTML = badges.join('');
+
+    // the mic: is ears running (voice stack loaded), and how loud the room is
+    var lv = S.level, micOn = !!page.voice_loaded;
+    $('lvlbar').style.width = lv != null ? Math.max(0, Math.min(100, (lv + 70) * 2)) + '%' : 0;
+    $('mictext').textContent = !micOn ? 'mic off · voice stack not loaded'
+      : (lv != null ? 'room ' + lv.toFixed(0) + ' dBFS' : 'mic on') + (listening && performance.now() - heard > 3000 ? ' · no sound yet' : '');
+  }
+
+  // ------------------------------------------------------------------ radar
+  var radar = $('radar'), rctx = radar.getContext('2d'), sweep = 0;
+  $('tzoom').onclick = function () { zoom = zoom === 2 ? 4 : zoom === 4 ? 8 : 2; this.textContent = zoom + ' M'; };
+  var ZONES = { stopF: [0.20, 0.37, 0.16], slowF: [0.20, 1.00, 0.22], stopB: [-0.37, -0.20, 0.16], slowB: [-0.80, -0.20, 0.22] };
+  function drawRadar() {
+    var r = radar.getBoundingClientRect(), d = window.devicePixelRatio || 1;
+    if (!r.width) return;
+    if (radar.width !== Math.round(r.width * d) || radar.height !== Math.round(r.height * d)) { radar.width = Math.round(r.width * d); radar.height = Math.round(r.height * d); }
+    var w = r.width, h = r.height, c = rctx;
+    c.setTransform(d, 0, 0, d, 0, 0); c.clearRect(0, 0, w, h);
+    var cx = w / 2, cy = h * 0.56, sc = Math.min(w, h) / 2 / zoom * 0.95;
+    function P(x, y) { return [cx - y * sc, cy - x * sc]; }
+    c.lineWidth = 1;
+    for (var k = 1; k <= zoom; k++) {
+      c.strokeStyle = k % 2 ? 'rgba(94,242,255,0.10)' : 'rgba(94,242,255,0.18)';
+      c.beginPath(); c.arc(cx, cy, k * sc, 0, Math.PI * 2); c.stroke();
+    }
+    sweep = (sweep + 0.05) % (Math.PI * 2);
+    var g = c.createRadialGradient(cx, cy, 0, cx, cy, zoom * sc);
+    g.addColorStop(0, 'rgba(94,242,255,0.10)'); g.addColorStop(1, 'rgba(94,242,255,0)');
+    c.fillStyle = g; c.beginPath(); c.moveTo(cx, cy); c.arc(cx, cy, zoom * sc, sweep, sweep + 0.5); c.closePath(); c.fill();
+    if (S) {
+      var fwd = S.cmd && S.cmd[0] > 0.01, back = S.cmd && S.cmd[0] < -0.01;
+      function box(z, fill, stroke) { var a = P(z[1], z[2]), b = P(z[0], -z[2]); c.fillStyle = fill; c.strokeStyle = stroke;
+        c.fillRect(a[0], a[1], b[0] - a[0], b[1] - a[1]); c.strokeRect(a[0], a[1], b[0] - a[0], b[1] - a[1]); }
+      box(ZONES.slowF, fwd ? 'rgba(255,192,72,0.12)' : 'rgba(255,192,72,0.04)', 'rgba(255,192,72,' + (fwd ? 0.6 : 0.2) + ')');
+      box(ZONES.slowB, back ? 'rgba(255,192,72,0.12)' : 'rgba(255,192,72,0.04)', 'rgba(255,192,72,' + (back ? 0.6 : 0.2) + ')');
+      box(ZONES.stopF, fwd ? 'rgba(255,77,109,0.25)' : 'rgba(255,77,109,0.08)', 'rgba(255,77,109,' + (fwd ? 0.8 : 0.3) + ')');
+      box(ZONES.stopB, back ? 'rgba(255,77,109,0.25)' : 'rgba(255,77,109,0.08)', 'rgba(255,77,109,' + (back ? 0.8 : 0.3) + ')');
+      c.fillStyle = 'rgba(255,192,72,0.8)';
+      (S.obstacles || []).forEach(function (p) { var q = P(p[0], p[1]); c.fillRect(q[0] - 1, q[1] - 1, 2, 2); });
+      if (S.scan) {
+        c.fillStyle = '#5ef2ff';
+        for (var a = 0; a < 360; a++) {
+          var rr = S.scan[a]; if (rr == null || rr > zoom * 1.5) continue;
+          var ang = a * Math.PI / 180, q = P(rr * Math.cos(ang), rr * Math.sin(ang));
+          c.fillRect(q[0] - 1.5, q[1] - 1.5, 3, 3);
+        }
+      }
+      // which way the camera looks: a faint wedge from her nose
+      var la = look.pan * Math.PI / 180, R = zoom * 0.9, o = P(0.2, 0);
+      var e1 = P(R * Math.cos(la - 0.35), R * Math.sin(la - 0.35)), e2 = P(R * Math.cos(la + 0.35), R * Math.sin(la + 0.35));
+      c.fillStyle = 'rgba(155,140,255,0.12)'; c.beginPath(); c.moveTo(o[0], o[1]); c.lineTo(e1[0], e1[1]); c.lineTo(e2[0], e2[1]); c.closePath(); c.fill();
+      if (S.mover && S.mover.age < 4) {
+        var mv = P(S.mover.x, S.mover.y), pr = 6 + 4 * Math.sin(performance.now() / 180);
+        c.strokeStyle = 'rgba(255,107,214,0.9)'; c.lineWidth = 2; c.beginPath(); c.arc(mv[0], mv[1], pr, 0, Math.PI * 2); c.stroke(); c.lineWidth = 1;
+      }
+      if (!S.scan) { c.fillStyle = '#7f93ab'; c.font = '11px ui-monospace, monospace'; c.textAlign = 'center'; c.fillText('no lidar', cx, h - 10); c.textAlign = 'left'; }
+    }
+    var p1 = P(0.20, 0.09), p2 = P(-0.20, -0.09);
+    c.fillStyle = 'rgba(94,242,255,0.25)'; c.strokeStyle = '#5ef2ff'; c.lineWidth = 1.5;
+    c.beginPath(); c.rect(p1[0], p1[1], p2[0] - p1[0], p2[1] - p1[1]); c.fill(); c.stroke();
+    var n1 = P(0.30, 0), n2 = P(0.20, 0.07), n3 = P(0.20, -0.07);
+    c.fillStyle = '#5ef2ff'; c.beginPath(); c.moveTo(n1[0], n1[1]); c.lineTo(n2[0], n2[1]); c.lineTo(n3[0], n3[1]); c.closePath(); c.fill();
+  }
+  var lastDraw = 0;
+  function frame(ts) {
+    if (ts - lastDraw > 40) { lastDraw = ts; drawRadar(); }    // 25 fps is plenty on a phone
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  // ------------------------------------------------------------------- data
+  var failures = 0, pageV = null;
+  function poll() {
+    return fetch('/dash/state', { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (j) {
+      if (j.phone_v) { if (pageV === null) pageV = j.phone_v; else if (j.phone_v !== pageV && !listening) { location.reload(); return; } }
+      S = j; failures = 0; $('lost').style.display = 'none'; render();
+    }).catch(function () { if (++failures > 3) $('lost').style.display = 'block'; });
+  }
+  setInterval(function () { if (!document.hidden) poll(); }, 250); poll();
+
+  // keep the screen on while the page is open
+  var lock = null;
+  function wake() { if (navigator.wakeLock && !lock) navigator.wakeLock.request('screen').then(function (l) { lock = l; l.onrelease = function () { lock = null; }; }).catch(function () {}); }
+  document.addEventListener('touchstart', wake, { passive: true });
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) wake(); });
+  wake();
+})();
+</script>
+</body>
+</html>
