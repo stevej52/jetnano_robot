@@ -53,6 +53,7 @@ import collections
 import json
 import os
 import queue
+import subprocess
 import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -341,6 +342,11 @@ class WebTeleop(Node):
         # The iPhone page (Steve, 2026-10-29): /phone - the pan-tilt camera on top with its
         # controls under the thumb, a small radar, status, STOP and LISTEN (the mic, via /audio).
         self.declare_parameter('phone_page', default_phone())
+        # LISTEN with the voice stack unloaded opens the mic itself, as ears would (VOICE_ARGS
+        # mic_channel:=0 = the reSpeaker's noise-suppressed channel)
+        self.declare_parameter('listen_card', 'L16K6Ch')
+        self.declare_parameter('listen_channels', 6)
+        self.declare_parameter('listen_channel', 0)
         # The pan-tilt from the dashboard (Steve, 2026-09-27: "hand pan and tilt ...
         # right next to the video feed"). View degrees -> servo degrees, as measured
         # 2026-09-26 (pca9685.yaml, motion_watch): pan 74.6 = dead ahead, higher =
@@ -437,6 +443,7 @@ class WebTeleop(Node):
         self._audio_lock = threading.Lock()
         self._audio_qs = []
         self._audio_sub = None
+        self._capture = None                 # our own arecord, while the voice stack is unloaded
         self.create_timer(1.0, self._audio_manage)
 
         self.dash = None
@@ -645,17 +652,71 @@ class WebTeleop(Node):
         self.get_logger().info(f'LISTEN: a page stopped listening ({len(self._audio_qs)} left)')
 
     def _audio_manage(self) -> None:
-        """Subscribe to the mic only while a page listens (the timer, so the executor owns it)."""
+        """While a page listens: ears' /sound/audio if the voice stack is loaded, otherwise
+        the mic opened here (Steve, 2026-10-29: "if I click the listen button, then load
+        everything needed for me to be able to listen"). Only one of the two at a time: the
+        mic can be opened once, so ours is closed the moment the voice stack is up."""
         with self._audio_lock:
             wanted = bool(self._audio_qs)
-        if wanted and self._audio_sub is None:
-            self._audio_sub = self.create_subscription(Int16MultiArray, 'sound/audio', self._on_audio, 10)
-        elif not wanted and self._audio_sub is not None:
-            self.destroy_subscription(self._audio_sub)
-            self._audio_sub = None
+        voice = wanted and self.voice_loaded()
+        if wanted and voice:
+            self._capture_stop()
+            if self._audio_sub is None:
+                self._audio_sub = self.create_subscription(Int16MultiArray, 'sound/audio', self._on_audio, 10)
+        else:
+            if self._audio_sub is not None:
+                self.destroy_subscription(self._audio_sub)
+                self._audio_sub = None
+            if wanted:
+                self._capture_start()
+            else:
+                self._capture_stop()
+
+    def _capture_start(self) -> None:
+        if self._capture is not None and self._capture.poll() is None:
+            return
+        card = str(self.get_parameter('listen_card').value)
+        channels = max(1, int(self.get_parameter('listen_channels').value))
+        channel = min(max(0, int(self.get_parameter('listen_channel').value)), channels - 1)
+        cmd = ['arecord', '-q', '-D', f'plughw:{card}', '-f', 'S16_LE', '-r', '16000',
+               '-c', str(channels), '-t', 'raw']
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        except OSError as exc:
+            self.get_logger().warning(f'LISTEN: cannot open the mic: {exc}')
+            return
+        self._capture = proc
+        self.get_logger().info(f'LISTEN: voice stack unloaded, mic {card} channel {channel + 1} opened for the page')
+        threading.Thread(target=self._capture_read, args=(proc, channels, channel), daemon=True,
+                         name='web_teleop-listen').start()
+
+    def _capture_read(self, proc, channels: int, channel: int) -> None:
+        width = 2 * channels
+        size = 1600 * width                      # 0.1 s, like ears
+        while True:
+            data = proc.stdout.read(size)
+            if not data or len(data) < width:
+                break
+            data = data[:len(data) // width * width]
+            if channels > 1:
+                frames = array.array('h', data)
+                data = frames[channel::channels].tobytes()
+            self._push_audio(data)
+
+    def _capture_stop(self) -> None:
+        proc, self._capture = self._capture, None
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            self.get_logger().info('LISTEN: mic closed')
 
     def _on_audio(self, msg) -> None:
-        data = array.array('h', msg.data).tobytes()
+        self._push_audio(array.array('h', msg.data).tobytes())
+
+    def _push_audio(self, data: bytes) -> None:
         with self._audio_lock:
             qs = list(self._audio_qs)
         for q in qs:
@@ -710,6 +771,8 @@ class WebTeleop(Node):
 
     def voice_switch(self, on: bool) -> None:
         from jetnano_bringup import voice_switch
+        if on:
+            self._capture_stop()             # LISTEN's mic, so ears can open it
         voice_switch.switch(on, quiet=True)
         self._voice_at = 0.0
 
