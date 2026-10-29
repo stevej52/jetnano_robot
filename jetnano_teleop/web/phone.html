@@ -271,6 +271,8 @@
   function paintListen(state) {
     var b = $('listen');
     b.className = state === 'on' ? 'on' : state === 'wait' ? 'wait' : '';
+    // connected but nothing to hear: the mic only runs while the voice stack is loaded
+    if (state === 'wait' && S && S.page && S.page.voice_loaded === false) { b.className = 'wait'; b.textContent = '🎧 MIC OFF · VOICE STACK UNLOADED'; return; }
     b.textContent = state === 'on' ? '🎧 LISTENING · TAP TO STOP' : state === 'wait' ? '🎧 CONNECTING…' : '🎧 LISTEN';
   }
   function playPcm(bytes) {
@@ -371,6 +373,7 @@
 
     // the mic: is ears running (voice stack loaded), and how loud the room is
     var lv = S.level, micOn = !!page.voice_loaded;
+    if (listening && performance.now() - heard > 1500) paintListen('wait');    // no sound coming: say why
     $('lvlbar').style.width = lv != null ? Math.max(0, Math.min(100, (lv + 70) * 2)) + '%' : 0;
     $('mictext').textContent = !micOn ? 'mic off · voice stack not loaded'
       : (lv != null ? 'room ' + lv.toFixed(0) + ' dBFS' : 'mic on') + (listening && performance.now() - heard > 3000 ? ' · no sound yet' : '');
