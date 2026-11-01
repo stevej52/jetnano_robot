@@ -328,15 +328,16 @@ class WhereAmI(Node):
             # a remembered place first (the bench): cheap, and the map would only say "not
             # on the map" there
             place, place_score = self._known_place(self.scan)
-            if why == 'at_home':
+            if place is not None:
+                # the bench first, even for ON MY SPOT: it stands within home_radius of the
+                # spot on the map, and up there the floor search could place her
+                verdict, reason, cands = place, f'the lidar sees the {place} (scan match {place_score:.2f})', []
+            elif why == 'at_home':
                 # a person put her on (or near) her spot: only that floor is searched, so a
                 # look-alike room elsewhere cannot win, and a weaker fit will do
-                place, place_score = None, 0.0
                 cands = locate(self.model, pts, near=self.home, radius=self.home_radius)
                 verdict, reason = judge(cands, self.home_accept, self.home_margin)
                 reason = f'near her spot, as asked: {reason}'
-            elif place is not None:
-                verdict, reason, cands = place, f'the lidar sees the {place} (scan match {place_score:.2f})', []
             else:
                 cands = locate(self.model, pts)
                 verdict, reason = judge(cands, self.accept, self.margin)
