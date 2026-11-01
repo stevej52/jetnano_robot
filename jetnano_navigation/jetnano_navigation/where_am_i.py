@@ -39,8 +39,10 @@ or near her parking spot, so only the floor within home_radius of it is searched
 
 accept_score 0.70 -> 0.55 (2026-10-31, Steve's demo): half a metre off her spot, with a
 box behind her and a window open, her best fit was 0.59 (the next place 0.50) and she
-would not drive. Replayed on 58 scans from the drives since 2026-09-27, the margin did
-the work: no wrong placement at any bar from 0.50 to 0.70, the same 55 right.
+would not drive. Replayed on 160 scans from the drives since 2026-09-27, the margin does
+the work: every bar from 0.55 to 0.70 places the same 151 right and the same 2 "wrong" -
+fits of 0.92 taken while she was driving, 0.4 and 0.85 m from a recorded pose that likely
+lagged - so the lower bar added nothing wrong.
 
 Stillness and "has she moved" come from the lidar odometry (8 Hz, cheap; set
 odom_topic to odometry/filtered if the lidar odometry is off), followed only while
