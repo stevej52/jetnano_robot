@@ -324,6 +324,24 @@ def _has(t: str, phrases) -> bool:
     return any(re.search(r'\b' + re.escape(p) + r'\b', t) for p in phrases)
 
 
+def addressed_part(text: str, longer_than: int = 30) -> str:
+    """A long turn with her name in it -> the sentence that starts at her name (and the next one when
+    that is only "Rosie."): the rest was talk to someone else. 2026-10-31: "Rosie, give me a status
+    update." sat inside 60 s of Steve explaining her to his guests and was never answered."""
+    if len(text.split()) <= longer_than:
+        return text
+    names = list(re.finditer(NAME_VARIANTS, text.lower()))
+    if not names:
+        return text
+    at = names[-1].start()
+    start = max(text.rfind(c, 0, at) for c in '.?!') + 1
+    sentences = re.findall(r'[^.?!]+[.?!]*', text[start:])
+    part = sentences[0].strip()
+    if len(part.split()) <= 2 and len(sentences) > 1:
+        part = f'{part} {sentences[1].strip()}'
+    return part or text
+
+
 def decide(text: str, mode: str):
     """What she does with what she heard -> (action, new mode).
     action: quiet | stop | thanks | talk | english | robot | repeat | bye | brief:<kind> | chat | None;
@@ -643,6 +661,11 @@ def _node_main(args):
             # else got "UNKNOWN" and "Okay." got "Anything on your mind?"). Answers to her
             # own questions (a name, "want to hear more?") still need no name.
             self.declare_parameter('open_chat', False)
+            # TALK (Diane mode) with guests in the room (Steve's demo, 2026-10-31): she answered bits of him
+            # explaining her to people. Now words without her name are for her only as a reply - this soon
+            # after she spoke, and this short; anything else needs "Rosie".
+            self.declare_parameter('talk_reply_s', 12.0)
+            self.declare_parameter('talk_reply_words', 30)
             self.declare_parameter('more_timeout_s', 25.0)          # how long "want to hear more?" waits
             self.declare_parameter('still_after_s', 2.0)
             self.declare_parameter('chat_file', '/tmp/rosie_chat.wav')
@@ -712,6 +735,8 @@ def _node_main(args):
                                              float(p('min_speech_s')), float(p('max_speech_s')))
             self.chat_timeout = float(p('chat_timeout_s'))
             self.open_chat = bool(p('open_chat'))
+            self.talk_reply_s = float(p('talk_reply_s'))
+            self.talk_reply_words = int(p('talk_reply_words'))
             self.turn_done_p = float(p('turn_done_p'))
             self.turn_sure_p = float(p('turn_sure_p'))
             # The voice print beside the speech-to-text (sherpa-onnx lets go of Python's lock):
@@ -1176,6 +1201,13 @@ def _node_main(args):
             if barged:
                 text = beyond_her_voice(text, ' '.join(list(self.own_text)[-3:])) or text
                 self.get_logger().info(f'the one she stopped for: {words_in(text)}')
+                if (diane_mode() and len(text.split()) > 4
+                        and not re.search(rf'\b{NAME}\b', normalize(text))):
+                    # TALK with guests: Steve carried on explaining her and she answered the
+                    # fragment instead of what he had asked (2026-10-31). Stopping was right;
+                    # answering talk that was not to her is not.
+                    self.get_logger().info('talk over her, not to her: she stays quiet')
+                    return
             if overlapped and code_word(text) == 'off':
                 self._understand(text, seconds, took, db)
                 return
@@ -1337,14 +1369,23 @@ def _node_main(args):
             (the iPad). Anything else is "heard 7 words" (Steve, 2026-09-29: her log had been
             keeping the household's conversations word for word)."""
             now = time.monotonic()
-            # Diane mode (the TALK button): she is in the conversation, name or no name. The
-            # first evening (2026-10-01) she answered "Rosa, can you speak?" and then dropped
-            # every sentence after it as "not for her".
-            return bool(diane_mode() or re.search(rf'\b{NAME}\b', normalize(said)) or self.enrol
+            # Diane mode (the TALK button): a reply to her needs no name. The first evening
+            # (2026-10-01) she answered "Rosa, can you speak?" and then dropped every sentence
+            # after it as "not for her"; since 2026-10-31 only a reply counts (_talk_reply).
+            return bool(self._talk_reply(said) or re.search(rf'\b{NAME}\b', normalize(said)) or self.enrol
                         or (self.offer_until and now < self.offer_until)
                         or (self.pending and now < self.pending_until)
                         or (self.whois is not None and now < self.whois['until'])
                         or (self.open_chat and self.mode == 'chat'))
+
+        def _talk_reply(self, said: str) -> bool:
+            """TALK (Diane mode): words without her name count as talking to her when they are a
+            reply - she spoke less than talk_reply_s ago - and short. Steve explaining her to his
+            guests for a minute is not a reply (2026-10-31: she answered "22,000 credits.")."""
+            if not diane_mode():
+                return False
+            recent = self.speaking or time.monotonic() - self.speaking_ended < self.talk_reply_s
+            return recent and len(said.split()) <= self.talk_reply_words
 
         def _heard_out(self, text: str, mine: bool) -> None:
             """speech/text: the words when they are for her, else only how many."""
@@ -1376,6 +1417,10 @@ def _node_main(args):
             if word == 'off':
                 self._voice(False, text)
                 return
+            part = addressed_part(text, self.talk_reply_words)
+            if part != text:
+                self.get_logger().info(f'{len(text.split())} words with her name in them: "{part}" is for her')
+                text = part
             if self.enrol:                                           # she is learning a voice
                 if now < self.enrol['until']:
                     if self._enrol_step(text, who):
@@ -1415,8 +1460,8 @@ def _node_main(args):
             self._this_is(text, who)
             self.terse = self._owner_speaking(who) and not diane_mode()
             self.fun_name = None if self.terse else self._fun(who)
-            # Diane mode (the TALK button): the conversation is open, name or no name
-            action, mode = decide(text, 'chat' if diane_mode() else self.mode if self.open_chat else 'idle')
+            # Diane mode (the TALK button): a reply to her needs no name (_talk_reply)
+            action, mode = decide(text, 'chat' if self._talk_reply(text) else self.mode if self.open_chat else 'idle')
             level = f', {db:.0f} dBFS' if db is not None else ', typed'
             voice_note = f', {who.label}' if who is not None else ''
             shown = f'"{text}"' if action or self._for_her(text) else f'{words_in(text)}, not for her'
@@ -1553,8 +1598,15 @@ def _node_main(args):
             (not_owner_below). Never a voice that might be him - except in Diane mode (the
             TALK button), when it is Diane whoever is talking."""
             if diane_mode():
-                # 2026-10-18: a voice she has learned (Linda) is that person, else Diane as before
-                return self._named(who) or self.fun_woman
+                # 2026-10-18: a voice she has learned (Linda) is that person, else Diane as before.
+                # 2026-10-31: but never Steve - she called him Diane twice at his demo, even right
+                # after "No, it's Steve." He gets her ordinary (not terse) self.
+                if self._owner_speaking(who) or self._sounds_like_owner(who):
+                    return None
+                named = self._named(who)
+                if named and named.split(',')[0].strip().lower() == self.owner.lower():
+                    return None
+                return named or self.fun_woman
             if (who is None or who.name is None or self.voices is None or not self.voices.has(self.owner)
                     or self._owner_speaking(who)):
                 return None
@@ -1578,7 +1630,17 @@ def _node_main(args):
             return None
 
         def _relation(self, name: str) -> str:
+            if name.lower() == self.owner.lower():
+                return 'who built you'           # not "a guest of Steve and Diane" (2026-10-31)
             return self.relations.get(name.lower(), 'a guest of Steve and Diane')
+
+        def _sounds_like_owner(self, who) -> bool:
+            """Nearest Steve's print and at least as close as the same-voice bar, and not pitched like a
+            woman's: too short or too soon to be SURE it is him, but never someone to ask "Is this
+            Diane?" (2026-10-31: she asked it of a clip labelled "Steve 100%")."""
+            return (who is not None and who.name is not None and self.voices is not None
+                    and who.name.lower() == self.owner.lower() and who.score >= self.voices.same
+                    and not self._high_voice(who))
 
         def _named(self, who):
             """"Linda, Diane's mother" when the voice is surely someone she has learned who is not
@@ -1635,7 +1697,8 @@ def _node_main(args):
         def _would_ask_who(self, who) -> bool:
             """A voice that is not Steve's and that she cannot name: she asks who it is."""
             if (not self.ask_who or self.whois is not None or who is None or who.emb is None or self.voices is None
-                    or who.seconds < speaker.SURE_SECONDS or self._owner_speaking(who) or self._named(who)):
+                    or who.seconds < speaker.SURE_SECONDS or self._owner_speaking(who) or self._sounds_like_owner(who)
+                    or self._named(who)):
                 return False
             now = time.monotonic()
             self.whois_skip = [(e, u) for e, u in self.whois_skip if now < u]
@@ -1723,7 +1786,7 @@ def _node_main(args):
             Mapping is the owner's alone once she knows his voice."""
             if who is not None and who.emb is not None:
                 addressed = re.search(rf'\b{NAME}\b', normalize(text)) is not None
-                if diane_mode() and (self._named(who) or self._would_ask_who(who)):
+                if self._talk_reply(text) and (self._named(who) or self._would_ask_who(who)):
                     addressed = True             # Linda and Diane take turns: both are talking to her (or asked who)
                 if addressed or self.mode != 'chat' or self.chat_voice is None:
                     self.chat_voice = who.emb

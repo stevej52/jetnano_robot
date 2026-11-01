@@ -324,6 +324,10 @@ class Brain(Node):
         # local model to start: on 2026-10-15 two 30 s waits ended in "I can't reach my brain right now".
         # Now Claude takes over (when it may) after 6 s of nothing.
         self.declare_parameter('local_timeout_s', 6.0)
+        # 2026-10-31 (Steve's demo): the PC upstairs was starved, every answer waited 6 s and then went to
+        # Claude, and /health - which answers at once even when the model crawls - put it back in use 30 s
+        # later. Now one slow or failed local call sends the next ones straight to Claude for this long.
+        self.declare_parameter('local_cooldown_s', 180.0)
         self.declare_parameter('warm_up', True)          # someone starts talking -> the local model reads ahead
         self.declare_parameter('model', 'claude-opus-5-5')          # Steve's choice, 2026-09-25
         self.declare_parameter('max_tokens', 160)                     # the local model's reply
@@ -348,6 +352,14 @@ class Brain(Node):
         self.local_url = 'http://192.168.1.137:8090'  # existing interface until coordinated TLS switch
         self.local_model = str(p('local_model'))
         self.local_timeout = float(p('local_timeout_s'))
+        self.local_cooldown = float(p('local_cooldown_s'))
+        self._local_cool_until = 0.0
+        # The guard in front of the model upstairs lets Rosie hold at most 2 connections (remote_slots);
+        # a third - a /health check during a read-ahead and a reply - was refused (30 refusals by
+        # 2026-10-31). So: no health check while a call is open, and one read-ahead at a time.
+        self._local_open = 0
+        self._local_open_lock = threading.Lock()
+        self._warming = False
         self.model = 'claude-opus-5-5'  # existing provider model; protected code controls destination
         self.max_tokens = int(p('max_tokens'))
         self.effort_quick = 'low'
@@ -441,8 +453,8 @@ class Brain(Node):
             return False
 
     def _check_local(self) -> None:
-        if self.backend not in ('auto', 'local'):
-            return
+        if self.backend not in ('auto', 'local') or self._local_open:
+            return                       # a call is open: it is the check, and a third connection is refused
         up = self._local_ok()
         if up != self.local_up:
             self.local_up = up
@@ -457,8 +469,35 @@ class Brain(Node):
             flag.data = ready
             self.ready_pub.publish(flag)
 
+    def _local_usable(self) -> bool:
+        """Up, wanted, and not cooling off after a slow or failed call."""
+        return (self.local_up and self.backend in ('auto', 'local')
+                and (self.backend == 'local' or time.monotonic() >= self._local_cool_until))
+
+    def _cool(self, why: str) -> None:
+        """A slow or failed local call: Claude answers for the next local_cooldown_s."""
+        cooling = time.monotonic() < self._local_cool_until
+        self._local_cool_until = time.monotonic() + self.local_cooldown
+        if not cooling:
+            self.get_logger().info(f'local model slow ({why}): Claude answers for the next '
+                                   f'{self.local_cooldown:.0f} s')
+
+    def _local_call(self, req, timeout: float):
+        """urlopen on the local model, counted as an open connection (see _local_open)."""
+        with self._local_open_lock:
+            self._local_open += 1
+        try:
+            return urllib.request.urlopen(req, timeout=timeout)
+        except BaseException:
+            self._local_closed()
+            raise
+
+    def _local_closed(self) -> None:
+        with self._local_open_lock:
+            self._local_open = max(0, self._local_open - 1)
+
     def _pick(self):
-        if self.local_up and self.backend in ('auto', 'local'):
+        if self._local_usable():
             return 'local'
         if self._claude_ok():
             return 'claude'
@@ -521,9 +560,10 @@ class Brain(Node):
         return PERSONA.format(place=self.place) + (HAND_OVER if check else '') + block
 
     def _on_speech(self, msg) -> None:
-        if (msg.data and self.warm_up and not self._busy and self.local_up and self.backend in ('auto', 'local')
+        if (msg.data and self.warm_up and not self._busy and not self._warming and self._local_usable()
                 and time.monotonic() - self._warmed_at > 15.0):
             self._warmed_at = time.monotonic()
+            self._warming = True
             threading.Thread(target=self._warm, daemon=True, name='brain-warm').start()
 
     def _warm(self) -> None:
@@ -537,12 +577,19 @@ class Brain(Node):
         try:
             req = urllib.request.Request(self.local_url + '/v1/chat/completions', data=body,
                                          headers={'Content-Type': 'application/json'})
-            with urllib.request.urlopen(req, timeout=20.0) as r:
+            r = self._local_call(req, 20.0)
+            try:
                 timings = json.load(r).get('timings') or {}
+            finally:
+                r.close()
+                self._local_closed()
             self.get_logger().info(f'read ahead: {timings.get("prompt_n", "?")} new + {timings.get("cache_n", "?")} '
                                    f'cached tokens in {time.monotonic() - t0:.2f} s')
         except Exception as exc:  # noqa: BLE001 - only a head start
             self.get_logger().info(f'read ahead unavailable: {type(exc).__name__}')
+            self._cool(f'read ahead {type(exc).__name__}')
+        finally:
+            self._warming = False
 
     def _stream_local(self, system: str, messages: list):
         body = json.dumps({'model': self.local_model, 'stream': True, 'max_tokens': self.max_tokens,
@@ -550,7 +597,8 @@ class Brain(Node):
                            'messages': [{'role': 'system', 'content': system}] + messages}).encode()
         req = urllib.request.Request(self.local_url + '/v1/chat/completions', data=body,
                                      headers={'Content-Type': 'application/json'})
-        with urllib.request.urlopen(req, timeout=self.local_timeout) as r:
+        r = self._local_call(req, self.local_timeout)
+        try:
             for raw in r:
                 if self._stopped:
                     break
@@ -569,6 +617,9 @@ class Brain(Node):
                     self._usage = (int(j['usage'].get('prompt_tokens', 0)), int(j['usage'].get('completion_tokens', 0)))
                 if j.get('timings'):
                     self._timings = j['timings']
+        finally:
+            r.close()
+            self._local_closed()
 
     # ------------------------------------------------------------- facts --
 
@@ -776,13 +827,14 @@ class Brain(Node):
         t0 = time.monotonic()
         self._stopped = False
         full, how = '', 'local'
-        if self.local_up and self.backend in ('auto', 'local'):
+        if self._local_usable():
             system = (PERSONA.format(place=self.place) + HEALTH_BANTER.format(report=report)
                       + (LEAD_IN.format(lead_in=lead_in) if lead_in else ''))
             try:
                 full, _first, _ = self._run('local', system, [{'role': 'user', 'content': text}], False, said=lead_in)
             except Exception as exc:      # noqa: BLE001
                 self.get_logger().warning(f'banter unavailable: {type(exc).__name__}')
+                self._cool(f'banter {type(exc).__name__}')
                 full = ''
         if not full.strip():
             how = 'plain'
@@ -945,6 +997,7 @@ class Brain(Node):
                 self._say(self._plainly("I can't reach my brain right now.", 'Brain unreachable.'))
                 return
             self.local_up = False
+            self._cool(type(exc).__name__)
             self._publish_ready()
             # slow or gone before a word of hers was said: Claude answers instead (2026-10-18)
             if self._said or self._stopped or not self._claude_ok() or not self._await_go():
