@@ -81,6 +81,18 @@ def test_nothing_to_go_on():
     assert judge(locate(model, np.zeros((5, 2))), 0.7, 1.15)[0] == 'not_on_map'
 
 
+def test_near_searches_only_round_the_spot():
+    occ, free = room('L')
+    model = MapModel(occ, free, RES, 0.0, 0.0)
+    x, y, yaw = 2.37, 1.81, math.radians(37)
+    pts = cast(occ, x, y, yaw)
+    there = locate(model, pts, near=(2.0, 2.0), radius=1.0)[0]
+    assert math.hypot(there[1] - x, there[2] - y) < 0.06
+    far = locate(model, pts, near=(6.5, 1.0), radius=1.0)
+    assert far and all(math.hypot(c[1] - 6.5, c[2] - 1.0) <= 1.0 + 0.13 for c in far)
+    assert far[0][0] < there[0]
+
+
 @pytest.mark.parametrize('pose, then, now, expect', [
     # facing +y on the map, 1 m forward on the odometry: 1 m further along +y
     ((5.0, 5.0, math.pi / 2), (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (5.0, 6.0, math.pi / 2)),

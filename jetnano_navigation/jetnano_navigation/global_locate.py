@@ -29,6 +29,13 @@ Tried on the bench, 2026-09-28 (1 m up, the lidar seeing the room above the
 furniture): the true spot scored 0.64 and two wrong spots in other rooms 0.66 and
 0.64 - so the answer comes with a verdict, not just a pose: see judge().
 ~6 s on one Jetson core for the 64 m2 house map.
+
+The search near a place (2026-10-31, Steve's demo): ``near`` searches only within
+``radius`` of a spot - her parking spot, for the "I'm on my spot" button, when a person
+vouches for roughly where she is. (A trimmed score - the best 70 % of the points - was
+tried that day for the box and open window that dropped her fit to 0.59 and rejected:
+on 58 replayed drive scans it scored nearly everywhere 0.9-1.0 and placed her wrong
+twice; the plain score with its margin placed none wrong at any bar from 0.50 to 0.70.)
 """
 
 from __future__ import annotations
@@ -146,10 +153,12 @@ def _distinct(a, b, dist_m: float, angle_rad: float) -> bool:
 
 
 def locate(model: MapModel, pts: np.ndarray, coarse_points: int = 120,
-           keep_per_heading: int = 60, seeds: int = 150, top: int = 3) -> list:
+           keep_per_heading: int = 60, seeds: int = 150, top: int = 3,
+           near: tuple | None = None, radius: float = 1.5) -> list:
     """The ``top`` best clearly different poses: [(score, x, y, yaw), ...], best first.
 
     ``pts``: the scan's points (N x 2) in her own frame (base_footprint), metres.
+    ``near``: (x, y) - search only the free floor within ``radius`` m of it.
     """
     if len(pts) < 20:
         return []
@@ -157,6 +166,11 @@ def locate(model: MapModel, pts: np.ndarray, coarse_points: int = 120,
     fr, fc = np.nonzero(model.free[::2, ::2])
     cx = model.x0 + (fc * 2 + 1) * model.res
     cy = model.y0 + (fr * 2 + 1) * model.res
+    if near is not None:
+        m = (cx - near[0]) ** 2 + (cy - near[1]) ** 2 <= radius * radius
+        cx, cy = cx[m], cy[m]
+        if not len(cx):
+            return []
     sub = pts[np.linspace(0, len(pts) - 1, min(coarse_points, len(pts))).astype(int)]
     best = []
     for yaw in np.radians(np.arange(0.0, 360.0, 5.0)):

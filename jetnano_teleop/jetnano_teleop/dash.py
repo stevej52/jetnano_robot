@@ -203,6 +203,7 @@ class Dashboard:
         self.wami = None
         sub(String, 'where_am_i/state', self._on_wami, LATCHED)
         self._locate = node.create_client(Trigger, 'where_am_i/locate')
+        self._at_home = node.create_client(Trigger, 'where_am_i/at_home')      # ON MY SPOT
         self.map_odom = None                 # map -> odom (x, y, yaw), from slam_toolbox's /pose
         self.pose_t = 0.0                    # when the last /pose came
         self.pending_pose = None             # a /pose that came while nobody watched
@@ -395,6 +396,13 @@ class Dashboard:
             return False, 'where_am_i is not running (robot.launch.py where_am_i:=true)'
         self._locate.call_async(Trigger.Request())
         return True, 'searching'
+
+    def at_home(self):
+        """ON MY SPOT: she is on or near her parking spot; where_am_i searches only there."""
+        if not self._at_home.service_is_ready():
+            return False, 'where_am_i is not running (robot.launch.py where_am_i:=true)'
+        self._at_home.call_async(Trigger.Request())
+        return True, 'searching near her spot'
 
     def _on_map(self, msg) -> None:
         w, h = msg.info.width, msg.info.height

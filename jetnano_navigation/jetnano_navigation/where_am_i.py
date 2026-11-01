@@ -34,8 +34,13 @@ taken, so it is carried forward with the odometry before localization gets it.
 
 The verdict, the best candidates and their scores go out on where_am_i/state (JSON,
 latched) for the dashboard, which also calls ~/locate (std_srvs/Trigger) - its
-WHERE AM I? button. accept_score and margin are provisional until measured on the
-floor (2026-09-28: to be tested).
+WHERE AM I? button - and ~/at_home - its ON MY SPOT button: a person says she is on
+or near her parking spot, so only the floor within home_radius of it is searched.
+
+accept_score 0.70 -> 0.55 (2026-10-31, Steve's demo): half a metre off her spot, with a
+box behind her and a window open, her best fit was 0.59 (the next place 0.50) and she
+would not drive. Replayed on 58 scans from the drives since 2026-09-27, the margin did
+the work: no wrong placement at any bar from 0.50 to 0.70, the same 55 right.
 
 Stillness and "has she moved" come from the lidar odometry (8 Hz, cheap; set
 odom_topic to odometry/filtered if the lidar odometry is off), followed only while
@@ -93,8 +98,16 @@ class WhereAmI(Node):
         super().__init__('where_am_i')
         p = self.declare_parameter
         self.map_base = os.path.expanduser(p('map', '~/maps/home').value)
-        self.accept = float(p('accept_score', 0.70).value)
+        self.accept = float(p('accept_score', 0.55).value)
         self.margin = float(p('margin', 1.15).value)
+        # ~/at_home (ON MY SPOT): the parking spot (map origin) and how far off a person may put her
+        self.home = (float(p('home_x', 0.0).value), float(p('home_y', 0.0).value))
+        self.home_radius = float(p('home_radius', 1.5).value)
+        # 2026-10-31 on recorded scans: today's start 0.59 vs 0.49 (x1.20) placed right; 10 scans
+        # from mid-lap, far from the spot, all unsure (best ratio x1.096) - so the same margin as a
+        # full search, and a bar just under today's fit
+        self.home_accept = float(p('home_accept', 0.50).value)
+        self.home_margin = float(p('home_margin', 1.15).value)
         self.auto = bool(p('auto', True).value)
         self.settle_s = float(p('settle_s', 25.0).value)       # after start, before the first try
         self.still_s = float(p('still_s', 2.0).value)
@@ -134,6 +147,7 @@ class WhereAmI(Node):
         self.odom_topic, self.odom_sub = odom_topic, None
         self._follow_odom(True)
         self.create_service(Trigger, '~/locate', self._on_locate)
+        self.create_service(Trigger, '~/at_home', self._on_at_home)
         self.create_service(Trigger, '~/remember_bench', self._on_remember_bench)
         self.create_timer(1.0, self._tick)
         self._publish()
@@ -198,6 +212,16 @@ class WhereAmI(Node):
         response.success = True
         response.message = 'searching' + ('' if self._still() or self.odom is None
                                          else ' (she is moving - the answer may be off)')
+        return response
+
+    def _on_at_home(self, request, response):
+        """ON MY SPOT: a person says she is on or near her parking spot."""
+        if self.busy.locked():
+            response.success, response.message = False, 'already searching'
+            return response
+        threading.Thread(target=self._run, args=('at_home',), daemon=True).start()
+        response.success = True
+        response.message = f'searching within {self.home_radius:g} m of her spot'
         return response
 
     def _on_remember_bench(self, request, response):
@@ -304,7 +328,14 @@ class WhereAmI(Node):
             # a remembered place first (the bench): cheap, and the map would only say "not
             # on the map" there
             place, place_score = self._known_place(self.scan)
-            if place is not None:
+            if why == 'at_home':
+                # a person put her on (or near) her spot: only that floor is searched, so a
+                # look-alike room elsewhere cannot win, and a weaker fit will do
+                place, place_score = None, 0.0
+                cands = locate(self.model, pts, near=self.home, radius=self.home_radius)
+                verdict, reason = judge(cands, self.home_accept, self.home_margin)
+                reason = f'near her spot, as asked: {reason}'
+            elif place is not None:
                 verdict, reason, cands = place, f'the lidar sees the {place} (scan match {place_score:.2f})', []
             else:
                 cands = locate(self.model, pts)
@@ -312,7 +343,9 @@ class WhereAmI(Node):
             took = time.monotonic() - t0
             result = {'state': verdict, 'why': reason, 'trigger': why, 'took_s': round(took, 1),
                       'scan_time': scan_time, 'place_score': round(place_score, 3),
-                      'points': int(len(pts)), 'accept': self.accept, 'margin': self.margin,
+                      'points': int(len(pts)),
+                      'accept': self.home_accept if why == 'at_home' else self.accept,
+                      'margin': self.home_margin if why == 'at_home' else self.margin,
                       'candidates': [{'score': round(c[0], 3), 'x': round(c[1], 2),
                                       'y': round(c[2], 2), 'yaw': round(c[3], 3)} for c in cands]}
             self.get_logger().info(

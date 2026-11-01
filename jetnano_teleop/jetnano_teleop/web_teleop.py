@@ -288,6 +288,11 @@ def make_handler(node: 'WebTeleop'):
                 ok, why = node.dash.locate() if node.dash else (False, 'no dashboard')
                 self._json({'ok': ok, 'why': why},
                            HTTPStatus.OK if ok else HTTPStatus.SERVICE_UNAVAILABLE)
+            elif path == '/dash/at_home':
+                # the dashboard's ON MY SPOT button (2026-10-31): where_am_i searches near her spot only
+                ok, why = node.dash.at_home() if node.dash else (False, 'no dashboard')
+                self._json({'ok': ok, 'why': why},
+                           HTTPStatus.OK if ok else HTTPStatus.SERVICE_UNAVAILABLE)
             elif path == '/voice':
                 # the universal switch (voice_switch.py): load or unload ears/sounds/speak/listen
                 on = bool(body.get('on', True))

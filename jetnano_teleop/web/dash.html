@@ -146,6 +146,8 @@
   #mapcv { position: absolute; inset: 0; width: 100%; height: 100%; }
   #wami { position: absolute; right: 8px; bottom: 8px; font: 700 10px/1 var(--mono); letter-spacing: 0.12em;
     padding: 8px 10px; border-radius: 7px; border: 1px solid var(--cyan); color: var(--cyan); background: rgba(5,7,12,0.75); }
+  #athome { position: absolute; right: 8px; bottom: 44px; font: 700 10px/1 var(--mono); letter-spacing: 0.12em;
+    padding: 8px 10px; border-radius: 7px; border: 1px solid var(--cyan); color: var(--cyan); background: rgba(5,7,12,0.75); }
 
   /* ---------------------------------------------------------- bottom row */
   #sys { grid-area: sys; }
@@ -232,7 +234,7 @@
     <h2>Surroundings <span class="tag" id="navtag"></span></h2>
     <div class="tabs"><button id="tradar" class="on">RADAR</button><button id="tmap">MAP</button><button id="tboth">OVERLAY</button><button id="tzoom">4 M</button></div>
     <canvas id="radar"></canvas>
-    <div id="mapwrap"><img id="mapimg" alt=""><canvas id="mapcv"></canvas><button id="wami">WHERE AM I?</button></div>
+    <div id="mapwrap"><img id="mapimg" alt=""><canvas id="mapcv"></canvas><button id="wami">WHERE AM I?</button><button id="athome">ON MY SPOT</button></div>
   </section>
 
   <section id="sys" class="panel">
@@ -380,6 +382,14 @@
       .then(function (j) { b.textContent = j.ok ? 'SEARCHING...' : 'NOT RUNNING'; })
       .catch(function () { b.textContent = 'NO ANSWER'; })
       .then(function () { setTimeout(function () { b.textContent = 'WHERE AM I?'; }, 6000); });
+  };
+  // she is on (or near) her parking spot: where_am_i searches only there (2026-10-31)
+  $('athome').onclick = function () {
+    var b = this; b.textContent = 'ASKING...';
+    fetch('/dash/at_home', { method: 'POST', body: '{}' }).then(function (r) { return r.json(); })
+      .then(function (j) { b.textContent = j.ok ? 'SEARCHING...' : 'NOT RUNNING'; })
+      .catch(function () { b.textContent = 'NO ANSWER'; })
+      .then(function () { setTimeout(function () { b.textContent = 'ON MY SPOT'; }, 6000); });
   };
   // /dash#map, #overlay or #radar opens on that tab; otherwise the one last used here
   var HASH = { '#map': 'map', '#overlay': 'both', '#radar': 'radar' }, saved = null;
