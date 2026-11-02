@@ -611,3 +611,15 @@ def test_a_hold_during_the_rescues_own_cancel_still_rescues_on_resume():
     assert run.phase == 'held'
     run.resume()
     assert run.phase == 'rescue retrace', 'the rescue, not a plain resend'
+
+
+def test_the_result_line_counts_the_drivers_commands_without_keeping_them():
+    # 2026-11-01 review: a list of every (throttle, steer) grew all route long (20 Hz)
+    n, run, said = make()
+    run.tick(time.monotonic(), False, [])
+    cmds = [(0.3, 0.1)] * 20000 + [(0.0, 0.0)] * 5 + [(-0.2, 0.0)] * 10 + [(0.008, 0.0)] + [(0.4, -0.2)] * 10
+    for k in range(0, len(cmds), 5):                     # a few a tick, as mission hands them over
+        run.tick(time.monotonic(), False, cmds[k:k + 5])
+    run.finish('CANCELED', 'test')
+    assert 'driver got 20026 commands, throttle 0.01-0.40; forward/reverse switches 2' in run.line
+    assert not any(isinstance(v, list) and len(v) > 1000 for v in vars(run).values())

@@ -157,3 +157,30 @@ def test_by_hand_only_on_open_floor(l_room):
     assert not WhereAmI._free_floor(me, 0.01, 2.0)          # the wall
     assert not WhereAmI._free_floor(me, 6.5, 4.5)           # the L's missing corner
     assert not WhereAmI._free_floor(me, -1.0, 2.0)          # off the map
+
+
+def test_main_spins_on_after_the_subscription_race(monkeypatch):
+    # _fresh_scan's subscription dropped by a search thread while the executor built its wait set
+    from rclpy._rclpy_pybind11 import InvalidHandle
+    spins = []
+
+    class Executor:
+        def add_node(self, node):
+            pass
+
+        def spin(self):
+            spins.append(1)
+            if len(spins) == 1:
+                raise InvalidHandle('Destroyable is invalid')
+
+    def race(node):
+        raise InvalidHandle('Destroyable is invalid')
+    log = Log()
+    monkeypatch.setattr(where_am_i, 'WhereAmI', lambda: SimpleNamespace(get_logger=lambda: log,
+                                                                       destroy_node=lambda: None))
+    monkeypatch.setattr(where_am_i, 'SingleThreadedExecutor', Executor, raising=False)
+    for name, fn in (('init', lambda args=None: None), ('ok', lambda: True), ('try_shutdown', lambda: None),
+                     ('spin', race)):
+        monkeypatch.setattr(where_am_i.rclpy, name, fn)
+    where_am_i.main()
+    assert len(spins) == 2 and any('spinning on' in m for m in log.lines)

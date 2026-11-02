@@ -93,6 +93,7 @@ class Camera:
         self.width, self.height, self.fps, self.quality = width, height, fps, quality
         self.cond = threading.Condition()
         self.frame, self.seq = None, 0
+        self.small = {}                     # (seq, w, q) -> jpeg, as RosCamera's (missing until 2026-11-01)
         self.viewers, self.last_viewer = 0, 0.0
         self.proc = None
         # Capture at the rate we send (2026-09-27): capturing at 30 fps and dropping frames
@@ -190,9 +191,7 @@ class Camera:
                     start = buf.find(b'\xff\xd8')
                     if 0 <= start < end:
                         got = True
-                        with self.cond:
-                            self.frame, self.seq = buf[start:end + 2], self.seq + 1
-                            self.cond.notify_all()
+                        self._store(buf[start:end + 2])
                     buf = buf[end + 2:]
                 if len(buf) > 4_000_000:
                     buf = b''
@@ -222,6 +221,13 @@ class Camera:
             else:
                 self.node.get_logger().warning(f'{self.name}: pipeline ended without a picture')
             time.sleep(1.0)
+
+    def _store(self, jpeg):
+        """The newest frame, for every viewer; the resized copies of the last one are dropped."""
+        with self.cond:
+            self.frame, self.seq = jpeg, self.seq + 1
+            self.small.clear()
+            self.cond.notify_all()
 
     def watch(self):
         with self.cond:

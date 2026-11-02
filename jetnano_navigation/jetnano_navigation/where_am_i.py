@@ -78,7 +78,8 @@ import numpy as np
 import rclpy
 from geometry_msgs.msg import PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry
-from rclpy.executors import ExternalShutdownException
+from rclpy._rclpy_pybind11 import InvalidHandle
+from rclpy.executors import ExternalShutdownException, SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
@@ -667,8 +668,18 @@ class WhereAmI(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = WhereAmI()
+    executor = SingleThreadedExecutor()
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        while rclpy.ok():
+            try:
+                executor.spin()
+                break
+            except InvalidHandle as exc:
+                # _fresh_scan's subscription, dropped by a search thread while this thread built the
+                # wait set: rclpy's race, which cost nav_helper a whole node on drive 41. The entity is
+                # gone now; spin on, and the search still answers (2026-11-01 review)
+                node.get_logger().warning(f'executor: {exc} (the scan subscription closed mid-wait): spinning on')
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:

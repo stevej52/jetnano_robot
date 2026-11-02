@@ -107,7 +107,9 @@ class RouteRun:
         self.snaps = {'pending': None, 'why': '', 'n': 0}
         self.last_line = 0.0
         self.last_in_my_way = -1e9
-        self.cmds = []                    # (throttle, steer) the driver got, for the result line
+        # what the driver got, for the result line: tallied as the commands come, not kept - a
+        # long route at 20 Hz is tens of thousands (2026-11-01 review)
+        self.cmd = {'n': 0, 'last': (0.0, 0.0), 'push': 1.0, 'thr': None, 'sign': 0, 'switches': 0}
         self.locked_during = False
         # the parking after the lap (2026-10-04): handed over 0.4 m before the lap's end, rolling,
         # to nav_park --serve - the lap no longer stops at the arc's start (drives 31-32: ~6 s)
@@ -348,8 +350,7 @@ class RouteRun:
             self.finish('ABORTED', f'bumped into something {self.bumps} times')
             return False
         p = self.n.map_pose() or self.fb['pose']
-        pushing = next((c[0] for c in reversed(self.cmds) if abs(c[0]) > 0.01), 1.0)
-        sign = 1.0 if pushing > 0 else -1.0
+        sign = 1.0 if self.cmd['push'] > 0 else -1.0
         if p is None:
             self.say('BUMP: she pushed without moving (the motion check); no pose to mark it')
             return True
@@ -542,10 +543,25 @@ class RouteRun:
 
     # ----------------------------------------------------------------- tick --
 
+    def _tally(self, cmds):
+        """The driver's (throttle, steer) since the last tick into the result line's numbers."""
+        t = self.cmd
+        for c in cmds:
+            t['n'] += 1
+            t['last'] = c
+            a = abs(c[0])
+            if c[0] != 0:
+                t['thr'] = (min(t['thr'][0], a), max(t['thr'][1], a)) if t['thr'] else (a, a)
+            if a > 0.01:
+                t['push'] = c[0]
+                sign = 1 if c[0] > 0 else -1
+                t['switches'] += t['sign'] not in (0, sign)
+                t['sign'] = sign
+
     def tick(self, now, lock, cmds):
         if self.done:
             return
-        self.cmds.extend(cmds)
+        self._tally(cmds)
         self.locked_during = self.locked_during or bool(lock)
         if self.phase == 'checking':
             if self.costmap_fut.done():
@@ -604,7 +620,7 @@ class RouteRun:
             return
         self.last_line = now
         p = self.fb['pose'] or self.start_pose
-        c = self.cmds[-1] if self.cmds else (0.0, 0.0)
+        c = self.cmd['last']
         self.say(f'{now - self.t0:5.1f} s  at x {p[0]:+.2f} y {p[1]:+.2f} h {math.degrees(p[2]):+4.0f}  '
                  f'{len(self.route) - len(self.passed) - len(self.skipped)} to go, {self.fb["dist"]:.2f} m  '
                  f'driver: throttle {c[0]:+.2f} steer {c[1]:+.2f}' + ('  MOTION LOCK' if lock else ''))
@@ -685,9 +701,7 @@ class RouteRun:
         self.done, self.outcome, self.phase = True, outcome, 'done'
         p = self.n.map_pose() or self.fb['pose'] or self.start_pose
         gx, gy, gh = self.route[-1]
-        thr = [abs(c[0]) for c in self.cmds if c[0] != 0]
-        signs = [1 if c[0] > 0 else -1 for c in self.cmds if abs(c[0]) > 0.01]
-        switches = sum(1 for a, b in zip(signs, signs[1:]) if a != b)
+        thr = self.cmd['thr'] or (0.0, 0.0)
         where = ''
         if p is not None:
             dh = math.degrees(math.atan2(math.sin(p[2] - gh), math.cos(p[2] - gh)))
@@ -699,8 +713,8 @@ class RouteRun:
                      + (f' ({len(self.skipped)} skipped: {self.skipped}, {self.rescue["asks"]} ask(s) of Claude)'
                         if self.rescue['asks'] or self.skipped else '')
                      + where
-                     + f'; driver got {len(self.cmds)} commands, throttle {min(thr, default=0):.2f}-{max(thr, default=0):.2f}'
-                     + f'; forward/reverse switches {switches}')
+                     + f'; driver got {self.cmd["n"]} commands, throttle {thr[0]:.2f}-{thr[1]:.2f}'
+                     + f'; forward/reverse switches {self.cmd["switches"]}')
         self.say(self.line)
         self.n.tf_off()
         if self.start_pose is not None:
