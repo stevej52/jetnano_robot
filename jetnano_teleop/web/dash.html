@@ -148,6 +148,18 @@
     padding: 8px 10px; border-radius: 7px; border: 1px solid var(--cyan); color: var(--cyan); background: rgba(5,7,12,0.75); }
   #athome { position: absolute; right: 8px; bottom: 44px; font: 700 10px/1 var(--mono); letter-spacing: 0.12em;
     padding: 8px 10px; border-radius: 7px; border: 1px solid var(--cyan); color: var(--cyan); background: rgba(5,7,12,0.75); }
+  /* ENLARGE (Steve, 2026-11-01): the panel fills the screen below the header (STOP stays in
+     reach); on the map, tap where she is and drag the way she faces, then FIND HER HERE */
+  #nav.big { position: fixed; left: 10px; right: 10px; bottom: 10px; z-index: 20; }
+  #nav.big #mapcv { touch-action: none; cursor: crosshair; }
+  #putbar { position: absolute; left: 8px; bottom: 8px; display: none; gap: 6px; align-items: center; }
+  #nav.big #putbar { display: flex; }
+  #putbar button { font: 700 11px/1 var(--mono); letter-spacing: 0.12em; padding: 10px 12px; border-radius: 7px;
+    border: 1px solid var(--pink); color: var(--pink); background: rgba(5,7,12,0.8); }
+  #putbar button:disabled { opacity: 0.35; }
+  #putbar button.go { background: var(--pink); color: var(--bg); }
+  #putmsg { font: 700 11px/1.3 var(--mono); letter-spacing: 0.08em; color: var(--pink); background: rgba(5,7,12,0.8);
+    padding: 8px 10px; border-radius: 7px; max-width: 46vw; }
 
   /* ---------------------------------------------------------- bottom row */
   #sys { grid-area: sys; }
@@ -232,9 +244,10 @@
 
   <section id="nav" class="panel">
     <h2>Surroundings <span class="tag" id="navtag"></span></h2>
-    <div class="tabs"><button id="tradar" class="on">RADAR</button><button id="tmap">MAP</button><button id="tboth">OVERLAY</button><button id="tzoom">4 M</button></div>
+    <div class="tabs"><button id="tradar" class="on">RADAR</button><button id="tmap">MAP</button><button id="tboth">OVERLAY</button><button id="tzoom">4 M</button><button id="tbig">ENLARGE</button></div>
     <canvas id="radar"></canvas>
-    <div id="mapwrap"><img id="mapimg" alt=""><canvas id="mapcv"></canvas><button id="wami">WHERE AM I?</button><button id="athome">ON MY SPOT</button></div>
+    <div id="mapwrap"><img id="mapimg" alt=""><canvas id="mapcv"></canvas><button id="wami">WHERE AM I?</button><button id="athome">ON MY SPOT</button>
+      <div id="putbar"><span id="putmsg">TAP WHERE SHE IS · DRAG TOWARD HER NOSE</span><button id="putfind" disabled>FIND HER HERE</button><button id="putexact" style="display:none">PUT HER EXACTLY HERE</button><button id="putclear" style="display:none">CLEAR</button></div></div>
   </section>
 
   <section id="sys" class="panel">
@@ -396,6 +409,13 @@
   try { saved = localStorage.getItem('dashView'); } catch (e) { /* private browsing */ }
   setView(HASH[location.hash] || (/^(radar|map|both)$/.test(saved) ? saved : 'radar'));
   $('tzoom').onclick = function () { zoom = zoom === 2 ? 4 : zoom === 4 ? 8 : 2; this.textContent = zoom + ' M'; };
+  // ENLARGE: the panel over the whole page below the header, the map cropped to the house
+  $('tbig').onclick = function () {
+    var nav = $('nav'), big = !nav.classList.contains('big');
+    nav.style.top = big ? ($('hdr').getBoundingClientRect().bottom + 8) + 'px' : '';
+    nav.classList.toggle('big', big); this.textContent = big ? 'CLOSE' : 'ENLARGE';
+    if (!big) putReset();
+  };
 
   // ------------------------------------------------------------------ helpers
   function fmtUp(s) { if (s == null) return '—'; var h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
@@ -607,6 +627,106 @@
 
   // --------------------------------------------------------------------- map
   var mapimg = $('mapimg'), mapcv = $('mapcv'), mctx = mapcv.getContext('2d'), mapV = -1;
+  // The image is drawn on the canvas (the <img> only loads it), so that ENLARGE can crop it
+  // to the house: the known cells' box and half a metre, read once per map from its pixels.
+  // FREE is the floor's colour (dash.py MAP_PALETTE): a tap must land on it.
+  var known = null, mapPix = null, FREE = [40, 58, 84], mapGeom = null;
+  mapimg.style.display = 'none';
+  mapimg.addEventListener('load', function () {
+    known = null; mapPix = null;
+    try {
+      var w = mapimg.naturalWidth, h = mapimg.naturalHeight, oc = document.createElement('canvas');
+      oc.width = w; oc.height = h; var ox = oc.getContext('2d'); ox.drawImage(mapimg, 0, 0);
+      var d = ox.getImageData(0, 0, w, h).data, u0 = w, v0 = h, u1 = -1, v1 = -1;
+      for (var v = 0; v < h; v++) for (var u = 0; u < w; u++) {
+        var i = (v * w + u) * 4; if (d[i] || d[i + 1] || d[i + 2]) { if (u < u0) u0 = u; if (u > u1) u1 = u; if (v < v0) v0 = v; if (v > v1) v1 = v; }
+      }
+      mapPix = { d: d, w: w, h: h };
+      if (u1 >= 0) { var m = 10; known = { u0: Math.max(0, u0 - m), v0: Math.max(0, v0 - m), u1: Math.min(w, u1 + 1 + m), v1: Math.min(h, v1 + 1 + m) }; }
+    } catch (e) { /* no pixels: the whole map, and no floor check */ }
+  });
+  function onFloor(q) {
+    var g = mapGeom; if (!g || !mapPix) return true;
+    var u = Math.floor((q.x - g.mi.x0) / g.mi.res), v = g.mi.h - 1 - Math.floor((q.y - g.mi.y0) / g.mi.res);
+    if (u < 0 || v < 0 || u >= mapPix.w || v >= mapPix.h) return false;
+    var i = (v * mapPix.w + u) * 4;
+    return mapPix.d[i] === FREE[0] && mapPix.d[i + 1] === FREE[1] && mapPix.d[i + 2] === FREE[2];
+  }
+
+  // ---------------------------------------------------------- PUT HER HERE
+  // Enlarged map: tap where she is, drag toward her nose (optional), FIND HER HERE - where_am_i
+  // searches 0.75 m round the tap at headings within 45 degrees of the one drawn. If the lidar
+  // cannot confirm it, PUT HER EXACTLY HERE takes the tap as it is (it needs the heading).
+  var put = null, putDrag = false, putWait = null;   // the tap; the answer being waited for
+  var HINT_R = 0.75;
+  function putMsg(t) { $('putmsg').textContent = t; }
+  function putReset() {
+    put = null; putWait = null; putMsg('TAP WHERE SHE IS · DRAG TOWARD HER NOSE');
+    $('putfind').disabled = true; $('putexact').style.display = 'none'; $('putclear').style.display = 'none';
+  }
+  function toMap(e) {
+    var g = mapGeom; if (!g) return null;
+    var r = mapcv.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top;
+    return { x: g.mi.x0 + ((px - g.ox) / g.s + g.bx.u0) * g.mi.res,
+             y: g.mi.y0 + (g.mi.h - ((py - g.oy) / g.s + g.bx.v0)) * g.mi.res };
+  }
+  mapcv.addEventListener('pointerdown', function (e) {
+    if (!$('nav').classList.contains('big') || putWait) return;
+    var q = toMap(e); if (!q) return;
+    e.preventDefault(); mapcv.setPointerCapture(e.pointerId);
+    put = { x: q.x, y: q.y, yaw: null, sx: e.clientX, sy: e.clientY }; putDrag = true;
+    $('putexact').style.display = 'none'; $('putclear').style.display = '';
+    if (!onFloor(q)) { putMsg('NOT OPEN FLOOR ON THE MAP · TAP AGAIN'); $('putfind').disabled = true; put.bad = true; return; }
+    putMsg('NOW DRAG TOWARD HER NOSE (OR PRESS FIND)'); $('putfind').disabled = false;
+  });
+  mapcv.addEventListener('pointermove', function (e) {
+    if (!putDrag || !put || put.bad) return;
+    var dx = e.clientX - put.sx, dy = e.clientY - put.sy;
+    if (Math.hypot(dx, dy) > 14) put.yaw = Math.atan2(-dy, dx);   // north up, x to the right
+  });
+  function putUp() {
+    if (!putDrag) return; putDrag = false;
+    if (put && !put.bad) putMsg(put.yaw == null ? 'NO HEADING: SHE MAY FACE ANY WAY' : 'HEADING SET');
+  }
+  mapcv.addEventListener('pointerup', putUp); mapcv.addEventListener('pointercancel', putUp);
+  function putSend(exact) {
+    if (!put || put.bad) return;
+    putWait = { trigger: exact ? 'put' : 'hint', after: (S && S.wami && S.wami.time) || 0, t: performance.now() };
+    putMsg(exact ? 'PUTTING HER THERE...' : 'SEARCHING NEAR THE TAP...');
+    $('putfind').disabled = true; $('putexact').style.display = 'none';
+    fetch('/dash/hint', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ x: put.x, y: put.y, yaw: put.yaw, exact: exact }) })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { if (!j.ok) { putWait = null; putMsg((j.why || j.error || 'refused').toUpperCase()); $('putfind').disabled = false; } })
+      .catch(function () { putWait = null; putMsg('NO ANSWER FROM ROSIE'); $('putfind').disabled = false; });
+  }
+  $('putfind').onclick = function () { putSend(false); };
+  $('putexact').onclick = function () { putSend(true); };
+  $('putclear').onclick = putReset;
+  // where_am_i's answer to the tap
+  function putAnswer() {
+    if (!putWait || !S) return;
+    var w = S.wami;
+    if (!w || w.trigger !== putWait.trigger || !(w.time > putWait.after)) {
+      if (performance.now() - putWait.t > 40000) { putWait = null; putMsg('NO ANSWER FROM WHERE AM I'); $('putfind').disabled = false; }
+      return;
+    }
+    putWait = null;
+    var c = (w.candidates || [])[0], fit = c ? c.score.toFixed(2) : '—';
+    if (w.state === 'placed') {
+      putMsg(w.trigger === 'put' ? 'PUT THERE BY HAND' : 'FOUND HER (FIT ' + fit + ')');
+      put = null; $('putfind').disabled = true;
+    } else if (!/unsure|not_on_map|bench/.test(w.state)) {
+      putMsg(('where am I: ' + w.state + ' · ' + (w.why || '')).toUpperCase()); $('putfind').disabled = false;
+    } else {
+      var headed = put && put.yaw != null && w.state !== 'bench';
+      putMsg(w.state === 'bench' ? 'SHE IS ON THE BENCH'
+             : 'THE LIDAR CANNOT CONFIRM IT (BEST FIT ' + fit + ')'
+               + (headed ? '' : ' · TAP AND DRAG HER HEADING, THEN FIND AGAIN'));
+      $('putfind').disabled = false;
+      $('putexact').style.display = headed ? '' : 'none';
+    }
+  }
   // the live SLAM map while one comes in, else the last saved one (the server picks)
   function mapReady() {
     if (!S || !S.map) return false;
@@ -619,7 +739,7 @@
     var c = w.candidates || [], b = c[0] ? c[0].score.toFixed(2) : '';
     return { waiting: 'where am I: waiting (' + (w.why || '') + ')',
              searching: 'where am I: searching the map...',
-             placed: 'where am I: found (fit ' + b + ') · ' + (w.action || ''),
+             placed: (w.trigger === 'put' ? 'where am I: put there by hand · ' : 'where am I: found (fit ' + b + ') · ') + (w.action || ''),
              unsure: 'where am I: unsure, ' + c.length + ' places fit alike · move her and ask again',
              not_on_map: 'where am I: not on the map (best fit ' + b + ', needs ' + (w.accept || '') + ')',
              bench: 'where am I: on the bench (scan match ' + (w.place_score || '') + ') · nothing drives',
@@ -644,12 +764,30 @@
     if (!mi) { mapimg.style.display = 'none'; c.fillStyle = '#3b4a60';
       c.fillText('NO MAP SAVED YET · map the house first', f.w / 2, f.h / 2); c.textAlign = 'left';
       $('navtag').textContent = ''; return; }
-    mapimg.style.display = ''; mapReady();
-    var s = Math.min(f.w / mi.w, f.h / mi.h), ox = (f.w - mi.w * s) / 2, oy = (f.h - mi.h * s) / 2;
-    function M(x, y) { return [ox + (x - mi.x0) / mi.res * s, oy + (mi.h - (y - mi.y0) / mi.res) * s]; }
+    var big = $('nav').classList.contains('big');
+    var bx = big && known && mapimg.naturalWidth === mi.w ? known : { u0: 0, v0: 0, u1: mi.w, v1: mi.h };
+    var bw = bx.u1 - bx.u0, bh = bx.v1 - bx.v0;
+    var s = Math.min(f.w / bw, f.h / bh), ox = (f.w - bw * s) / 2, oy = (f.h - bh * s) / 2;
+    function M(x, y) { return [ox + ((x - mi.x0) / mi.res - bx.u0) * s, oy + (mi.h - (y - mi.y0) / mi.res - bx.v0) * s]; }
+    mapGeom = { mi: mi, bx: bx, s: s, ox: ox, oy: oy };
+    if (mapReady()) { c.imageSmoothingEnabled = false; c.drawImage(mapimg, bx.u0, bx.v0, bw, bh, ox, oy, bw * s, bh * s); }
     $('navtag').textContent = (mi.w * mi.res).toFixed(1) + ' × ' + (mi.h * mi.res).toFixed(1) + ' m';
     var p = S.pose;
     caption(c, mi, p);
+    putAnswer();
+    if (put) {
+      // the tap: a ring as wide as the search, and the way she faces if drawn
+      var t = M(put.x, put.y), col = put.bad ? '#ff4d6d' : '#ff6bd6';
+      c.strokeStyle = col; c.lineWidth = 1.5; c.setLineDash([5, 4]);
+      c.beginPath(); c.arc(t[0], t[1], HINT_R / mi.res * s, 0, Math.PI * 2); c.stroke(); c.setLineDash([]);
+      c.fillStyle = col; c.beginPath(); c.arc(t[0], t[1], 4, 0, Math.PI * 2); c.fill();
+      if (put.yaw != null) {
+        c.save(); c.translate(t[0], t[1]); c.rotate(-put.yaw);
+        c.beginPath(); c.moveTo(0, 0); c.lineTo(34, 0); c.stroke();
+        c.beginPath(); c.moveTo(40, 0); c.lineTo(28, 7); c.lineTo(28, -7); c.closePath(); c.fill();
+        c.restore();
+      }
+    }
     if (!p) {
       // where_am_i's candidate places: outlined, with their fit
       var w = S.wami, cands = (w && w.candidates) || [];

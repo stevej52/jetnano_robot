@@ -93,6 +93,17 @@ def test_near_searches_only_round_the_spot():
     assert far[0][0] < there[0]
 
 
+def test_a_drawn_heading_settles_a_symmetric_room():
+    occ, free = room('box')                          # the middle of a bare rectangle: 0 and 180 alike
+    model = MapModel(occ, free, RES, 0.0, 0.0)
+    pts = cast(occ, 4.0, 3.0, math.radians(10))
+    assert judge(locate(model, pts, near=(4.0, 3.0), radius=0.75), 0.5, 1.15)[0] == 'unsure'
+    cands = locate(model, pts, near=(4.1, 2.9), radius=0.75, heading=math.radians(40))
+    assert judge(cands, 0.5, 1.15)[0] == 'placed'
+    assert abs(math.degrees(math.remainder(cands[0][3] - math.radians(10), 2 * math.pi))) < 3.0
+    assert math.hypot(cands[0][1] - 4.0, cands[0][2] - 3.0) < 0.06
+
+
 @pytest.mark.parametrize('pose, then, now, expect', [
     # facing +y on the map, 1 m forward on the odometry: 1 m further along +y
     ((5.0, 5.0, math.pi / 2), (0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (5.0, 6.0, math.pi / 2)),
@@ -105,6 +116,13 @@ def test_propagate(pose, then, now, expect):
     from jetnano_navigation.where_am_i import propagate
     got = propagate(pose, then, now)
     assert got == pytest.approx(expect, abs=1e-9)
+
+
+@pytest.mark.parametrize('best_at, verdict', [((0.5, 0.0), 'placed'), ((0.65, 0.0), 'unsure')])
+def test_judge_wants_the_best_inside_the_circle(best_at, verdict):
+    # searched 0.75 m round (0, 0): a best on the edge was pulled there from outside
+    cands = [(0.8, best_at[0], best_at[1], 0.0), (0.4, -0.3, 0.2, 2.0)]
+    assert judge(cands, 0.5, 1.15, (0.0, 0.0), 0.75)[0] == verdict
 
 
 @pytest.mark.parametrize('score, second, verdict', [(0.66, 0.64, 'not_on_map'),   # the bench

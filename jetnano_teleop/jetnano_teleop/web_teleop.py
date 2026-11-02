@@ -293,6 +293,20 @@ def make_handler(node: 'WebTeleop'):
                 ok, why = node.dash.at_home() if node.dash else (False, 'no dashboard')
                 self._json({'ok': ok, 'why': why},
                            HTTPStatus.OK if ok else HTTPStatus.SERVICE_UNAVAILABLE)
+            elif path == '/dash/hint':
+                # a tap on the enlarged map (2026-11-01): where_am_i searches near it, or
+                # (exact) takes it as it is
+                if not node.dash:
+                    self._json({'ok': False, 'why': 'no dashboard'}, HTTPStatus.SERVICE_UNAVAILABLE)
+                    return
+                try:
+                    ok, why = node.dash.hint(body)
+                except (KeyError, TypeError, ValueError):
+                    self._json({'error': 'x and y must be numbers, yaw a number or null'},
+                               HTTPStatus.BAD_REQUEST)
+                    return
+                self._json({'ok': ok, 'why': why},
+                           HTTPStatus.OK if ok else HTTPStatus.SERVICE_UNAVAILABLE)
             elif path == '/voice':
                 # the universal switch (voice_switch.py): load or unload ears/sounds/speak/listen
                 on = bool(body.get('on', True))

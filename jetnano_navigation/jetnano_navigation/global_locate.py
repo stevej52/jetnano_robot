@@ -36,6 +36,13 @@ vouches for roughly where she is. (A trimmed score - the best 70 % of the points
 tried that day for the box and open window that dropped her fit to 0.59 and rejected:
 on 58 replayed drive scans it scored nearly everywhere 0.9-1.0 and placed her wrong
 twice; the plain score with its margin placed none wrong at any bar from 0.50 to 0.70.)
+
+A search round a spot can be wrong about the spot (2026-11-01, 493 replayed drive scans,
+the spot moved 1-4 m off the truth): with no rival places inside a small circle the
+margin passes easily, and 1 in 6 such searches placed her wrong - the best fit lies on
+the circle's edge, pulled toward where she is, or turned 90 degrees in a boxy room. So
+judge() also wants the best ``INNER`` inside the circle, and the caller checks the whole
+map (where_am_i._near): with both, none of 1,410 wrong spots placed her.
 """
 
 from __future__ import annotations
@@ -44,6 +51,8 @@ import math
 import os
 
 import numpy as np
+
+INNER = 0.15        # a search round a spot: the best must lie this far inside its circle
 
 
 def read_map_yaml(path: str) -> dict:
@@ -154,11 +163,14 @@ def _distinct(a, b, dist_m: float, angle_rad: float) -> bool:
 
 def locate(model: MapModel, pts: np.ndarray, coarse_points: int = 120,
            keep_per_heading: int = 60, seeds: int = 150, top: int = 3,
-           near: tuple | None = None, radius: float = 1.5) -> list:
+           near: tuple | None = None, radius: float = 1.5,
+           heading: float | None = None, heading_tol: float = math.radians(45)) -> list:
     """The ``top`` best clearly different poses: [(score, x, y, yaw), ...], best first.
 
     ``pts``: the scan's points (N x 2) in her own frame (base_footprint), metres.
     ``near``: (x, y) - search only the free floor within ``radius`` m of it.
+    ``heading``: radians - search only headings within ``heading_tol`` of it (a person
+    drew which way she faces).
     """
     if len(pts) < 20:
         return []
@@ -172,8 +184,11 @@ def locate(model: MapModel, pts: np.ndarray, coarse_points: int = 120,
         if not len(cx):
             return []
     sub = pts[np.linspace(0, len(pts) - 1, min(coarse_points, len(pts))).astype(int)]
+    yaws = np.radians(np.arange(0.0, 360.0, 5.0))
+    if heading is not None:
+        yaws = yaws[np.abs(np.remainder(yaws - heading + math.pi, 2 * math.pi) - math.pi) <= heading_tol]
     best = []
-    for yaw in np.radians(np.arange(0.0, 360.0, 5.0)):
+    for yaw in yaws:
         sc = model.score(cx, cy, np.full(len(cx), yaw), sub, coarse=True)
         for i in np.argsort(sc)[-keep_per_heading:]:
             best.append((float(sc[i]), float(cx[i]), float(cy[i]), float(yaw)))
@@ -206,17 +221,24 @@ def locate(model: MapModel, pts: np.ndarray, coarse_points: int = 120,
     return out
 
 
-def judge(candidates: list, accept: float, margin: float) -> tuple[str, str]:
+def judge(candidates: list, accept: float, margin: float, near: tuple | None = None,
+          radius: float = 0.0, inner: float = INNER) -> tuple[str, str]:
     """('placed' | 'unsure' | 'not_on_map', why) for locate()'s answer.
 
     placed: the best fits at least ``accept`` and beats the best clearly different
-    place by the factor ``margin``.
+    place by the factor ``margin``; for a search round a spot (``near``, ``radius``:
+    locate's), it also lies at least ``inner`` m inside the circle.
     """
     if not candidates:
         return 'not_on_map', 'too few lidar points'
     best = candidates[0][0]
     if best < accept:
         return 'not_on_map', f'best fit {best:.2f}, needs {accept:.2f}'
+    if near is not None:
+        d = math.hypot(candidates[0][1] - near[0], candidates[0][2] - near[1])
+        if d > radius - inner:
+            return 'unsure', (f'best fit {best:.2f} lies on the edge of the search, {d:.2f} m out: '
+                              'she is likely further off')
     if len(candidates) > 1 and best < margin * candidates[1][0]:
         return 'unsure', (f'{len(candidates)} places fit alike: {best:.2f} vs '
                           f'{candidates[1][0]:.2f} (needs x{margin:.2f})')

@@ -204,6 +204,7 @@ class Dashboard:
         sub(String, 'where_am_i/state', self._on_wami, LATCHED)
         self._locate = node.create_client(Trigger, 'where_am_i/locate')
         self._at_home = node.create_client(Trigger, 'where_am_i/at_home')      # ON MY SPOT
+        self._hint = node.create_publisher(String, 'where_am_i/hint', 10)          # a tap on the map
         self.map_odom = None                 # map -> odom (x, y, yaw), from slam_toolbox's /pose
         self.pose_t = 0.0                    # when the last /pose came
         self.pending_pose = None             # a /pose that came while nobody watched
@@ -403,6 +404,22 @@ class Dashboard:
             return False, 'where_am_i is not running (robot.launch.py where_am_i:=true)'
         self._at_home.call_async(Trigger.Request())
         return True, 'searching near her spot'
+
+    def hint(self, body: dict):
+        """A tap on the enlarged map (2026-11-01): where she is, maybe which way she faces
+        (yaw, radians, or None); exact = take it as it is, the lidar not asked. (sent, why);
+        ValueError for a body without numbers. The answer comes on where_am_i/state."""
+        x, y = float(body['x']), float(body['y'])
+        yaw = None if body.get('yaw') is None else float(body['yaw'])
+        if not all(math.isfinite(v) for v in (x, y, 0.0 if yaw is None else yaw)):
+            raise ValueError('not a number')
+        exact = bool(body.get('exact', False))
+        if exact and yaw is None:
+            return False, 'drag to show which way she faces first'
+        if not self._locate.service_is_ready():
+            return False, 'where_am_i is not running (robot.launch.py where_am_i:=true)'
+        self._hint.publish(String(data=json.dumps({'x': x, 'y': y, 'yaw': yaw, 'exact': exact})))
+        return True, 'put there' if exact else 'searching near the tap'
 
     def _on_map(self, msg) -> None:
         w, h = msg.info.width, msg.info.height
