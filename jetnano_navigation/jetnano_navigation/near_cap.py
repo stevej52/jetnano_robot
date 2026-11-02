@@ -40,9 +40,10 @@ import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import DurabilityPolicy, QoSProfile, qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
-from tf2_ros import Buffer, TransformListener
+from tf2_msgs.msg import TFMessage
+from tf2_ros import Buffer
 
 
 def cap_twist(v, w, near_fwd, near_rev, cap):
@@ -112,11 +113,19 @@ class NearCap(Node):
         self.scan_t = None
         self.laser = None                                    # (x, y, yaw) of the scan frame in base
         self.capped = False
+        # only the static transforms: the lidar's mount is all this node looks up, once. A full
+        # TransformListener took in /tf at ~110 Hz for good - 5.9 % of a core on the bench, nearly
+        # all of this node's CPU (py-spy, 2026-11-01 review)
         self.tf = Buffer()
-        self.tfl = TransformListener(self.tf, self)
+        self.create_subscription(TFMessage, '/tf_static', self.on_tf_static,
+                                 QoSProfile(depth=100, durability=DurabilityPolicy.TRANSIENT_LOCAL))
         self.pub = self.create_publisher(Twist, 'cmd_vel_nav_capped', 10)
         self.create_subscription(Twist, 'cmd_vel_nav_smoothed', self.on_cmd, 10)
         self.create_subscription(LaserScan, 'scan', self.on_scan, qos_profile_sensor_data)
+
+    def on_tf_static(self, msg):
+        for t in msg.transforms:
+            self.tf.set_transform_static(t, 'tf_static')
 
     def on_scan(self, m):
         if self.laser is None:

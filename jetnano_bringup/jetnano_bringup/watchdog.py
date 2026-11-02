@@ -83,7 +83,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
 from std_msgs.msg import Bool, String
 
-from jetnano_bringup import sensor_flag
+from jetnano_bringup import launch_age, sensor_flag
 
 CONTAINER = 'isaac_vo'
 CONTAINER_LAUNCH = r'cuvslam_.*\.launch\.py'
@@ -808,20 +808,8 @@ class Watchdog(Node):
     def _launch_young(self) -> bool:
         """True while the camera pipeline's wrapper is between respawns or started under
         young_process_s ago: its launch is still coming up and must not be restarted."""
-        pids = self._pids(proc('jetnano_bringup/cuvslam_vo.sh'))
-        if not pids:
-            return True               # between exit and respawn: odometry.launch.py brings it back
-        try:
-            with open('/proc/uptime') as f:
-                up = float(f.read().split()[0])
-            tick = os.sysconf('SC_CLK_TCK')
-            starts = []
-            for pid in pids:              # the wrapper forks subshells with the same command line:
-                with open(f'/proc/{pid}/stat') as f:           # its own start is the oldest
-                    starts.append(int(f.read().rsplit(')', 1)[1].split()[19]) / tick)
-            return up - min(starts) < self.young_s
-        except (OSError, ValueError, IndexError):
-            return False
+        # between exit and respawn odometry.launch.py brings it back (launch_age, shared with guard_flow)
+        return launch_age.young(self._pids(proc('jetnano_bringup/cuvslam_vo.sh')), self.young_s)
 
     def _starting(self, item) -> bool:
         """True if the process behind this item was started moments ago."""

@@ -51,3 +51,36 @@ def test_ceiling_drops_when_she_changes_direction():
     c.step(0.44, 0.0, True, False, 0.0)
     assert c.step(-0.40, 0.0, False, False, 0.05) == (-0.40, 0.0)     # nothing behind
     assert c.step(-0.40, 0.0, False, True, 0.10)[0] == -0.24           # something behind
+
+
+def test_only_the_static_transforms_are_taken_in():
+    # 2026-11-01 review: a full TransformListener took in /tf at ~110 Hz for one static lookup
+    import math
+
+    from geometry_msgs.msg import TransformStamped
+    from jetnano_navigation.near_cap import NearCap
+    import pytest
+    import rclpy
+    from sensor_msgs.msg import LaserScan
+    from tf2_msgs.msg import TFMessage
+    started = not rclpy.ok()
+    if started:
+        rclpy.init()
+    node = NearCap()
+    try:
+        topics = {s.topic_name for s in node.subscriptions}
+        assert '/tf' not in topics and '/tf_static' in topics
+        t = TransformStamped()
+        t.header.frame_id, t.child_frame_id = 'base_footprint', 'lidar_link'
+        t.transform.translation.x, t.transform.rotation.z, t.transform.rotation.w = 0.05, 1.0, 0.0   # turned 180 deg
+        node.on_tf_static(TFMessage(transforms=[t]))
+        scan = LaserScan()
+        scan.header.frame_id = 'lidar_link'
+        scan.angle_increment, scan.range_min, scan.range_max = 0.1, 0.1, 12.0
+        scan.ranges = [5.0] * 10
+        node.on_scan(scan)
+        assert node.laser == pytest.approx((0.05, 0.0, math.pi))
+    finally:
+        node.destroy_node()
+        if started:
+            rclpy.shutdown()

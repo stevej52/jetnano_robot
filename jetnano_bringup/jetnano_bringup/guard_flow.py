@@ -29,7 +29,8 @@ wrong; nothing told Steve. This node judges the guard by what matters:
 Either, held for 2 s: an "uh-oh", the reason on /guard_flow/status (the driving page shows it),
 and the fix the watchdog would apply - restart grid_to_points (the launch respawns it);
 if that does not clear it within 25 s, restart the launch inside the Isaac container
-(nvblox's stamps come from the depth frames it integrates). At most one of each a minute.
+(nvblox's stamps come from the depth frames it integrates) - unless that launch is itself still
+coming up after a restart (launch_age). At most one of each a minute.
 """
 
 import os
@@ -41,6 +42,7 @@ import time
 import rclpy
 from geometry_msgs.msg import Twist
 
+from jetnano_bringup import launch_age
 from jetnano_bringup.quiet_node import QuietNode
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from nav2_msgs.msg import CollisionMonitorState
@@ -49,6 +51,7 @@ from std_msgs.msg import String
 
 CONTAINER, CONTAINER_LAUNCH = 'isaac_vo', r'cuvslam_.*\.launch\.py'     # cuvslam_vo.sh picks the file
 GRID_TO_POINTS = '/lib/jetnano_watchdog/grid_to_points'                    # the C++ one runs (drive.launch.py)
+CAMERA_WRAPPER = '/lib/jetnano_bringup/cuvslam_vo.sh( |$)'                 # on the host: its age is the launch's
 
 
 class GuardFlow(QuietNode):
@@ -58,6 +61,7 @@ class GuardFlow(QuietNode):
         self.declare_parameter('act', True)
         self.declare_parameter('hold_s', 2.0)
         self.declare_parameter('stale_s', 3.0)
+        self.declare_parameter('launch_young_s', 40.0)   # the watchdog's young_process_s
         self.mux_at = 0.0           # last non-zero command into the guard
         self.out_at = 0.0           # last non-zero command out of it
         self.bad_since = None
@@ -198,6 +202,18 @@ class GuardFlow(QuietNode):
         threading.Thread(target=fn, name='guard_flow-fix', daemon=True).start()
 
     def _restart_container_launch(self):
+        # Not while the launch is still coming up (2026-11-01 review): the safety monitor stops it 5 s
+        # into a /vo silence and it publishes again ~25 s after its respawn - right where this step
+        # (27 s down) would shoot it again. The watchdog has waited for that since 2026-09-27.
+        pids = self._pids(CAMERA_WRAPPER)
+        if launch_age.young(pids, float(self.get_parameter('launch_young_s').value)):
+            age = launch_age.started_ago(pids) if pids else None
+            self.get_logger().warning('still holding, but the camera launch is '
+                                      + (f'{age:.0f} s old' if age is not None else 'between respawns')
+                                      + ': not restarting it yet, looking again in 10 s')
+            if self.fix_step == 2:
+                self.fix_step, self.fix_at['container'] = 1, time.monotonic() - 110.0
+            return
         try:
             r = subprocess.run(['docker', 'exec', CONTAINER, 'pkill', '-INT', '-f', CONTAINER_LAUNCH], timeout=15)
             if r.returncode != 0:
@@ -205,8 +221,13 @@ class GuardFlow(QuietNode):
         except (OSError, subprocess.TimeoutExpired) as exc:
             self.get_logger().warning(f'container restart: {exc}')
 
+    @staticmethod
+    def _pids(pattern):
+        out = subprocess.run(['pgrep', '-f', pattern], capture_output=True, text=True).stdout
+        return [int(p) for p in out.split() if p.isdigit()]
+
     def _signal(self, pattern, what):
-        pids = subprocess.run(['pgrep', '-f', pattern], capture_output=True, text=True).stdout.split()
+        pids = self._pids(pattern)
         self.get_logger().warning(f'{what}: pids {pids or "none (its respawn is due)"}')
         for p in pids:
             try:
